@@ -1,0 +1,207 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Lato:wght@300;400;700;900&family=Merriweather:wght@300;400;700;900&family=Montserrat:wght@300;400;500;600;700;800;900&family=Nunito+Sans:wght@300;400;600;700;800;900&family=Open+Sans:wght@300;400;500;600;700;800&family=Playfair+Display:wght@400;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&family=Roboto:wght@300;400;500;700;900&family=Source+Sans+3:wght@300;400;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+  --background: #f8fafc;
+  --foreground: #0f172a;
+
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+
+  --accent: #eff6ff;
+  --accent-foreground: #1d4ed8;
+
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+
+  --sidebar: #0f172a;
+  --sidebar-foreground: #cbd5e1;
+  --sidebar-border: #1e293b;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #09090b;
+  --foreground: #f8fafc;
+
+  --card: #111827;
+  --card-foreground: #f8fafc;
+
+  --muted: #1f2937;
+  --muted-foreground: #9ca3af;
+
+  --border: #1f2937;
+  --input: #374151;
+
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+
+  --secondary: #1f2937;
+  --secondary-foreground: #f8fafc;
+
+  --accent: #1e293b;
+  --accent-foreground: #60a5fa;
+
+  --destructive: #f87171;
+  --destructive-foreground: #ffffff;
+
+  --sidebar: #090d16;
+  --sidebar-foreground: #94a3b8;
+  --sidebar-border: #1e293b;
+}
+
+.dark option {
+  background-color: #0f172a;
+  color: #f8fafc;
+}
+
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+}
+
+@layer base {
+  html {
+    font-size: 16px;
+  }
+  body {
+    @apply bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans antialiased selection:bg-blue-500 selection:text-white transition-colors duration-200;
+    font-size: 12px;
+  }
+}
+
+/* Ensure 10px / 11px font sizes scale to 12px minimum across standard UI */
+[class*="text-[10px]"],
+[class*="text-[11px]"],
+[class*="text-[9px]"],
+[class*="text-[8px]"] {
+  font-size: 12px !important;
+  line-height: 1.333 !important;
+}
+
+/* Dedicated Workspace Mode: +5px Larger Typography */
+.dedicated-workspace {
+  --text-xs: 17px;
+  --text-sm: 19px;
+  --text-base: 21px;
+  --text-lg: 23px;
+  --text-xl: 25px;
+  --text-2xl: 29px;
+  --text-3xl: 35px;
+  font-size: 17px;
+}
+
+.dedicated-workspace [class*="text-[10px]"],
+.dedicated-workspace [class*="text-[11px]"],
+.dedicated-workspace [class*="text-[9px]"],
+.dedicated-workspace [class*="text-[8px]"] {
+  font-size: 17px !important;
+  line-height: 1.35 !important;
+}
+
+.dedicated-workspace input,
+.dedicated-workspace select,
+.dedicated-workspace textarea,
+.dedicated-workspace button {
+  font-size: 17px;
+}
+
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* Page Break & Print Utility Classes */
+.break-inside-avoid {
+  break-inside: avoid !important;
+  page-break-inside: avoid !important;
+}
+
+/* Professional Print Layout Specifications for A4 PDF Generation */
+@media print {
+  html, body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  /* Hide app chrome during isolated print rendering */
+  body > *:not(#printable-document-root) {
+    display: none !important;
+  }
+
+  #printable-document-root {
+    display: block !important;
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+  }
+}
+
+/* Custom Scrollbar for sleek modern UI */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/Vistaar_Icon_logo.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="VISTAAR — Run Better. Grow Wider. The Business OS for Growing Businesses" />
+    <meta property="og:title" content="VISTAAR — Run Better. Grow Wider." />
+    <meta property="og:description" content="The Business OS for Growing Businesses" />
+    <meta property="og:image" content="/Vistaar_Logo_With_Name.png" />
+    <title>VISTAAR — Run Better. Grow Wider.</title>
+    <script>
+      (function () {
+        try {
+          var storedTheme = localStorage.getItem('vistaar_theme');
+          if (!storedTheme) {
+            var rawState = localStorage.getItem('vistaar_app_state_v2');
+            if (rawState) {
+              var parsed = JSON.parse(rawState);
+              if (parsed && parsed.settings && parsed.settings.theme) {
+                storedTheme = parsed.settings.theme;
+              }
+            }
+          }
+          if (storedTheme === 'dark') {
+            document.documentElement.classList.add('dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

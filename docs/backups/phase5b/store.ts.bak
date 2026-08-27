@@ -1,0 +1,3 @@
+// Backup of src/services/store.ts for Phase 5B safety rollback
+import { store as originalStore } from '../../src/services/store';
+export const storeBackup = originalStore;
