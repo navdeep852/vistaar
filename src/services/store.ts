@@ -2189,7 +2189,37 @@ class StoreService {
       totalTransactions: sales.length,
     };
   }
-}
 
+  public resetState() {
+    this.state = {
+      ...initialSeedData,
+      customers: [],
+      products: [],
+      categories: initialSeedData.categories,
+      suppliers: initialSeedData.suppliers,
+      inventoryTransactions: [],
+      quotations: [],
+      invoices: [],
+      payments: [],
+      expenses: [],
+      followUps: [],
+      feedbacks: [],
+      offers: [],
+      notifications: [],
+      udharis: [],
+      udhariPayments: [],
+      stockReceipts: [],
+      stockMovements: [],
+      importSessions: [],
+      counterSales: [],
+    };
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    } catch (e) {}
+    this.notify();
+  }
+}
 
 export const store = new StoreService();

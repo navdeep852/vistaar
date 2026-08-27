@@ -4,65 +4,9 @@ import { DbCustomer, fromDbCustomer, toDbCustomer } from './types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError } from '../../lib/supabaseError';
 
+import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+
 const LOCAL_CUSTOMERS_KEY = 'vistaar_local_customers_db';
-
-const SEED_CUSTOMERS: Customer[] = [
-  {
-    id: 'cust-1',
-    name: 'Rajesh Enterprise',
-    phone: '9820011223',
-    whatsapp: '9820011223',
-    email: 'rajesh@enterprise.com',
-    address: 'Shop 12, Main Market',
-    city: 'Mumbai',
-    state: 'Maharashtra',
-    pincode: '400001',
-    gstin: '27ABCDE1234F1Z2',
-    customerType: 'Wholesale',
-    creditLimit: 100000,
-    paymentTerms: 'Net 30',
-    createdAt: '2026-08-01T10:00:00Z',
-    updatedAt: '2026-08-01T10:00:00Z',
-  },
-  {
-    id: 'cust-2',
-    name: 'Priya Sharma',
-    phone: '9833344455',
-    whatsapp: '9833344455',
-    email: 'priya.sharma@gmail.com',
-    address: 'B-402, Green Acres',
-    city: 'Pune',
-    state: 'Maharashtra',
-    pincode: '411001',
-    customerType: 'Retail',
-    creditLimit: 25000,
-    paymentTerms: 'Immediate',
-    createdAt: '2026-08-05T14:30:00Z',
-    updatedAt: '2026-08-05T14:30:00Z',
-  },
-];
-
-const safeStorageGet = (key: string, fallback: any[]): any[] => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const stored = localStorage.getItem(key);
-      if (stored) return JSON.parse(stored);
-    }
-  } catch (e) {
-    // ignore
-  }
-  return fallback;
-};
-
-const safeStorageSave = (key: string, items: any[]): void => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(key, JSON.stringify(items));
-    }
-  } catch (e) {
-    // ignore
-  }
-};
 
 export class CustomerService {
   private getWorkspaceId(): string {
@@ -99,14 +43,14 @@ export class CustomerService {
       const { data, count, error } = await query;
       if (error) {
         const errStr = handleSupabaseError(error, 'getCustomers');
-        const fallback = safeStorageGet(LOCAL_CUSTOMERS_KEY, SEED_CUSTOMERS);
+        const fallback = safeGetTenantStorage<Customer>(LOCAL_CUSTOMERS_KEY, []);
         return { data: fallback, count: fallback.length, error: errStr };
       }
       const customers = (data as DbCustomer[]).map(fromDbCustomer);
       return { data: customers, count: count || 0 };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getCustomers');
-      const fallback = safeStorageGet(LOCAL_CUSTOMERS_KEY, SEED_CUSTOMERS);
+      const fallback = safeGetTenantStorage<Customer>(LOCAL_CUSTOMERS_KEY, []);
       return { data: fallback, count: fallback.length, error: errStr };
     }
   }
@@ -123,14 +67,14 @@ export class CustomerService {
 
       if (error) {
         const errStr = handleSupabaseError(error, 'getCustomerById');
-        const fallback = safeStorageGet(LOCAL_CUSTOMERS_KEY, SEED_CUSTOMERS);
+        const fallback = safeGetTenantStorage<Customer>(LOCAL_CUSTOMERS_KEY, []);
         const match = fallback.find((c) => c.id === id);
         return { customer: match, error: match ? undefined : errStr };
       }
       return { customer: fromDbCustomer(data as DbCustomer) };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getCustomerById');
-      const fallback = safeStorageGet(LOCAL_CUSTOMERS_KEY, SEED_CUSTOMERS);
+      const fallback = safeGetTenantStorage<Customer>(LOCAL_CUSTOMERS_KEY, []);
       const match = fallback.find((c) => c.id === id);
       return { customer: match, error: match ? undefined : errStr };
     }
@@ -161,9 +105,9 @@ export class CustomerService {
             updatedAt: new Date().toISOString(),
             ...customer,
           } as Customer;
-          const local = safeStorageGet(LOCAL_CUSTOMERS_KEY, SEED_CUSTOMERS);
+          const local = safeGetTenantStorage<Customer>(LOCAL_CUSTOMERS_KEY, []);
           local.unshift(newCust);
-          safeStorageSave(LOCAL_CUSTOMERS_KEY, local);
+          safeSaveTenantStorage(LOCAL_CUSTOMERS_KEY, local);
           return { customer: newCust };
         }
         return { error: errStr };
@@ -182,9 +126,9 @@ export class CustomerService {
         updatedAt: new Date().toISOString(),
         ...customer,
       } as Customer;
-      const local = safeStorageGet(LOCAL_CUSTOMERS_KEY, SEED_CUSTOMERS);
+      const local = safeGetTenantStorage<Customer>(LOCAL_CUSTOMERS_KEY, []);
       local.unshift(newCust);
-      safeStorageSave(LOCAL_CUSTOMERS_KEY, local);
+      safeSaveTenantStorage(LOCAL_CUSTOMERS_KEY, local);
       return { customer: newCust };
     }
   }

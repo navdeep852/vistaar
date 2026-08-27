@@ -5,6 +5,10 @@ import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError } from '../../lib/supabaseError';
 import { store } from '../store';
 
+import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+
+const LOCAL_PRODUCTS_KEY = 'vistaar_local_products_db';
+
 export class ProductService {
   private getWorkspaceId(): string {
     return supabaseAuthService.getCurrentCompanyId();
@@ -17,7 +21,7 @@ export class ProductService {
     pageSize?: number;
   }): Promise<{ data: Product[]; count: number; error?: string }> {
     if (!isSupabaseConfigured()) {
-      let items = store.getProducts();
+      let items = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
       if (options?.search) {
         const s = options.search.toLowerCase();
         items = items.filter(
@@ -113,7 +117,9 @@ export class ProductService {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      store.addProduct(fullProd);
+      const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+      local.unshift(fullProd);
+      safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, local);
       return { product: fullProd };
     }
 

@@ -3,29 +3,9 @@ import { UdhariRecord, UdhariPaymentRecord } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError } from '../../lib/supabaseError';
 
+import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+
 const LOCAL_UDHARI_KEY = 'vistaar_local_udharis_db';
-
-const safeStorageGet = (key: string): any[] => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const stored = localStorage.getItem(key);
-      if (stored) return JSON.parse(stored);
-    }
-  } catch (e) {
-    // ignore
-  }
-  return [];
-};
-
-const safeStorageSave = (key: string, items: any[]): void => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(key, JSON.stringify(items));
-    }
-  } catch (e) {
-    // ignore
-  }
-};
 
 export class UdhariService {
   private getWorkspaceId(): string {
@@ -43,13 +23,13 @@ export class UdhariService {
 
       if (error) {
         const errStr = handleSupabaseError(error, 'getUdhariRecords');
-        const fallback = safeStorageGet(LOCAL_UDHARI_KEY);
+        const fallback = safeGetTenantStorage(LOCAL_UDHARI_KEY, []);
         return { data: fallback, error: errStr };
       }
       return { data: data || [] };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getUdhariRecords');
-      const fallback = safeStorageGet(LOCAL_UDHARI_KEY);
+      const fallback = safeGetTenantStorage(LOCAL_UDHARI_KEY, []);
       return { data: fallback, error: errStr };
     }
   }
@@ -82,9 +62,9 @@ export class UdhariService {
         if (errStr.startsWith('Network Error')) {
           const newId = `ud-${Date.now()}`;
           const localRec = { id: newId, ...payload, createdAt: new Date().toISOString() };
-          const local = safeStorageGet(LOCAL_UDHARI_KEY);
+          const local = safeGetTenantStorage(LOCAL_UDHARI_KEY, []);
           local.unshift(localRec);
-          safeStorageSave(LOCAL_UDHARI_KEY, local);
+          safeSaveTenantStorage(LOCAL_UDHARI_KEY, local);
           return { udhariId: newId };
         }
         return { error: errStr };
@@ -94,9 +74,9 @@ export class UdhariService {
       const errStr = handleSupabaseError(e, 'createUdhari');
       const newId = `ud-${Date.now()}`;
       const localRec = { id: newId, ...payload, createdAt: new Date().toISOString() };
-      const local = safeStorageGet(LOCAL_UDHARI_KEY);
+      const local = safeGetTenantStorage(LOCAL_UDHARI_KEY, []);
       local.unshift(localRec);
-      safeStorageSave(LOCAL_UDHARI_KEY, local);
+      safeSaveTenantStorage(LOCAL_UDHARI_KEY, local);
       return { udhariId: newId };
     }
   }

@@ -1,34 +1,57 @@
 import { createClient } from '@supabase/supabase-js';
+import fs from 'fs';
+import path from 'path';
+
+// Auto-load .env.local in Node/script environment if process.env is not yet populated
+if (typeof process !== 'undefined' && process?.env && !process.env.VITE_SUPABASE_URL) {
+  try {
+    const envPath = path.resolve(process.cwd(), '.env.local');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf8');
+      content.split('\n').forEach((line) => {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#')) {
+          const eqIdx = trimmed.indexOf('=');
+          if (eqIdx > 0) {
+            const key = trimmed.slice(0, eqIdx).trim();
+            const val = trimmed.slice(eqIdx + 1).trim();
+            process.env[key] = val;
+          }
+        }
+      });
+    }
+  } catch (e) {
+    // Ignore error in non-node context
+  }
+}
 
 const getEnvVar = (key: string): string | undefined => {
+  const proc = (globalThis as any).process;
+  if (proc?.env && proc.env[key]) {
+    return proc.env[key];
+  }
   if (typeof import.meta !== 'undefined' && import.meta?.env) {
     return import.meta.env[key];
-  }
-  const proc = (globalThis as any).process;
-  if (proc?.env) {
-    return proc.env[key];
   }
   return undefined;
 };
 
-export const supabaseUrl = getEnvVar('VITE_SUPABASE_URL') || 'https://placeholder.supabase.co';
+export const supabaseUrl = getEnvVar('VITE_SUPABASE_URL') || 'https://kluxsykmnijvkqxelba.supabase.co';
 export const supabaseAnonKey =
   getEnvVar('VITE_SUPABASE_ANON_KEY') ||
   getEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY') ||
-  'placeholder-anon-key';
+  'sb_publishable_j5tuLPC3iQO4pQHU0BeyYQ_CH_7Ls6x';
 
 export const isSupabaseConfigured = (): boolean => {
-  const url = getEnvVar('VITE_SUPABASE_URL');
-  const key = supabaseAnonKey;
+  const url = getEnvVar('VITE_SUPABASE_URL') || supabaseUrl;
+  const key = getEnvVar('VITE_SUPABASE_ANON_KEY') || getEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY') || supabaseAnonKey;
   if (!url || !key) return false;
   if (
     url === 'https://your-supabase-project-id.supabase.co' ||
     url === 'https://placeholder.supabase.co' ||
     url.includes('kluxsykmnijvkqxelba') ||
     url.includes('placeholder') ||
-    url.includes('your-supabase-project-id') ||
-    url.includes('localhost') ||
-    url.includes('127.0.0.1')
+    url.includes('your-supabase-project-id')
   ) {
     return false;
   }

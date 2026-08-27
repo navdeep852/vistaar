@@ -3,29 +3,9 @@ import { Invoice } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError } from '../../lib/supabaseError';
 
+import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+
 const LOCAL_INVOICES_KEY = 'vistaar_local_invoices_db';
-
-const safeStorageGet = (key: string): any[] => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const stored = localStorage.getItem(key);
-      if (stored) return JSON.parse(stored);
-    }
-  } catch (e) {
-    // ignore
-  }
-  return [];
-};
-
-const safeStorageSave = (key: string, items: any[]): void => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(key, JSON.stringify(items));
-    }
-  } catch (e) {
-    // ignore
-  }
-};
 
 export class InvoiceService {
   private getWorkspaceId(): string {
@@ -62,13 +42,13 @@ export class InvoiceService {
       const { data, count, error } = await query;
       if (error) {
         const errStr = handleSupabaseError(error, 'getInvoices');
-        const fallback = safeStorageGet(LOCAL_INVOICES_KEY);
+        const fallback = safeGetTenantStorage(LOCAL_INVOICES_KEY, []);
         return { data: fallback, count: fallback.length, error: errStr };
       }
       return { data: data || [], count: count || 0 };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getInvoices');
-      const fallback = safeStorageGet(LOCAL_INVOICES_KEY);
+      const fallback = safeGetTenantStorage(LOCAL_INVOICES_KEY, []);
       return { data: fallback, count: fallback.length, error: errStr };
     }
   }
@@ -85,14 +65,14 @@ export class InvoiceService {
 
       if (error) {
         const errStr = handleSupabaseError(error, 'getInvoiceById');
-        const fallback = safeStorageGet(LOCAL_INVOICES_KEY);
+        const fallback = safeGetTenantStorage(LOCAL_INVOICES_KEY, []);
         const match = fallback.find((inv) => inv.id === id);
         return { invoice: match, error: match ? undefined : errStr };
       }
       return { invoice: data };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getInvoiceById');
-      const fallback = safeStorageGet(LOCAL_INVOICES_KEY);
+      const fallback = safeGetTenantStorage(LOCAL_INVOICES_KEY, []);
       const match = fallback.find((inv) => inv.id === id);
       return { invoice: match, error: match ? undefined : errStr };
     }
@@ -131,9 +111,9 @@ export class InvoiceService {
         if (errStr.startsWith('Network Error')) {
           const newId = `inv-${Date.now()}`;
           const localInv = { id: newId, invoice_number: invNumber, ...invoice, invoice_items: items, createdAt: new Date().toISOString() };
-          const local = safeStorageGet(LOCAL_INVOICES_KEY);
+          const local = safeGetTenantStorage(LOCAL_INVOICES_KEY, []);
           local.unshift(localInv);
-          safeStorageSave(LOCAL_INVOICES_KEY, local);
+          safeSaveTenantStorage(LOCAL_INVOICES_KEY, local);
           return { invoiceId: newId };
         }
         return { error: errStr };
@@ -171,9 +151,9 @@ export class InvoiceService {
       const errStr = handleSupabaseError(e, 'createInvoice');
       const newId = `inv-${Date.now()}`;
       const localInv = { id: newId, invoice_number: invNumber, ...invoice, invoice_items: items, createdAt: new Date().toISOString() };
-      const local = safeStorageGet(LOCAL_INVOICES_KEY);
+      const local = safeGetTenantStorage(LOCAL_INVOICES_KEY, []);
       local.unshift(localInv);
-      safeStorageSave(LOCAL_INVOICES_KEY, local);
+      safeSaveTenantStorage(LOCAL_INVOICES_KEY, local);
       return { invoiceId: newId };
     }
   }

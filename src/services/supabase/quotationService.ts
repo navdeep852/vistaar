@@ -3,29 +3,9 @@ import { Quotation, QuotationItem } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError } from '../../lib/supabaseError';
 
+import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+
 const LOCAL_QUOTATIONS_KEY = 'vistaar_local_quotations_db';
-
-const safeStorageGet = (key: string): any[] => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const stored = localStorage.getItem(key);
-      if (stored) return JSON.parse(stored);
-    }
-  } catch (e) {
-    // ignore
-  }
-  return [];
-};
-
-const safeStorageSave = (key: string, items: any[]): void => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(key, JSON.stringify(items));
-    }
-  } catch (e) {
-    // ignore
-  }
-};
 
 export class QuotationService {
   private getWorkspaceId(): string {
@@ -43,13 +23,13 @@ export class QuotationService {
 
       if (error) {
         const errStr = handleSupabaseError(error, 'getQuotations');
-        const fallback = safeStorageGet(LOCAL_QUOTATIONS_KEY);
+        const fallback = safeGetTenantStorage(LOCAL_QUOTATIONS_KEY, []);
         return { data: fallback, error: errStr };
       }
       return { data: data || [] };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getQuotations');
-      const fallback = safeStorageGet(LOCAL_QUOTATIONS_KEY);
+      const fallback = safeGetTenantStorage(LOCAL_QUOTATIONS_KEY, []);
       return { data: fallback, error: errStr };
     }
   }
@@ -85,9 +65,9 @@ export class QuotationService {
         if (errStr.startsWith('Network Error')) {
           const newId = `qt-${Date.now()}`;
           const localQt = { id: newId, quotation_number: qtNumber, ...qt, quotation_items: items, createdAt: new Date().toISOString() };
-          const local = safeStorageGet(LOCAL_QUOTATIONS_KEY);
+          const local = safeGetTenantStorage(LOCAL_QUOTATIONS_KEY, []);
           local.unshift(localQt);
-          safeStorageSave(LOCAL_QUOTATIONS_KEY, local);
+          safeSaveTenantStorage(LOCAL_QUOTATIONS_KEY, local);
           return { quotationId: newId };
         }
         return { error: errStr };
@@ -124,9 +104,9 @@ export class QuotationService {
       const errStr = handleSupabaseError(e, 'createQuotation');
       const newId = `qt-${Date.now()}`;
       const localQt = { id: newId, quotation_number: qtNumber, ...qt, quotation_items: items, createdAt: new Date().toISOString() };
-      const local = safeStorageGet(LOCAL_QUOTATIONS_KEY);
+      const local = safeGetTenantStorage(LOCAL_QUOTATIONS_KEY, []);
       local.unshift(localQt);
-      safeStorageSave(LOCAL_QUOTATIONS_KEY, local);
+      safeSaveTenantStorage(LOCAL_QUOTATIONS_KEY, local);
       return { quotationId: newId };
     }
   }

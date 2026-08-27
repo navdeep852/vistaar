@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { UserProfile, UserRole, UserAccount } from '../types';
 import { validatePassword, validateEmailFormat } from '../lib/passwordPolicy';
+import { store } from './store';
 
 const SESSION_STORAGE_KEY = 'vistaar_user_session';
 const REGISTERED_USERS_KEY = 'vistaar_local_users_db';
@@ -176,7 +177,7 @@ export class SupabaseAuthService {
   }
 
   public getCurrentCompanyId(): string {
-    return this.currentProfile?.companyId || '4f42a205-792d-4bdb-a9e5-be88cbed331a';
+    return this.currentProfile?.companyId || '';
   }
 
   /**
@@ -455,24 +456,26 @@ export class SupabaseAuthService {
       }
 
       if (authData.user) {
-        const newProfile: UserProfile = {
-          id: authData.user.id,
-          companyId: 'ws-' + Math.random().toString(36).substr(2, 9),
-          employeeId: 'VST-00001',
-          name: ownerName.trim(),
-          email: email.trim().toLowerCase(),
-          phone: phone.trim(),
-          department: 'Management',
-          designation: 'Company Owner & Founder',
-          role: 'owner',
-          status: 'Active',
-          businessName: companyName.trim(),
-          mustChangePassword: false,
-          avatarUrl: '',
-        };
-
-        this.currentProfile = newProfile;
-        this.saveSessionToStorage(newProfile);
+        await this.syncProfileFromSupabaseUser(authData.user.id, authData.user.email);
+        if (!this.currentProfile || !this.currentProfile.companyId) {
+          const newProfile: UserProfile = {
+            id: authData.user.id,
+            companyId: authData.user.id,
+            employeeId: 'VST-00001',
+            name: ownerName.trim(),
+            email: email.trim().toLowerCase(),
+            phone: phone.trim(),
+            department: 'Management',
+            designation: 'Company Owner & Founder',
+            role: 'owner',
+            status: 'Active',
+            businessName: companyName.trim(),
+            mustChangePassword: false,
+            avatarUrl: '',
+          };
+          this.currentProfile = newProfile;
+          this.saveSessionToStorage(newProfile);
+        }
         this.notify();
         return { success: true };
       }
@@ -741,6 +744,20 @@ export class SupabaseAuthService {
     }
     this.currentProfile = null;
     this.saveSessionToStorage(null);
+    try {
+      store.resetState();
+    } catch (e) {}
+    if (typeof localStorage !== 'undefined') {
+      try {
+        Object.keys(localStorage).forEach((key) => {
+          if (key.startsWith('vistaar_')) {
+            localStorage.removeItem(key);
+          }
+        });
+      } catch (e) {
+        console.warn('Error clearing cached local storage:', e);
+      }
+    }
     this.notify();
   }
 }

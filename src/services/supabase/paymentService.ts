@@ -3,29 +3,9 @@ import { Payment } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError } from '../../lib/supabaseError';
 
+import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+
 const LOCAL_PAYMENTS_KEY = 'vistaar_local_payments_db';
-
-const safeStorageGet = (key: string): any[] => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const stored = localStorage.getItem(key);
-      if (stored) return JSON.parse(stored);
-    }
-  } catch (e) {
-    // ignore
-  }
-  return [];
-};
-
-const safeStorageSave = (key: string, items: any[]): void => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(key, JSON.stringify(items));
-    }
-  } catch (e) {
-    // ignore
-  }
-};
 
 export class PaymentService {
   private getWorkspaceId(): string {
@@ -43,13 +23,13 @@ export class PaymentService {
 
       if (error) {
         const errStr = handleSupabaseError(error, 'getPayments');
-        const fallback = safeStorageGet(LOCAL_PAYMENTS_KEY);
+        const fallback = safeGetTenantStorage(LOCAL_PAYMENTS_KEY, []);
         return { data: fallback, error: errStr };
       }
       return { data: data || [] };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getPayments');
-      const fallback = safeStorageGet(LOCAL_PAYMENTS_KEY);
+      const fallback = safeGetTenantStorage(LOCAL_PAYMENTS_KEY, []);
       return { data: fallback, error: errStr };
     }
   }
@@ -81,9 +61,9 @@ export class PaymentService {
         if (errStr.startsWith('Network Error')) {
           const newId = `pay-${Date.now()}`;
           const localPay = { id: newId, ...payload, createdAt: new Date().toISOString() };
-          const local = safeStorageGet(LOCAL_PAYMENTS_KEY);
+          const local = safeGetTenantStorage(LOCAL_PAYMENTS_KEY, []);
           local.unshift(localPay);
-          safeStorageSave(LOCAL_PAYMENTS_KEY, local);
+          safeSaveTenantStorage(LOCAL_PAYMENTS_KEY, local);
           return { paymentId: newId };
         }
         return { error: errStr };
@@ -93,9 +73,9 @@ export class PaymentService {
       const errStr = handleSupabaseError(e, 'createPayment');
       const newId = `pay-${Date.now()}`;
       const localPay = { id: newId, ...payload, createdAt: new Date().toISOString() };
-      const local = safeStorageGet(LOCAL_PAYMENTS_KEY);
+      const local = safeGetTenantStorage(LOCAL_PAYMENTS_KEY, []);
       local.unshift(localPay);
-      safeStorageSave(LOCAL_PAYMENTS_KEY, local);
+      safeSaveTenantStorage(LOCAL_PAYMENTS_KEY, local);
       return { paymentId: newId };
     }
   }
