@@ -18,8 +18,13 @@ import {
   Sparkles,
   ChevronDown,
   Layers,
+  DollarSign,
+  CreditCard,
+  AlertCircle,
 } from 'lucide-react';
 import { store } from '../services/store';
+import { invoiceService } from '../services/supabase/invoiceService';
+import { paymentService } from '../services/supabase/paymentService';
 import {
   DocumentType,
   BrandingConfig,
@@ -29,7 +34,7 @@ import {
   FontFamily,
   DOCUMENT_FONTS,
 } from '../types/template';
-import { Customer, Product, QuotationItem, InvoiceItem } from '../types';
+import { Customer, Product, QuotationItem, InvoiceItem, PaymentMethod, InvoiceStatus, Invoice } from '../types';
 import { INVOICE_TEMPLATES } from '../templates/invoiceTemplates';
 import { QUOTATION_TEMPLATES } from '../templates/quotationTemplates';
 import { DocumentRenderer } from '../components/DocumentRenderer';
@@ -75,7 +80,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [mobileTab, setMobileTab] = useState<'editor' | 'preview'>('editor');
   const [editorSection, setEditorSection] = useState<
-    'customer' | 'items' | 'branding' | 'appearance' | 'layout' | 'terms'
+    'customer' | 'items' | 'payment' | 'branding' | 'appearance' | 'layout' | 'terms'
   >('customer');
 
   // Active Template Object
@@ -326,6 +331,47 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
   const taxTotal = calculatedItems.reduce((acc, i) => acc + i.taxAmount, 0);
   const grandTotal = subtotal - discountTotal + taxTotal;
 
+  // 7. Payment Details State (Only relevant for Invoice mode)
+  const [paymentStatus, setPaymentStatus] = useState<'Unpaid' | 'Partially Paid' | 'Paid'>(
+    initialDraftData?.status === 'Paid'
+      ? 'Paid'
+      : initialDraftData?.status === 'Partially Paid'
+      ? 'Partially Paid'
+      : initialDraftData?.paidAmount && initialDraftData.paidAmount > 0
+      ? 'Partially Paid'
+      : 'Unpaid'
+  );
+  const [paidAmountInput, setPaidAmountInput] = useState<number>(
+    initialDraftData?.paidAmount || 0
+  );
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
+    (initialDraftData as any)?.paymentMethod || 'Cash'
+  );
+  const [otherPaymentMethod, setOtherPaymentMethod] = useState<string>('');
+  const [paymentDate, setPaymentDate] = useState<string>(
+    new Date().toISOString().split('T')[0]
+  );
+  const [paymentReference, setPaymentReference] = useState<string>('');
+  const [paymentNotes, setPaymentNotes] = useState<string>('');
+  const [isFinalizing, setIsFinalizing] = useState<boolean>(false);
+
+  // Derived Payment Calculations
+  const effectivePaidAmount =
+    paymentStatus === 'Unpaid'
+      ? 0
+      : paymentStatus === 'Paid'
+      ? grandTotal
+      : Math.min(grandTotal, Math.max(0, Number(paidAmountInput) || 0));
+
+  const balanceAmount = Math.max(0, Number((grandTotal - effectivePaidAmount).toFixed(2)));
+
+  const computedInvoiceStatus: InvoiceStatus =
+    effectivePaidAmount >= grandTotal && grandTotal > 0
+      ? 'Paid'
+      : effectivePaidAmount > 0
+      ? 'Partially Paid'
+      : 'Issued';
+
   // File Upload Handlers (Logo, Signature, Stamp with override validation)
   const handleFileUpload = (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -453,118 +499,184 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
   };
 
   // Finalize Document Action
-  const handleFinalizeDocument = () => {
-    if (!customerName) {
-      showToast('Please enter customer name.', 'error');
-      return;
-    }
-    if (items.length === 0) {
-      showToast('Please add at least one line item.', 'error');
-      return;
-    }
+  const handleFinalizeDocument = async () => {
+    if (isFinalizing) return;
+    setIsFinalizing(true);
 
-    if (saveCustomerToDb && customerMode === 'manual') {
-      store.addCustomer({
-        name: customerName,
-        phone: customerPhone,
-        whatsapp: customerWhatsapp || customerPhone,
-        email: customerEmail,
-        address: customerAddress,
-        city: 'City',
-        state: 'State',
-        pincode: '000000',
-        gstin: customerGstin,
-        customerType: 'Retail',
-        creditLimit: 50000,
-        paymentTerms: 'Immediate',
-      });
-    }
-
-    if (documentType === 'invoice') {
-      // Stock validation for linked catalog products
-      for (const item of items) {
-        if (item.productId) {
-          const storeProd = store.getProducts().find((p: Product) => p.id === item.productId);
-          const avail = (item as any).availableStock ?? storeProd?.currentStock ?? 0;
-          if (item.quantity > avail) {
-
-            showToast(
-              `Insufficient stock for "${item.productName}". Available: ${avail}, Requested: ${item.quantity}`,
-              'error'
-            );
-            return;
-          }
-        }
+    try {
+      if (!customerName || customerName.trim() === '') {
+        showToast('Please enter customer name.', 'error');
+        setIsFinalizing(false);
+        return;
+      }
+      if (items.length === 0) {
+        showToast('Please add at least one line item.', 'error');
+        setIsFinalizing(false);
+        return;
       }
 
-      const inv = store.addInvoice({
+      if (saveCustomerToDb && customerMode === 'manual') {
+        store.addCustomer({
+          name: customerName,
+          phone: customerPhone,
+          whatsapp: customerWhatsapp || customerPhone,
+          email: customerEmail,
+          address: customerAddress,
+          city: 'City',
+          state: 'State',
+          pincode: '000000',
+          gstin: customerGstin,
+          customerType: 'Retail',
+          creditLimit: 50000,
+          paymentTerms: 'Immediate',
+        });
+      }
 
-        customerId: selectedCustomerId || undefined,
-        customerName,
-        customerPhone,
-        customerWhatsapp,
-        customerEmail,
-        customerAddress,
-        customerGstin,
-        status: 'Issued',
-        date,
-        dueDate: dueDateOrValid,
-        items: calculatedItems,
-        subtotal,
-        discountTotal,
-        taxTotal,
-        grandTotal,
-        paidAmount: 0,
-        balanceAmount: grandTotal,
-        notes,
-        terms,
-        footerText,
-        templateId,
-        branding,
-        theme: {
-          primaryColor: customization.primaryColor,
-          secondaryColor: customization.secondaryColor,
-          textColor: customization.textColor,
-          fontFamily: customization.bodyFont,
-        },
-        customization,
-      });
-      showToast(`Invoice ${inv.invoiceNumber} finalized & snapshot saved!`, 'success');
-    } else {
-      const qt = store.addQuotation({
-        customerId: selectedCustomerId || undefined,
-        customerName,
-        customerPhone,
-        customerWhatsapp,
-        customerEmail,
-        customerAddress,
-        customerGstin,
-        status: 'Sent',
-        date,
-        validUntil: dueDateOrValid,
-        items: calculatedItems,
-        subtotal,
-        discountTotal,
-        taxTotal,
-        grandTotal,
-        notes,
-        terms,
-        footerText,
-        templateId,
-        branding,
-        theme: {
-          primaryColor: customization.primaryColor,
-          secondaryColor: customization.secondaryColor,
-          textColor: customization.textColor,
-          fontFamily: customization.bodyFont,
-        },
-        customization,
-      });
-      showToast(`Quotation ${qt.quotationNumber} finalized & snapshot saved!`, 'success');
+      if (documentType === 'invoice') {
+        // Stock validation for linked catalog products
+        for (const item of items) {
+          if (item.productId) {
+            const storeProd = store.getProducts().find((p: Product) => p.id === item.productId);
+            const avail = (item as any).availableStock ?? storeProd?.currentStock ?? 0;
+            if (item.quantity > avail) {
+              const pName = storeProd?.name || item.productName || 'Product';
+              showToast(
+                `Insufficient stock for "${pName}". Available: ${avail}, Requested: ${item.quantity}`,
+                'error'
+              );
+              setIsFinalizing(false);
+              return;
+            }
+          }
+        }
+
+        // Validation: Paid amount check
+        if (paymentStatus === 'Partially Paid' && paidAmountInput > grandTotal) {
+          showToast(`Paid amount (${settings.currency}${paidAmountInput}) cannot exceed grand total (${settings.currency}${grandTotal.toFixed(2)})`, 'error');
+          setIsFinalizing(false);
+          return;
+        }
+
+        const finalMethod: PaymentMethod =
+          paymentMethod === 'Other' && otherPaymentMethod ? (otherPaymentMethod as any) : paymentMethod;
+
+        const invoicePayload: Partial<Invoice> = {
+          customerId: selectedCustomerId || undefined,
+          customerName,
+          customerPhone,
+          customerWhatsapp,
+          customerEmail,
+          customerAddress,
+          customerGstin,
+          status: computedInvoiceStatus,
+          date,
+          dueDate: dueDateOrValid,
+          items: calculatedItems as InvoiceItem[],
+          subtotal,
+          discountTotal,
+          taxTotal,
+          grandTotal,
+          paidAmount: effectivePaidAmount,
+          balanceAmount,
+          notes,
+          terms,
+          footerText,
+          templateId,
+          branding,
+          theme: {
+            primaryColor: customization.primaryColor,
+            secondaryColor: customization.secondaryColor,
+            textColor: customization.textColor,
+            fontFamily: customization.bodyFont,
+          },
+          customization,
+        };
+
+        let targetInvoiceId: string | undefined;
+        let invoiceNumStr = 'INV-2026-0001';
+
+        if (initialDraftData?.id) {
+          const updated = store.updateInvoice(initialDraftData.id, invoicePayload);
+          if (!updated) {
+            showToast('Failed to find existing invoice for update.', 'error');
+            setIsFinalizing(false);
+            return;
+          }
+          targetInvoiceId = updated.id;
+          invoiceNumStr = updated.invoiceNumber;
+
+          // Sync with Supabase
+          await invoiceService.createInvoice({ ...updated, id: initialDraftData.id }, calculatedItems);
+        } else {
+          const inv = store.addInvoice(invoicePayload as any);
+          targetInvoiceId = inv.id;
+          invoiceNumStr = inv.invoiceNumber;
+
+          // Sync with Supabase
+          const subRes = await invoiceService.createInvoice(inv, calculatedItems);
+          if (subRes.error) {
+            showToast(`Finalization Warning: ${subRes.error}`, 'info');
+          }
+        }
+
+        // Automatically record Payment transaction if payment was collected upfront
+        if (effectivePaidAmount > 0 && targetInvoiceId) {
+          const payData = {
+            customerId: selectedCustomerId || 'manual-cust',
+            customerName,
+            invoiceId: targetInvoiceId,
+            invoiceNumber: invoiceNumStr,
+            amount: effectivePaidAmount,
+            date: paymentDate || new Date().toISOString().split('T')[0],
+            method: finalMethod,
+            referenceNo: paymentReference || undefined,
+            notes: paymentNotes || `Payment recorded at invoice finalization`,
+          };
+          store.recordPayment(payData);
+          await paymentService.createPayment(payData);
+        }
+
+        showToast(`Invoice ${invoiceNumStr} finalized & snapshot saved!`, 'success');
+      } else {
+        const qt = store.addQuotation({
+          customerId: selectedCustomerId || undefined,
+          customerName,
+          customerPhone,
+          customerWhatsapp,
+          customerEmail,
+          customerAddress,
+          customerGstin,
+          status: 'Sent',
+          date,
+          validUntil: dueDateOrValid,
+          items: calculatedItems as QuotationItem[],
+          subtotal,
+          discountTotal,
+          taxTotal,
+          grandTotal,
+          notes,
+          terms,
+          footerText,
+          templateId,
+          branding,
+          theme: {
+            primaryColor: customization.primaryColor,
+            secondaryColor: customization.secondaryColor,
+            textColor: customization.textColor,
+            fontFamily: customization.bodyFont,
+          },
+          customization,
+        });
+        showToast(`Quotation ${qt.quotationNumber} finalized & snapshot saved!`, 'success');
+      }
+
+      setFinalizeConfirmOpen(false);
+      onSuccess?.() || onBack();
+    } catch (e: any) {
+      showToast(e.message || 'Failed to finalize document.', 'error');
+    } finally {
+      setIsFinalizing(false);
     }
-
-    setFinalizeConfirmOpen(false);
-    onSuccess?.() || onBack();
   };
 
   // WhatsApp Handoff
@@ -719,6 +831,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
             {[
               { id: 'customer', label: 'Customer', icon: User },
               { id: 'items', label: 'Items', icon: Package },
+              ...(documentType === 'invoice' ? [{ id: 'payment', label: 'Payment', icon: DollarSign }] : []),
               { id: 'branding', label: 'Branding', icon: Upload },
               { id: 'appearance', label: 'Style', icon: Palette },
               { id: 'layout', label: 'Toggles', icon: Sliders },
@@ -1005,6 +1118,170 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* SECTION: PAYMENT DETAILS & RECEIVABLES (INVOICE ONLY) */}
+          {documentType === 'invoice' && (editorSection === 'payment' || editorSection === 'items') && (
+            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card space-y-4 transition-colors">
+              <div className="flex items-center justify-between border-b pb-2 border-slate-100 dark:border-slate-800">
+                <div className="flex items-center gap-2">
+                  <DollarSign className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">
+                    Payment Details & Receivables
+                  </h3>
+                </div>
+                <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full uppercase ${
+                  computedInvoiceStatus === 'Paid'
+                    ? 'bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800'
+                    : computedInvoiceStatus === 'Partially Paid'
+                    ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-800'
+                    : 'bg-rose-100 dark:bg-rose-950/70 text-rose-700 dark:text-rose-400 border border-rose-300 dark:border-rose-800'
+                }`}>
+                  Status: {computedInvoiceStatus}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Payment Status Dropdown */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Payment Collection Status *
+                  </label>
+                  <select
+                    value={paymentStatus}
+                    onChange={(e) => {
+                      const st = e.target.value as 'Unpaid' | 'Partially Paid' | 'Paid';
+                      setPaymentStatus(st);
+                      if (st === 'Unpaid') setPaidAmountInput(0);
+                      else if (st === 'Paid') setPaidAmountInput(grandTotal);
+                      else if (paidAmountInput <= 0 || paidAmountInput >= grandTotal) setPaidAmountInput(Math.round(grandTotal / 2));
+                    }}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="Unpaid">Unpaid (Full Balance Due)</option>
+                    <option value="Partially Paid">Partially Paid (Partial Payment Collected)</option>
+                    <option value="Paid">Paid (Full Payment Received)</option>
+                  </select>
+                </div>
+
+                {/* Amount Paid Input */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Amount Paid ({settings.currency}) *
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={grandTotal}
+                    step="0.01"
+                    disabled={paymentStatus === 'Unpaid'}
+                    value={paymentStatus === 'Paid' ? grandTotal.toFixed(2) : paidAmountInput}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value) || 0;
+                      if (val > grandTotal) {
+                        showToast(`Paid amount cannot exceed grand total (${settings.currency}${grandTotal.toFixed(2)})`, 'info');
+                      }
+                      setPaidAmountInput(val);
+                      if (val <= 0 && paymentStatus !== 'Unpaid') setPaymentStatus('Unpaid');
+                      else if (val >= grandTotal && paymentStatus !== 'Paid') setPaymentStatus('Paid');
+                    }}
+                    className={`w-full px-3 py-2 border rounded-xl text-xs font-bold ${
+                      paymentStatus === 'Unpaid'
+                        ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed border-slate-200 dark:border-slate-800'
+                        : 'bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border-slate-200 dark:border-slate-800 focus:ring-2 focus:ring-blue-500'
+                    }`}
+                  />
+                </div>
+
+                {/* Payment Method */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Payment Method
+                  </label>
+                  <select
+                    disabled={paymentStatus === 'Unpaid'}
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 rounded-xl text-xs font-bold focus:outline-none"
+                  >
+                    <option value="Cash">Cash</option>
+                    <option value="UPI">UPI / QR Code</option>
+                    <option value="Bank Transfer">Bank Transfer (NEFT/IMPS/RTGS)</option>
+                    <option value="Card">Debit / Credit Card</option>
+                    <option value="Cheque">Cheque</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+
+                {/* Payment Date */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Payment Date
+                  </label>
+                  <input
+                    type="date"
+                    disabled={paymentStatus === 'Unpaid'}
+                    value={paymentDate}
+                    onChange={(e) => setPaymentDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 rounded-xl text-xs font-bold"
+                  />
+                </div>
+
+                {/* Reference No */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Reference / Transaction ID
+                  </label>
+                  <input
+                    type="text"
+                    disabled={paymentStatus === 'Unpaid'}
+                    placeholder="e.g. UPI-987654321 / Chq #000123"
+                    value={paymentReference}
+                    onChange={(e) => setPaymentReference(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 rounded-xl text-xs font-medium"
+                  />
+                </div>
+
+                {/* Notes */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Payment Remarks
+                  </label>
+                  <input
+                    type="text"
+                    disabled={paymentStatus === 'Unpaid'}
+                    placeholder="Optional transaction note..."
+                    value={paymentNotes}
+                    onChange={(e) => setPaymentNotes(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 rounded-xl text-xs font-medium"
+                  />
+                </div>
+              </div>
+
+              {/* Live Calculation Summary Banner */}
+              <div className="mt-4 p-3.5 bg-slate-50 dark:bg-slate-950/80 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                <div className="flex justify-between text-xs font-medium text-slate-600 dark:text-slate-400">
+                  <span>Subtotal:</span>
+                  <span className="font-semibold text-slate-900 dark:text-slate-100">{settings.currency}{subtotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-xs font-medium text-slate-600 dark:text-slate-400">
+                  <span>Tax Total:</span>
+                  <span className="font-semibold text-slate-900 dark:text-slate-100">{settings.currency}{taxTotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-xs font-extrabold text-slate-900 dark:text-white pt-1 border-t border-slate-200 dark:border-slate-800">
+                  <span>Grand Total:</span>
+                  <span className="text-blue-600 dark:text-blue-400">{settings.currency}{grandTotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                  <span>Paid Amount:</span>
+                  <span>{settings.currency}{effectivePaidAmount.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-xs font-extrabold text-rose-600 dark:text-rose-400 pt-1 border-t border-slate-200 dark:border-slate-800">
+                  <span>Balance Due:</span>
+                  <span className="text-sm">{settings.currency}{balanceAmount.toFixed(2)}</span>
+                </div>
               </div>
             </div>
           )}
@@ -1503,29 +1780,57 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
       {/* FINALIZE CONFIRMATION MODAL */}
       <Modal
         isOpen={finalizeConfirmOpen}
-        onClose={() => setFinalizeConfirmOpen(false)}
+        onClose={() => !isFinalizing && setFinalizeConfirmOpen(false)}
         title={`Finalize ${documentType === 'invoice' ? 'Invoice' : 'Quotation'}?`}
         subtitle="Once finalized, a permanent snapshot is created for financial audit integrity."
         maxWidth="md"
       >
         <div className="space-y-4">
           <p className="text-xs text-slate-600 dark:text-slate-300">
-            Are you sure you want to finalize this document for <strong>{customerName}</strong> for{' '}
-            <strong>{settings.currency}{grandTotal.toFixed(2)}</strong>?
+            Are you sure you want to finalize this document for <strong>{customerName || 'Customer'}</strong>?
           </p>
+
+          {documentType === 'invoice' && (
+            <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1.5 text-xs">
+              <div className="flex justify-between font-semibold text-slate-700 dark:text-slate-300">
+                <span>Grand Total:</span>
+                <span>{settings.currency}{grandTotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between font-bold text-emerald-600 dark:text-emerald-400">
+                <span>Paid Amount:</span>
+                <span>{settings.currency}{effectivePaidAmount.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between font-extrabold text-rose-600 dark:text-rose-400 pt-1 border-t border-slate-200 dark:border-slate-800">
+                <span>Balance Due:</span>
+                <span>{settings.currency}{balanceAmount.toFixed(2)}</span>
+              </div>
+              <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium pt-1">
+                📦 Stock for catalog line items will be deducted immediately upon finalization.
+              </p>
+            </div>
+          )}
 
           <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
             <button
+              disabled={isFinalizing}
               onClick={() => setFinalizeConfirmOpen(false)}
-              className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold transition-colors"
+              className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold transition-colors disabled:opacity-50"
             >
               Cancel
             </button>
             <button
+              disabled={isFinalizing}
               onClick={handleFinalizeDocument}
-              className="px-5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-500 shadow-md transition-colors"
+              className="px-5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-500 shadow-md transition-colors disabled:opacity-50 flex items-center gap-1.5"
             >
-              Confirm & Finalize
+              {isFinalizing ? (
+                <>
+                  <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                  <span>Finalizing...</span>
+                </>
+              ) : (
+                <span>Confirm & Finalize</span>
+              )}
             </button>
           </div>
         </div>

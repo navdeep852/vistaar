@@ -147,8 +147,8 @@ export class InvoiceService {
         }
       }
 
-      // Step 3: If invoice status is Issued or Paid (Finalized), execute atomic stock deduction
-      const isFinalized = invoice.status === 'Issued' || invoice.status === 'Paid';
+      // Step 3: If invoice status is Issued, Paid, or Partially Paid (Finalized), execute atomic stock deduction
+      const isFinalized = invoice.status === 'Issued' || invoice.status === 'Paid' || invoice.status === 'Partially Paid';
       if (isFinalized) {
         const finRes = await this.finalizeInvoice(invoiceId);
         if (!finRes.success) {

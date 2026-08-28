@@ -611,6 +611,21 @@ class StoreService {
     const year = new Date().getFullYear();
     const invoiceNumber = `INV-${year}-${String(count).padStart(4, '0')}`;
 
+    const paidAmount = Math.max(0, Number(invoiceData.paidAmount) || 0);
+    const grandTotal = Math.max(0, Number(invoiceData.grandTotal) || 0);
+    const balanceAmount = Math.max(0, Number((grandTotal - paidAmount).toFixed(2)));
+
+    let status: InvoiceStatus = invoiceData.status || 'Issued';
+    if (status !== 'Cancelled' && status !== 'Draft') {
+      if (paidAmount >= grandTotal && grandTotal > 0) {
+        status = 'Paid';
+      } else if (paidAmount > 0) {
+        status = 'Partially Paid';
+      } else {
+        status = 'Issued';
+      }
+    }
+
     const snapshot = invoiceData.snapshot || this.buildSnapshot(
       invoiceData.templateId || 'inv-modern-blue',
       invoiceData.branding,
@@ -624,6 +639,9 @@ class StoreService {
       ...invoiceData,
       id: `inv-${Date.now()}`,
       invoiceNumber,
+      paidAmount,
+      balanceAmount,
+      status,
       templateId: invoiceData.templateId || 'inv-modern-blue',
       snapshot,
       isSnapshotFinalized: true,
@@ -631,8 +649,8 @@ class StoreService {
       updatedAt: new Date().toISOString(),
     };
 
-    // Deduct stock for linked product items ONLY if invoice is finalized (Issued / Paid)
-    const isFinalized = newInvoice.status === 'Issued' || newInvoice.status === 'Paid';
+    // Deduct stock for linked product items ONLY if invoice is finalized (Issued / Paid / Partially Paid)
+    const isFinalized = newInvoice.status === 'Issued' || newInvoice.status === 'Paid' || newInvoice.status === 'Partially Paid';
     if (isFinalized) {
       // Validate stock for ALL items before deducting stock for any item
       for (const item of newInvoice.items) {
@@ -653,17 +671,74 @@ class StoreService {
       });
     }
 
-
     this.saveLastUsedTemplate('invoice', newInvoice.templateId);
     this.state.invoices.unshift(newInvoice);
     this.saveToStorage();
     return newInvoice;
   }
 
+  public updateInvoice(id: string, updatedData: Partial<Invoice>): Invoice | null {
+    const invIndex = this.state.invoices.findIndex((i) => i.id === id);
+    if (invIndex === -1) return null;
+
+    const existing = this.state.invoices[invIndex];
+    const paidAmount = updatedData.paidAmount !== undefined ? updatedData.paidAmount : existing.paidAmount;
+    const grandTotal = updatedData.grandTotal !== undefined ? updatedData.grandTotal : existing.grandTotal;
+    const balanceAmount = Math.max(0, Number((grandTotal - paidAmount).toFixed(2)));
+
+    let status = updatedData.status || existing.status;
+    if (status !== 'Cancelled' && status !== 'Draft') {
+      if (paidAmount >= grandTotal && grandTotal > 0) {
+        status = 'Paid';
+      } else if (paidAmount > 0) {
+        status = 'Partially Paid';
+      } else {
+        status = 'Issued';
+      }
+    }
+
+    const updatedInvoice: Invoice = {
+      ...existing,
+      ...updatedData,
+      id: existing.id,
+      invoiceNumber: existing.invoiceNumber,
+      paidAmount,
+      balanceAmount,
+      status,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const wasFinalized = existing.status === 'Issued' || existing.status === 'Paid' || existing.status === 'Partially Paid';
+    const isFinalized = updatedInvoice.status === 'Issued' || updatedInvoice.status === 'Paid' || updatedInvoice.status === 'Partially Paid';
+
+    if (isFinalized && !wasFinalized) {
+      for (const item of updatedInvoice.items) {
+        if (item.productId) {
+          const avail = this.getProductAvailableStock(item.productId);
+          if (avail < item.quantity) {
+            const prod = (this.state.products || []).find((p) => p.id === item.productId);
+            const pName = prod ? prod.name : item.productName || 'Product';
+            throw new Error(`Insufficient stock for "${pName}". Requested ${item.quantity}, but only ${avail} units are available.`);
+          }
+        }
+      }
+
+      updatedInvoice.items.forEach((item) => {
+        if (item.productId) {
+          this.adjustStock(item.productId, 'Sale', -item.quantity, `Invoice Sale ${updatedInvoice.invoiceNumber}`, updatedInvoice.invoiceNumber);
+        }
+      });
+    }
+
+    this.state.invoices[invIndex] = updatedInvoice;
+    this.saveToStorage();
+    return updatedInvoice;
+  }
+
   public finalizeDraftInvoice(invoiceId: string): boolean {
     const inv = this.state.invoices.find((i) => i.id === invoiceId);
     if (!inv) return false;
-    if (inv.status === 'Issued' || inv.status === 'Paid') return true;
+    if (inv.status === 'Issued' || inv.status === 'Paid' || inv.status === 'Partially Paid') return true;
 
     // Validate stock for all items first
     for (const item of inv.items) {
@@ -683,7 +758,8 @@ class StoreService {
       }
     });
 
-    inv.status = 'Issued';
+    inv.status = inv.paidAmount >= inv.grandTotal ? 'Paid' : inv.paidAmount > 0 ? 'Partially Paid' : 'Issued';
+    inv.balanceAmount = Math.max(0, Number((inv.grandTotal - inv.paidAmount).toFixed(2)));
     inv.updatedAt = new Date().toISOString();
     this.saveToStorage();
     return true;
@@ -712,9 +788,9 @@ class StoreService {
     if (paymentData.invoiceId) {
       const inv = this.state.invoices.find((i) => i.id === paymentData.invoiceId);
       if (inv) {
-        const updatedPaid = inv.paidAmount + paymentData.amount;
-        const updatedBalance = Math.max(0, inv.grandTotal - updatedPaid);
-        const newStatus: InvoiceStatus = updatedBalance <= 0 ? 'Paid' : 'Partially Paid';
+        const updatedPaid = Number((inv.paidAmount + paymentData.amount).toFixed(2));
+        const updatedBalance = Math.max(0, Number((inv.grandTotal - updatedPaid).toFixed(2)));
+        const newStatus: InvoiceStatus = updatedBalance <= 0 ? 'Paid' : updatedPaid > 0 ? 'Partially Paid' : inv.status;
 
         inv.paidAmount = updatedPaid;
         inv.balanceAmount = updatedBalance;
