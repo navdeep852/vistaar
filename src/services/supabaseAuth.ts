@@ -345,15 +345,14 @@ export class SupabaseAuthService {
             this.notify();
             return { success: true, userProfile: this.currentProfile || undefined };
           }
-          return { success: false, error: 'Invalid login credentials. Incorrect password.' };
+          return { success: false, error: 'Invalid email or password.' };
         }
       }
     } catch (e) {
       // ignore
     }
 
-    // Surface clean network error message if credentials don't match local demo
-    return { success: false, error: networkErrorMsg };
+    return { success: false, error: 'Invalid email or password.' };
   }
 
   /**
@@ -393,14 +392,26 @@ export class SupabaseAuthService {
   /**
    * Register Company Workspace
    */
-  public async signUpCompany(data: any): Promise<{ success: boolean; error?: string }> {
-    const { companyName, ownerName, email, phone, password, confirmPassword } = data;
+  public async signUpCompany(
+    dataOrName: any,
+    ownerNameArg?: string,
+    emailArg?: string,
+    phoneArg?: string,
+    passwordArg?: string,
+    confirmPasswordArg?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const companyName = typeof dataOrName === 'object' ? dataOrName?.companyName : dataOrName;
+    const ownerName = typeof dataOrName === 'object' ? dataOrName?.ownerName : ownerNameArg;
+    const email = typeof dataOrName === 'object' ? dataOrName?.email : emailArg;
+    const phone = typeof dataOrName === 'object' ? dataOrName?.phone : phoneArg;
+    const password = typeof dataOrName === 'object' ? dataOrName?.password : passwordArg;
+    const confirmPassword = typeof dataOrName === 'object' ? dataOrName?.confirmPassword : (confirmPasswordArg || password);
 
     if (!companyName?.trim() || !ownerName?.trim()) {
       return { success: false, error: 'Please enter Business Name and Owner Name.' };
     }
 
-    if (!validateEmailFormat(email)) {
+    if (!email || !validateEmailFormat(email)) {
       return { success: false, error: 'Please enter a valid email address.' };
     }
 
@@ -522,6 +533,10 @@ export class SupabaseAuthService {
     try {
       const localDbStr = safeStorageGet(REGISTERED_USERS_KEY);
       const localDb: any[] = localDbStr ? JSON.parse(localDbStr) : [];
+      const existing = localDb.find((u) => u.email.toLowerCase() === cleanEmail);
+      if (existing) {
+        return { success: false, error: 'An account with this email address already exists. Please sign in instead.' };
+      }
       localDb.push({
         email: cleanEmail,
         employeeId: 'VST-00001',
@@ -751,17 +766,6 @@ export class SupabaseAuthService {
     try {
       store.resetState();
     } catch (e) {}
-    if (typeof localStorage !== 'undefined') {
-      try {
-        Object.keys(localStorage).forEach((key) => {
-          if (key.startsWith('vistaar_')) {
-            localStorage.removeItem(key);
-          }
-        });
-      } catch (e) {
-        console.warn('Error clearing cached local storage:', e);
-      }
-    }
     this.notify();
   }
 }

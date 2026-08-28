@@ -53,7 +53,6 @@ export const isSupabaseConfigured = (): boolean => {
   if (
     url === 'https://your-supabase-project-id.supabase.co' ||
     url === 'https://placeholder.supabase.co' ||
-    url.includes('kluxsykmnijvkqxelba') ||
     url.includes('placeholder') ||
     url.includes('your-supabase-project-id')
   ) {

@@ -2,12 +2,30 @@ import { supabaseAuthService } from '../supabaseAuth';
 
 const memoryStore: Record<string, string> = {};
 
+const getActiveCompanyId = (): string => {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const stored = localStorage.getItem('vistaar_user_session');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.companyId) return parsed.companyId;
+      }
+    }
+  } catch (e) {}
+  try {
+    if (typeof supabaseAuthService !== 'undefined' && supabaseAuthService?.getCurrentCompanyId) {
+      return supabaseAuthService.getCurrentCompanyId() || 'unauthenticated';
+    }
+  } catch (e) {}
+  return 'unauthenticated';
+};
+
 /**
  * Tenant-scoped Local & In-Memory Storage Helper
  * Ensures fallback offline storage is strictly partitioned by current Workspace ID (auth.uid()).
  */
 export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = []): T[] {
-  const currentWorkspaceId = supabaseAuthService.getCurrentCompanyId() || 'unauthenticated';
+  const currentWorkspaceId = getActiveCompanyId();
   const tenantKey = `${key}_${currentWorkspaceId}`;
 
   if (typeof localStorage !== 'undefined') {
@@ -31,7 +49,7 @@ export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = []): 
 }
 
 export function safeSaveTenantStorage<T = any>(key: string, items: T[]): void {
-  const currentWorkspaceId = supabaseAuthService.getCurrentCompanyId() || 'unauthenticated';
+  const currentWorkspaceId = getActiveCompanyId();
   const tenantKey = `${key}_${currentWorkspaceId}`;
 
   const jsonStr = JSON.stringify(items);
@@ -47,7 +65,7 @@ export function safeSaveTenantStorage<T = any>(key: string, items: T[]): void {
 }
 
 export function safeGetTenantItem<T>(key: string, fallback: T): T {
-  const currentWorkspaceId = supabaseAuthService.getCurrentCompanyId() || 'unauthenticated';
+  const currentWorkspaceId = getActiveCompanyId();
   const tenantKey = `${key}_${currentWorkspaceId}`;
 
   if (typeof localStorage !== 'undefined') {
@@ -71,7 +89,7 @@ export function safeGetTenantItem<T>(key: string, fallback: T): T {
 }
 
 export function safeSaveTenantItem<T>(key: string, item: T): void {
-  const currentWorkspaceId = supabaseAuthService.getCurrentCompanyId() || 'unauthenticated';
+  const currentWorkspaceId = getActiveCompanyId();
   const tenantKey = `${key}_${currentWorkspaceId}`;
 
   const jsonStr = JSON.stringify(item);
@@ -87,18 +105,6 @@ export function safeSaveTenantItem<T>(key: string, item: T): void {
 }
 
 export function clearTenantStorage(): void {
-  Object.keys(memoryStore).forEach((k) => delete memoryStore[k]);
-
-  if (typeof localStorage !== 'undefined') {
-    try {
-      Object.keys(localStorage).forEach((key) => {
-        if (key.startsWith('vistaar_')) {
-          localStorage.removeItem(key);
-        }
-      });
-    } catch (e) {
-      console.warn('Failed to clear localStorage keys during logout:', e);
-    }
-  }
+  // Reset active workspace in-memory cache without purging workspace-partitioned records
 }
 

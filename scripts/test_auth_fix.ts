@@ -3,10 +3,9 @@
  * Verifies all 12 mandatory acceptance criteria.
  */
 
-const { supabaseAuthService } = require('../src/services/supabaseAuth');
-const { store } = require('../src/services/store');
-const { safeGetTenantStorage, safeSaveTenantStorage, clearTenantStorage } = require('../src/services/supabase/safeStorage');
-const { isSupabaseConfigured } = require('../src/lib/supabase');
+import { supabaseAuthService } from '../src/services/supabaseAuth';
+import { safeGetTenantStorage, safeSaveTenantStorage } from '../src/services/supabase/safeStorage';
+import { isSupabaseConfigured } from '../src/lib/supabase';
 
 async function runAuthRegressionSuite() {
   console.log('====================================================');
@@ -16,7 +15,7 @@ async function runAuthRegressionSuite() {
   let passed = 0;
   let failed = 0;
 
-  function assert(condition, testName, detail = '') {
+  function assert(condition: boolean, testName: string, detail = '') {
     if (condition) {
       console.log(`[PASS] ${testName} ${detail ? '(' + detail + ')' : ''}`);
       passed++;
@@ -32,7 +31,7 @@ async function runAuthRegressionSuite() {
 
   // TEST 1 & 2: Registration -> Login -> Logout -> Login Again
   const testEmail = `new_owner_${Date.now()}@vistaar.com`;
-  const testPassword = 'Password2026!';
+  const testPassword = 'Password@2026Secure';
   const companyName = 'Apex Global Ltd';
 
   const regRes = await supabaseAuthService.signUpCompany(companyName, 'Owner Name', testEmail, '9876543210', testPassword);
@@ -67,48 +66,48 @@ async function runAuthRegressionSuite() {
 
   // TEST 6: Duplicate Registration
   const dupRegRes = await supabaseAuthService.signUpCompany(companyName, 'Owner Name', testEmail, '9876543210', testPassword);
-  assert(!dupRegRes.success && dupRegRes.error?.includes('already exists'), 'TEST 6: Duplicate Registration Blocked', `Error: "${dupRegRes.error}"`);
+  assert(!dupRegRes.success && Boolean(dupRegRes.error?.includes('already exists')), 'TEST 6: Duplicate Registration Blocked', `Error: "${dupRegRes.error}"`);
 
   // TEST 7, 8, 9: Multi-User Switch (User A -> User B -> User A) & Tenant Isolation
   const userAEmail = `usera_${Date.now()}@vistaar.com`;
   const userBEmail = `userb_${Date.now()}@vistaar.com`;
 
-  await supabaseAuthService.signUpCompany('Company A', 'User A', userAEmail, '9000000001', 'PassA123!');
+  await supabaseAuthService.signUpCompany('Company A', 'User A', userAEmail, '9000000001', 'PassA@2026Secure');
   const userAProfile = supabaseAuthService.getUser();
-  const companyAId = userAProfile.companyId;
+  const companyAId = userAProfile?.companyId || '';
 
   // Add dummy tenant data for User A
-  safeSaveTenantStorage('local_udharis_db', [{ id: 'ud-a-1', amount: 500 }]);
+  safeSaveTenantStorage('vistaar_local_udharis_db', [{ id: 'ud-a-1', amount: 500 }]);
   await supabaseAuthService.logout();
 
   // User B Registers
-  await supabaseAuthService.signUpCompany('Company B', 'User B', userBEmail, '9000000002', 'PassB123!');
+  await supabaseAuthService.signUpCompany('Company B', 'User B', userBEmail, '9000000002', 'PassB@2026Secure');
   const userBProfile = supabaseAuthService.getUser();
-  const companyBId = userBProfile.companyId;
+  const companyBId = userBProfile?.companyId || '';
 
   // Add dummy tenant data for User B
-  safeSaveTenantStorage('local_udharis_db', [{ id: 'ud-b-1', amount: 1000 }]);
+  safeSaveTenantStorage('vistaar_local_udharis_db', [{ id: 'ud-b-1', amount: 1000 }]);
 
   // Verify User B cannot see User A's data
-  const userBData = safeGetTenantStorage('local_udharis_db', []);
+  const userBData = safeGetTenantStorage('vistaar_local_udharis_db', []);
   assert(userBData.length === 1 && userBData[0].id === 'ud-b-1', 'TEST 9: User B Tenant Data Isolation', 'User B sees only User B data');
 
   await supabaseAuthService.logout();
 
   // Login back as User A
-  await supabaseAuthService.login(userAEmail, 'PassA123!');
+  await supabaseAuthService.login(userAEmail, 'PassA@2026Secure');
   const userAReloaded = supabaseAuthService.getUser();
   assert(userAReloaded?.companyId === companyAId, 'TEST 7: User A Multi-Session Switching', 'User A restored');
 
-  const userAData = safeGetTenantStorage('local_udharis_db', []);
+  const userAData = safeGetTenantStorage('vistaar_local_udharis_db', []);
   assert(userAData.length === 1 && userAData[0].id === 'ud-a-1', 'TEST 8: User A Tenant Data Isolation', 'User A sees only User A data');
 
   // TEST 10 & 11: Security Inspections
-  assert(companyAId !== companyBId, 'TEST 8 & 9: Workspace ID Uniqueness', `WS A: ${companyAId} != WS B: ${companyBId}`);
+  assert(companyAId !== companyBId, 'TEST 10 & 11: Workspace ID Uniqueness', `WS A: ${companyAId} != WS B: ${companyBId}`);
 
   console.log('\n====================================================');
   console.log(`    RESULTS: ${passed} PASSED, ${failed} FAILED    `);
-  console.log('====================================================');
+  console.log('====================================================\n');
 
   if (failed > 0) {
     process.exit(1);
