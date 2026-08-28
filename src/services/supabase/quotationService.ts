@@ -23,13 +23,13 @@ export class QuotationService {
 
       if (error) {
         const errStr = handleSupabaseError(error, 'getQuotations');
-        const fallback = safeGetTenantStorage(LOCAL_QUOTATIONS_KEY, []);
+        const fallback = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
         return { data: fallback, error: errStr };
       }
       return { data: data || [] };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getQuotations');
-      const fallback = safeGetTenantStorage(LOCAL_QUOTATIONS_KEY, []);
+      const fallback = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
       return { data: fallback, error: errStr };
     }
   }
@@ -65,7 +65,7 @@ export class QuotationService {
         if (errStr.startsWith('Network Error')) {
           const newId = `qt-${Date.now()}`;
           const localQt = { id: newId, quotation_number: qtNumber, ...qt, quotation_items: items, createdAt: new Date().toISOString() };
-          const local = safeGetTenantStorage(LOCAL_QUOTATIONS_KEY, []);
+          const local = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
           local.unshift(localQt);
           safeSaveTenantStorage(LOCAL_QUOTATIONS_KEY, local);
           return { quotationId: newId };
@@ -104,7 +104,7 @@ export class QuotationService {
       const errStr = handleSupabaseError(e, 'createQuotation');
       const newId = `qt-${Date.now()}`;
       const localQt = { id: newId, quotation_number: qtNumber, ...qt, quotation_items: items, createdAt: new Date().toISOString() };
-      const local = safeGetTenantStorage(LOCAL_QUOTATIONS_KEY, []);
+      const local = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
       local.unshift(localQt);
       safeSaveTenantStorage(LOCAL_QUOTATIONS_KEY, local);
       return { quotationId: newId };

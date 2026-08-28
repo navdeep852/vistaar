@@ -23,13 +23,13 @@ export class ExpenseService {
 
       if (error) {
         const errStr = handleSupabaseError(error, 'getExpenses');
-        const fallback = safeGetTenantStorage(LOCAL_EXPENSES_KEY, []);
+        const fallback = safeGetTenantStorage<any>(LOCAL_EXPENSES_KEY, []);
         return { data: fallback, error: errStr };
       }
       return { data: data || [] };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getExpenses');
-      const fallback = safeGetTenantStorage(LOCAL_EXPENSES_KEY, []);
+      const fallback = safeGetTenantStorage<any>(LOCAL_EXPENSES_KEY, []);
       return { data: fallback, error: errStr };
     }
   }
@@ -57,7 +57,7 @@ export class ExpenseService {
         if (errStr.startsWith('Network Error')) {
           const newId = `exp-${Date.now()}`;
           const newExp = { id: newId, ...exp, createdAt: new Date().toISOString() };
-          const local = safeGetTenantStorage(LOCAL_EXPENSES_KEY, []);
+          const local = safeGetTenantStorage<any>(LOCAL_EXPENSES_KEY, []);
           local.unshift(newExp);
           safeSaveTenantStorage(LOCAL_EXPENSES_KEY, local);
           return { expenseId: newId };
@@ -69,7 +69,7 @@ export class ExpenseService {
       const errStr = handleSupabaseError(e, 'createExpense');
       const newId = `exp-${Date.now()}`;
       const newExp = { id: newId, ...exp, createdAt: new Date().toISOString() };
-      const local = safeGetTenantStorage(LOCAL_EXPENSES_KEY, []);
+      const local = safeGetTenantStorage<any>(LOCAL_EXPENSES_KEY, []);
       local.unshift(newExp);
       safeSaveTenantStorage(LOCAL_EXPENSES_KEY, local);
       return { expenseId: newId };

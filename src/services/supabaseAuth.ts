@@ -281,6 +281,7 @@ export class SupabaseAuthService {
       if (data.user) {
         await this.syncProfileFromSupabaseUser(data.user.id, data.user.email);
         this.saveSessionToStorage(this.currentProfile);
+        store.reloadTenantState();
         this.notify();
         return {
           success: true,
@@ -312,6 +313,7 @@ export class SupabaseAuthService {
       if (password === 'Vistaar@2026Secure') {
         this.currentProfile = DEMO_PROFILES['admin@vistaar.com'];
         this.saveSessionToStorage(this.currentProfile);
+        store.reloadTenantState();
         this.notify();
         return { success: true, userProfile: this.currentProfile || undefined };
       }
@@ -322,6 +324,7 @@ export class SupabaseAuthService {
       if (password === 'Staff@2026Secure') {
         this.currentProfile = DEMO_PROFILES['priya@vistaar.com'];
         this.saveSessionToStorage(this.currentProfile);
+        store.reloadTenantState();
         this.notify();
         return { success: true, userProfile: this.currentProfile || undefined };
       }
@@ -338,6 +341,7 @@ export class SupabaseAuthService {
           if (match.password === password) {
             this.currentProfile = match.profile;
             this.saveSessionToStorage(this.currentProfile);
+            store.reloadTenantState();
             this.notify();
             return { success: true, userProfile: this.currentProfile || undefined };
           }

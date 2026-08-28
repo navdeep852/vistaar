@@ -20,6 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import { store } from '../services/store';
+import { udhariService } from '../services/supabase/udhariService';
 import { UdhariRecord, UdhariPaymentRecord, PaymentMethod, Customer } from '../types';
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
@@ -91,6 +92,11 @@ export const UdhariView: React.FC = () => {
 
   useEffect(() => {
     refreshData();
+    udhariService.getUdhariRecords().then((res) => {
+      if (res.data && res.data.length > 0) {
+        refreshData();
+      }
+    }).catch(() => {});
     return store.subscribe(refreshData);
   }, []);
 

@@ -33,6 +33,8 @@ import {
 import { BrandingConfig, ThemeConfig, DocumentSnapshot } from '../types/template';
 import { INVOICE_TEMPLATES } from '../templates/invoiceTemplates';
 import { QUOTATION_TEMPLATES } from '../templates/quotationTemplates';
+import { safeGetTenantItem, safeSaveTenantItem, clearTenantStorage } from './supabase/safeStorage';
+
 
 export function calculateUdhariStatus(originalAmount: number, totalReceived: number, dueDate: string): UdhariStatus {
   const outstanding = Math.max(0, originalAmount - totalReceived);
@@ -135,381 +137,26 @@ const initialSeedData: AppState = {
   favoriteTemplates: ['inv-modern-blue', 'qt-modern-blue'],
   lastUsedInvoiceTemplate: 'inv-modern-blue',
   lastUsedQuotationTemplate: 'qt-modern-blue',
-  categories: [
-    { id: 'cat-1', name: 'Electronics', description: 'Gadgets and electronic components' },
-    { id: 'cat-2', name: 'Office Supplies', description: 'Stationery and desk equipment' },
-    { id: 'cat-3', name: 'Hardware & Tools', description: 'Construction and maintenance tools' },
-  ],
-  suppliers: [
-    { id: 'sup-1', name: 'Apex Electronics Pvt Ltd', contactPerson: 'Suresh Kumar', phone: '+91 98111 22233', email: 'sales@apexelectronics.com', address: 'Nehru Place, New Delhi' },
-    { id: 'sup-2', name: 'National Office Wholesale', contactPerson: 'Anil Gupta', phone: '+91 98222 33344', email: 'orders@nationaloffice.com', address: 'Crawford Market, Mumbai' },
-  ],
-  customers: [
-    {
-      id: 'cust-1',
-      name: 'Rajesh Enterprise',
-      phone: '9820011223',
-      whatsapp: '9820011223',
-      email: 'rajesh@enterprise.com',
-      address: 'Shop 12, Main Market',
-      city: 'Mumbai',
-      state: 'Maharashtra',
-      pincode: '400001',
-      gstin: '27ABCDE1234F1Z2',
-      customerType: 'Wholesale',
-      creditLimit: 100000,
-      paymentTerms: 'Net 30',
-      createdAt: '2026-08-01T10:00:00Z',
-      updatedAt: '2026-08-01T10:00:00Z',
-    },
-    {
-      id: 'cust-2',
-      name: 'Priya Sharma',
-      phone: '9833344455',
-      whatsapp: '9833344455',
-      email: 'priya.sharma@gmail.com',
-      address: 'B-402, Green Acres',
-      city: 'Pune',
-      state: 'Maharashtra',
-      pincode: '411001',
-      customerType: 'Retail',
-      creditLimit: 25000,
-      paymentTerms: 'Immediate',
-      createdAt: '2026-08-05T14:30:00Z',
-      updatedAt: '2026-08-05T14:30:00Z',
-    },
-  ],
-  products: [
-    {
-      id: 'prod-1',
-      name: 'Wireless Bluetooth Headset',
-      sku: 'SKU-HEADSET-01',
-      barcode: '8901234567890',
-      categoryId: 'cat-1',
-      unit: 'Pcs',
-      buyPrice: 1200,
-      sellingPrice: 1999,
-      minimumStock: 10,
-      currentStock: 35,
-      taxPercent: 18,
-      createdAt: '2026-08-01T10:00:00Z',
-      updatedAt: '2026-08-01T10:00:00Z',
-    },
-    {
-      id: 'prod-2',
-      name: 'Ergonomic Desk Chair',
-      productName: 'Ergonomic Desk Chair',
-      partNumber: 'SKU-CHAIR-02',
-      productCode: 'SKU-CHAIR-02',
-      sku: 'SKU-CHAIR-02',
-      barcode: '8901234567891',
-      categoryId: 'cat-2',
-      unit: 'Pcs',
-      buyPrice: 3500,
-      currentBuyPrice: 3500,
-      sellingPrice: 5999,
-      currentSellPrice: 5999,
-      minimumStock: 5,
-      minimumStockLevel: 5,
-      currentStock: 4,
-      taxPercent: 18,
-      createdAt: '2026-08-01T10:00:00Z',
-      updatedAt: '2026-08-01T10:00:00Z',
-      active: true,
-    },
-    {
-      id: 'prod-3',
-      name: 'ABC Bearing',
-      productName: 'ABC Bearing',
-      partNumber: '10009106A',
-      productCode: '10009106A',
-      sku: '10009106A',
-      categoryId: 'cat-3',
-      category: 'Hardware & Tools',
-      brand: 'ABC Bearings',
-      unit: 'Pcs',
-      buyPrice: 120,
-      currentBuyPrice: 125,
-      sellingPrice: 175,
-      currentSellPrice: 175,
-      minimumStock: 10,
-      minimumStockLevel: 10,
-      currentStock: 25,
-      taxPercent: 18,
-      createdAt: '2026-08-10T10:00:00Z',
-      updatedAt: '2026-08-18T10:00:00Z',
-      active: true,
-    },
-  ],
+  categories: [],
+  suppliers: [],
+  customers: [],
+  products: [],
   inventoryTransactions: [],
   quotations: [],
   invoices: [],
   payments: [],
-  expenses: [
-    {
-      id: 'exp-2026-001',
-      category: 'Other',
-      expenseName: 'Computer Repair',
-      amount: 5000,
-      date: '2026-08-23',
-      paidTo: 'TechCare Solutions',
-      referenceNo: 'TXN-9988',
-      notes: 'Repaired motherboard for office workstation',
-      createdAt: '2026-08-23T07:00:00Z',
-    },
-    {
-      id: 'exp-2026-002',
-      category: 'Marketing',
-      amount: 2000,
-      date: '2026-08-22',
-      paidTo: 'Facebook Ads',
-      referenceNo: 'FB-9021',
-      notes: 'Social media ad campaign',
-      createdAt: '2026-08-22T10:00:00Z',
-    },
-    {
-      id: 'exp-2026-003',
-      category: 'Electricity',
-      amount: 8500,
-      date: '2026-08-21',
-      paidTo: 'State Electricity Board',
-      referenceNo: 'EB-2026-08',
-      notes: 'Monthly power bill',
-      createdAt: '2026-08-21T09:00:00Z',
-    },
-    {
-      id: 'exp-2026-004',
-      category: 'Rent',
-      amount: 25000,
-      date: '2026-08-01',
-      paidTo: 'Apex Properties',
-      referenceNo: 'CHQ-40291',
-      notes: 'August shop rent',
-      createdAt: '2026-08-01T08:00:00Z',
-    },
-    {
-      id: 'exp-2025-001',
-      category: 'Maintenance',
-      amount: 3200,
-      date: '2025-12-15',
-      paidTo: 'City Plumbing',
-      referenceNo: 'INV-4410',
-      notes: 'Washroom pipe repair',
-      createdAt: '2025-12-15T11:00:00Z',
-    },
-  ],
+  expenses: [],
   followUps: [],
   feedbacks: [],
   offers: [],
   notifications: [],
-  udharis: [
-    {
-      id: 'UD-2026-0001',
-      customerId: 'cust-1',
-      customerNameSnapshot: 'Rajesh Enterprise',
-      phoneSnapshot: '9820011223',
-      originalAmount: 10000,
-      totalReceived: 4000,
-      outstandingAmount: 6000,
-      dueDate: '2026-08-28',
-      notes: '2 bags rice & raw materials',
-      status: 'PARTIALLY PAID',
-      createdAt: '2026-08-15T10:00:00Z',
-      updatedAt: '2026-08-18T14:00:00Z',
-    },
-    {
-      id: 'UD-2026-0002',
-      customerId: 'cust-2',
-      customerNameSnapshot: 'Priya Sharma',
-      phoneSnapshot: '9833344455',
-      originalAmount: 5000,
-      totalReceived: 0,
-      outstandingAmount: 5000,
-      dueDate: '2026-08-30',
-      notes: 'Advance pending for furniture work',
-      status: 'UNPAID',
-      createdAt: '2026-08-20T09:30:00Z',
-      updatedAt: '2026-08-20T09:30:00Z',
-    },
-    {
-      id: 'UD-2026-0003',
-      customerNameSnapshot: 'Amit Verma',
-      phoneSnapshot: '9899988877',
-      originalAmount: 8000,
-      totalReceived: 0,
-      outstandingAmount: 8000,
-      dueDate: '2026-08-10',
-      notes: 'Hardware items delivered',
-      status: 'OVERDUE',
-      createdAt: '2026-08-01T11:00:00Z',
-      updatedAt: '2026-08-01T11:00:00Z',
-    },
-    {
-      id: 'UD-2026-0004',
-      customerNameSnapshot: 'Suresh Patel',
-      phoneSnapshot: '9844455566',
-      originalAmount: 15000,
-      totalReceived: 15000,
-      outstandingAmount: 0,
-      dueDate: '2026-08-25',
-      notes: 'Bulk office stationery',
-      status: 'PAID',
-      createdAt: '2026-08-05T12:00:00Z',
-      updatedAt: '2026-08-12T16:00:00Z',
-    },
-  ],
-  udhariPayments: [
-    {
-      id: 'PAY-2026-0001',
-      udhariId: 'UD-2026-0001',
-      customerId: 'cust-1',
-      amount: 4000,
-      paymentMethod: 'UPI',
-      paymentDate: '2026-08-18',
-      phoneNumber: '9820011223',
-      reference: 'UPI/6049281039',
-      notes: 'First partial payment received via Google Pay',
-      createdAt: '2026-08-18T14:00:00Z',
-    },
-    {
-      id: 'PAY-2026-0002',
-      udhariId: 'UD-2026-0004',
-      amount: 15000,
-      paymentMethod: 'Bank Transfer',
-      paymentDate: '2026-08-12',
-      phoneNumber: '9844455566',
-      reference: 'NEFT-HDFC-91023',
-      notes: 'Full amount settled in bank account',
-      createdAt: '2026-08-12T16:00:00Z',
-    },
-  ],
+  udharis: [],
+  udhariPayments: [],
   inventorySettings: {
     usesPartNumber: true,
   },
-  stockReceipts: [
-    {
-      id: 'rec-1',
-      productId: 'prod-1',
-      receiptNumber: 'GRN-0001',
-      purchaseOrderNumber: 'PO-2026-001',
-      receivedDate: '2026-08-01',
-      quantityReceived: 20,
-      quantityRemaining: 20,
-      buyPrice: 1200,
-      reference: 'Initial Stock Batch',
-      createdAt: '2026-08-01T10:00:00Z',
-      updatedAt: '2026-08-01T10:00:00Z',
-    },
-    {
-      id: 'rec-2',
-      productId: 'prod-1',
-      receiptNumber: 'GRN-0002',
-      purchaseOrderNumber: 'PO-2026-005',
-      receivedDate: '2026-08-15',
-      quantityReceived: 15,
-      quantityRemaining: 15,
-      buyPrice: 1250,
-      reference: 'Second Stock Purchase',
-      createdAt: '2026-08-15T10:00:00Z',
-      updatedAt: '2026-08-15T10:00:00Z',
-    },
-    {
-      id: 'rec-3',
-      productId: 'prod-2',
-      receiptNumber: 'GRN-0003',
-      purchaseOrderNumber: 'PO-2026-002',
-      receivedDate: '2026-08-05',
-      quantityReceived: 4,
-      quantityRemaining: 4,
-      buyPrice: 3500,
-      reference: 'Opening Office Chairs',
-      createdAt: '2026-08-05T10:00:00Z',
-      updatedAt: '2026-08-05T10:00:00Z',
-    },
-    {
-      id: 'rec-4',
-      productId: 'prod-3',
-      receiptNumber: 'GRN-0004',
-      purchaseOrderNumber: 'PO-2026-001',
-      receivedDate: '2026-08-10',
-      quantityReceived: 10,
-      quantityRemaining: 10,
-      buyPrice: 120,
-      reference: 'First Batch ABC Bearings',
-      createdAt: '2026-08-10T10:00:00Z',
-      updatedAt: '2026-08-10T10:00:00Z',
-    },
-    {
-      id: 'rec-5',
-      productId: 'prod-3',
-      receiptNumber: 'GRN-0005',
-      purchaseOrderNumber: 'PO-2026-008',
-      receivedDate: '2026-08-18',
-      quantityReceived: 15,
-      quantityRemaining: 15,
-      buyPrice: 125,
-      reference: 'Second Batch ABC Bearings',
-      createdAt: '2026-08-18T10:00:00Z',
-      updatedAt: '2026-08-18T10:00:00Z',
-    },
-  ],
-  stockMovements: [
-    {
-      id: 'mov-1',
-      productId: 'prod-1',
-      stockReceiptId: 'rec-1',
-      type: 'STOCK_RECEIVED',
-      quantity: 20,
-      date: '2026-08-01',
-      referenceId: 'PO-2026-001',
-      notes: 'Received 20 units @ ₹1,200',
-      createdAt: '2026-08-01T10:00:00Z',
-    },
-    {
-      id: 'mov-2',
-      productId: 'prod-1',
-      stockReceiptId: 'rec-2',
-      type: 'STOCK_RECEIVED',
-      quantity: 15,
-      date: '2026-08-15',
-      referenceId: 'PO-2026-005',
-      notes: 'Received 15 units @ ₹1,250',
-      createdAt: '2026-08-15T10:00:00Z',
-    },
-    {
-      id: 'mov-3',
-      productId: 'prod-2',
-      stockReceiptId: 'rec-3',
-      type: 'STOCK_RECEIVED',
-      quantity: 4,
-      date: '2026-08-05',
-      referenceId: 'PO-2026-002',
-      notes: 'Received 4 units @ ₹3,500',
-      createdAt: '2026-08-05T10:00:00Z',
-    },
-    {
-      id: 'mov-4',
-      productId: 'prod-3',
-      stockReceiptId: 'rec-4',
-      type: 'STOCK_RECEIVED',
-      quantity: 10,
-      date: '2026-08-10',
-      referenceId: 'PO-2026-001',
-      notes: 'Received 10 units @ ₹120',
-      createdAt: '2026-08-10T10:00:00Z',
-    },
-    {
-      id: 'mov-5',
-      productId: 'prod-3',
-      stockReceiptId: 'rec-5',
-      type: 'STOCK_RECEIVED',
-      quantity: 15,
-      date: '2026-08-18',
-      referenceId: 'PO-2026-008',
-      notes: 'Received 15 units @ ₹125',
-      createdAt: '2026-08-18T10:00:00Z',
-    },
-  ],
+  stockReceipts: [],
+  stockMovements: [],
   importSessions: [],
   counterSales: [],
 };
@@ -611,26 +258,28 @@ class StoreService {
 
   private loadFromStorage(): AppState {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        return { ...initialSeedData, ...JSON.parse(stored) };
-      }
+      return safeGetTenantItem<AppState>(STORAGE_KEY, initialSeedData);
     } catch (e) {
-      console.error('Failed to load state from localStorage', e);
+      console.error('Failed to load state from tenant storage', e);
     }
     return initialSeedData;
   }
 
   private saveToStorage() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+      safeSaveTenantItem<AppState>(STORAGE_KEY, this.state);
     } catch (e) {
-      console.error('Failed to save state to localStorage', e);
+      console.error('Failed to save state to tenant storage', e);
     }
     this.notify();
     if (typeof window !== 'undefined') {
       this.pushToServer();
     }
+  }
+
+  public reloadTenantState() {
+    this.state = this.loadFromStorage();
+    this.notify();
   }
 
   public subscribe(listener: () => void): () => void {
@@ -2195,8 +1844,8 @@ class StoreService {
       ...initialSeedData,
       customers: [],
       products: [],
-      categories: initialSeedData.categories,
-      suppliers: initialSeedData.suppliers,
+      categories: [],
+      suppliers: [],
       inventoryTransactions: [],
       quotations: [],
       invoices: [],
@@ -2214,9 +1863,7 @@ class StoreService {
       counterSales: [],
     };
     try {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem(STORAGE_KEY);
-      }
+      clearTenantStorage();
     } catch (e) {}
     this.notify();
   }

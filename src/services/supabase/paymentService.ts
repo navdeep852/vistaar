@@ -23,13 +23,13 @@ export class PaymentService {
 
       if (error) {
         const errStr = handleSupabaseError(error, 'getPayments');
-        const fallback = safeGetTenantStorage(LOCAL_PAYMENTS_KEY, []);
+        const fallback = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
         return { data: fallback, error: errStr };
       }
       return { data: data || [] };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getPayments');
-      const fallback = safeGetTenantStorage(LOCAL_PAYMENTS_KEY, []);
+      const fallback = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
       return { data: fallback, error: errStr };
     }
   }
@@ -61,7 +61,7 @@ export class PaymentService {
         if (errStr.startsWith('Network Error')) {
           const newId = `pay-${Date.now()}`;
           const localPay = { id: newId, ...payload, createdAt: new Date().toISOString() };
-          const local = safeGetTenantStorage(LOCAL_PAYMENTS_KEY, []);
+          const local = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
           local.unshift(localPay);
           safeSaveTenantStorage(LOCAL_PAYMENTS_KEY, local);
           return { paymentId: newId };
@@ -73,7 +73,7 @@ export class PaymentService {
       const errStr = handleSupabaseError(e, 'createPayment');
       const newId = `pay-${Date.now()}`;
       const localPay = { id: newId, ...payload, createdAt: new Date().toISOString() };
-      const local = safeGetTenantStorage(LOCAL_PAYMENTS_KEY, []);
+      const local = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
       local.unshift(localPay);
       safeSaveTenantStorage(LOCAL_PAYMENTS_KEY, local);
       return { paymentId: newId };

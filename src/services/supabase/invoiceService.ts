@@ -42,13 +42,13 @@ export class InvoiceService {
       const { data, count, error } = await query;
       if (error) {
         const errStr = handleSupabaseError(error, 'getInvoices');
-        const fallback = safeGetTenantStorage(LOCAL_INVOICES_KEY, []);
+        const fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
         return { data: fallback, count: fallback.length, error: errStr };
       }
       return { data: data || [], count: count || 0 };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getInvoices');
-      const fallback = safeGetTenantStorage(LOCAL_INVOICES_KEY, []);
+      const fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
       return { data: fallback, count: fallback.length, error: errStr };
     }
   }
@@ -65,14 +65,14 @@ export class InvoiceService {
 
       if (error) {
         const errStr = handleSupabaseError(error, 'getInvoiceById');
-        const fallback = safeGetTenantStorage(LOCAL_INVOICES_KEY, []);
+        const fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
         const match = fallback.find((inv) => inv.id === id);
         return { invoice: match, error: match ? undefined : errStr };
       }
       return { invoice: data };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getInvoiceById');
-      const fallback = safeGetTenantStorage(LOCAL_INVOICES_KEY, []);
+      const fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
       const match = fallback.find((inv) => inv.id === id);
       return { invoice: match, error: match ? undefined : errStr };
     }
@@ -111,7 +111,7 @@ export class InvoiceService {
         if (errStr.startsWith('Network Error')) {
           const newId = `inv-${Date.now()}`;
           const localInv = { id: newId, invoice_number: invNumber, ...invoice, invoice_items: items, createdAt: new Date().toISOString() };
-          const local = safeGetTenantStorage(LOCAL_INVOICES_KEY, []);
+          const local = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
           local.unshift(localInv);
           safeSaveTenantStorage(LOCAL_INVOICES_KEY, local);
           return { invoiceId: newId };
@@ -151,7 +151,7 @@ export class InvoiceService {
       const errStr = handleSupabaseError(e, 'createInvoice');
       const newId = `inv-${Date.now()}`;
       const localInv = { id: newId, invoice_number: invNumber, ...invoice, invoice_items: items, createdAt: new Date().toISOString() };
-      const local = safeGetTenantStorage(LOCAL_INVOICES_KEY, []);
+      const local = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
       local.unshift(localInv);
       safeSaveTenantStorage(LOCAL_INVOICES_KEY, local);
       return { invoiceId: newId };

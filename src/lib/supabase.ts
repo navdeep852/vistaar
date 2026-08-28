@@ -1,27 +1,31 @@
 import { createClient } from '@supabase/supabase-js';
-import fs from 'fs';
-import path from 'path';
 
-// Auto-load .env.local in Node/script environment if process.env is not yet populated
-if (typeof process !== 'undefined' && process?.env && !process.env.VITE_SUPABASE_URL) {
+// Auto-load env in Node/script environment if available
+const proc = (globalThis as any).process;
+if (proc && proc.env && !proc.env.VITE_SUPABASE_URL) {
   try {
-    const envPath = path.resolve(process.cwd(), '.env.local');
-    if (fs.existsSync(envPath)) {
-      const content = fs.readFileSync(envPath, 'utf8');
-      content.split('\n').forEach((line) => {
-        const trimmed = line.trim();
-        if (trimmed && !trimmed.startsWith('#')) {
-          const eqIdx = trimmed.indexOf('=');
-          if (eqIdx > 0) {
-            const key = trimmed.slice(0, eqIdx).trim();
-            const val = trimmed.slice(eqIdx + 1).trim();
-            process.env[key] = val;
+    // dynamically access if in Node
+    const fs = (globalThis as any).require ? (globalThis as any).require('fs') : null;
+    const path = (globalThis as any).require ? (globalThis as any).require('path') : null;
+    if (fs && path) {
+      const envPath = path.resolve(proc.cwd(), '.env.local');
+      if (fs.existsSync(envPath)) {
+        const content: string = fs.readFileSync(envPath, 'utf8');
+        content.split('\n').forEach((line: string) => {
+          const trimmed = line.trim();
+          if (trimmed && !trimmed.startsWith('#')) {
+            const eqIdx = trimmed.indexOf('=');
+            if (eqIdx > 0) {
+              const key = trimmed.slice(0, eqIdx).trim();
+              const val = trimmed.slice(eqIdx + 1).trim();
+              proc.env[key] = val;
+            }
           }
-        }
-      });
+        });
+      }
     }
   } catch (e) {
-    // Ignore error in non-node context
+    // Ignore error in browser/Vite context
   }
 }
 

@@ -23,13 +23,13 @@ export class UdhariService {
 
       if (error) {
         const errStr = handleSupabaseError(error, 'getUdhariRecords');
-        const fallback = safeGetTenantStorage(LOCAL_UDHARI_KEY, []);
+        const fallback = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
         return { data: fallback, error: errStr };
       }
       return { data: data || [] };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getUdhariRecords');
-      const fallback = safeGetTenantStorage(LOCAL_UDHARI_KEY, []);
+      const fallback = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
       return { data: fallback, error: errStr };
     }
   }
@@ -62,7 +62,7 @@ export class UdhariService {
         if (errStr.startsWith('Network Error')) {
           const newId = `ud-${Date.now()}`;
           const localRec = { id: newId, ...payload, createdAt: new Date().toISOString() };
-          const local = safeGetTenantStorage(LOCAL_UDHARI_KEY, []);
+          const local = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
           local.unshift(localRec);
           safeSaveTenantStorage(LOCAL_UDHARI_KEY, local);
           return { udhariId: newId };
@@ -74,7 +74,7 @@ export class UdhariService {
       const errStr = handleSupabaseError(e, 'createUdhari');
       const newId = `ud-${Date.now()}`;
       const localRec = { id: newId, ...payload, createdAt: new Date().toISOString() };
-      const local = safeGetTenantStorage(LOCAL_UDHARI_KEY, []);
+      const local = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
       local.unshift(localRec);
       safeSaveTenantStorage(LOCAL_UDHARI_KEY, local);
       return { udhariId: newId };
