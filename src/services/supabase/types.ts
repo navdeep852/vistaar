@@ -319,21 +319,25 @@ export function fromDbProduct(row: DbProduct): Product {
 }
 
 export function toDbProduct(prod: Partial<Product>, workspaceId: string): Partial<DbProduct> {
+  const name = (prod.name || prod.productName || 'Untitled Product').trim();
+  const partNumber = (prod.partNumber || prod.productCode || '').trim();
+  const sku = (prod.sku || partNumber || `SKU-${Date.now()}`).trim();
+
   return {
     workspace_id: workspaceId,
-    name: prod.name || prod.productName,
-    part_number: prod.partNumber,
-    sku: prod.sku,
-    barcode: prod.barcode,
+    name,
+    part_number: partNumber || undefined,
+    sku,
+    barcode: prod.barcode || undefined,
     category_id: prod.categoryId || undefined,
     supplier_id: prod.supplierId || undefined,
-    unit: prod.unit || 'Pcs',
-    buy_price: prod.buyPrice || 0,
-    selling_price: prod.sellingPrice || 0,
-    minimum_stock: prod.minimumStock || 0,
-    current_stock: prod.currentStock ?? 0,
-    tax_percent: prod.taxPercent || 0,
-    hsn_sac: prod.hsnSac,
-    description: prod.description,
+    unit: prod.unit || 'Piece',
+    buy_price: Number(prod.buyPrice) || 0,
+    selling_price: Number(prod.sellingPrice) || Number(prod.buyPrice) || 0,
+    minimum_stock: Number(prod.minimumStock) || 0,
+    current_stock: Number(prod.currentStock) || 0,
+    tax_percent: Number(prod.taxPercent) || Number(prod.gstRate) || 0,
+    hsn_sac: prod.hsnSac || undefined,
+    description: prod.description || prod.notes || undefined,
   } as any;
 }

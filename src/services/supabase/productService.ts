@@ -22,6 +22,26 @@ export class ProductService {
   }): Promise<{ data: Product[]; count: number; error?: string }> {
     if (!isSupabaseConfigured()) {
       let items = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+      const receipts = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []);
+      const stockMap: Record<string, number> = {};
+      if (receipts && Array.isArray(receipts)) {
+        receipts.forEach((r: any) => {
+          if (r.product_id) {
+            stockMap[r.product_id] = (stockMap[r.product_id] || 0) + (Number(r.quantity_remaining) || 0);
+          }
+        });
+      }
+
+      items = items.map((p) => {
+        const recStock = stockMap[p.id];
+        return {
+          ...p,
+          productName: p.productName || p.name,
+          productCode: p.productCode || p.partNumber || '',
+          currentStock: recStock !== undefined ? recStock : p.currentStock || 0,
+        };
+      });
+
       if (options?.search) {
         const s = options.search.toLowerCase();
         items = items.filter(
@@ -32,7 +52,7 @@ export class ProductService {
         );
       }
       if (options?.categoryId) {
-        items = items.filter((p) => p.category === options.categoryId);
+        items = items.filter((p) => p.category === options.categoryId || p.categoryId === options.categoryId);
       }
       return { data: items, count: items.length };
     }
@@ -96,35 +116,80 @@ export class ProductService {
   }
 
   public async createProduct(product: Partial<Product>): Promise<{ product?: Product; error?: string }> {
+    const prodName = (product.name || (product as any).productName || 'Untitled Product').trim();
+    const partNo = (product.partNumber || (product as any).productCode || '').trim();
+    const skuCode = (product.sku || partNo || `SKU-${Date.now()}`).trim();
+    const initialStock = Number(product.currentStock) || 0;
+
     if (!isSupabaseConfigured()) {
       const fullProd: Product = {
         id: product.id || `prod-${Date.now()}`,
-        name: product.name || 'Untitled Product',
-        sku: product.sku || `SKU-${Date.now()}`,
-        partNumber: product.partNumber || '',
+        name: prodName,
+        productName: prodName,
+        sku: skuCode,
+        partNumber: partNo,
+        productCode: partNo,
         category: product.category || 'General',
         brand: product.brand || '',
         unit: product.unit || 'Piece',
-        buyPrice: product.buyPrice || 0,
-        sellingPrice: product.sellingPrice || 0,
-        currentStock: product.currentStock || 0,
-        minimumStock: product.minimumStock || 5,
+        buyPrice: Number(product.buyPrice) || 0,
+        sellingPrice: Number(product.sellingPrice) || Number(product.buyPrice) || 0,
+        currentStock: initialStock,
+        minimumStock: Number(product.minimumStock) || 5,
         hsnSac: product.hsnSac || '',
-        gstRate: product.gstRate || 18,
+        gstRate: Number(product.gstRate) || 18,
         notes: product.notes || '',
         categoryId: product.categoryId || '',
-        taxPercent: product.taxPercent || product.gstRate || 18,
+        taxPercent: Number(product.taxPercent) || Number(product.gstRate) || 18,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
       const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
       local.unshift(fullProd);
       safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, local);
+
+      // Save initial stock receipt locally if initialStock > 0
+      if (initialStock > 0) {
+        const localReceipts = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []);
+        localReceipts.unshift({
+          id: `rcpt-${Date.now()}`,
+          workspace_id: this.getWorkspaceId(),
+          product_id: fullProd.id,
+          receipt_number: `GRN-${Date.now()}`,
+          purchase_order_number: (product as any).purchaseOrderNumber || '',
+          received_date: (product as any).receivedDate || new Date().toISOString().split('T')[0],
+          quantity_received: initialStock,
+          quantity_remaining: initialStock,
+          buy_price: fullProd.buyPrice,
+          notes: product.notes || 'Initial Stock on Creation',
+          created_at: new Date().toISOString(),
+        });
+        safeSaveTenantStorage('vistaar_local_stock_receipts_db', localReceipts);
+      }
+
       return { product: fullProd };
     }
 
     const wsId = this.getWorkspaceId();
-    const payload = toDbProduct(product, wsId);
+
+    // Resolve Category ID if name provided but ID missing
+    let resolvedCategoryId = product.categoryId;
+    if (!resolvedCategoryId && product.category) {
+      try {
+        const { data: existingCats } = await supabase
+          .from('categories')
+          .select('id, name')
+          .eq('workspace_id', wsId)
+          .ilike('name', product.category.trim());
+        if (existingCats && existingCats.length > 0) {
+          resolvedCategoryId = existingCats[0].id;
+        }
+      } catch (e) {
+        // Ignore category lookup fallback
+      }
+    }
+
+    const payload = toDbProduct({ ...product, categoryId: resolvedCategoryId }, wsId);
 
     try {
       const { data, error } = await supabase
@@ -139,7 +204,9 @@ export class ProductService {
       }
 
       const createdProduct = fromDbProduct(data as DbProduct);
-      const initialStock = product.currentStock || 0;
+      createdProduct.productName = prodName;
+      createdProduct.productCode = partNo;
+      createdProduct.category = product.category || 'General';
 
       // If initial stock is specified, create an initial stock receipt (GRN) in Supabase
       if (initialStock > 0 && createdProduct.id) {
@@ -159,11 +226,15 @@ export class ProductService {
           };
           await supabase.from('stock_receipts').insert([receiptPayload]);
         } catch (e) {
-          // Log warning if stock receipt insert fails but product row exists
           console.warn('Initial stock receipt creation failed:', e);
         }
         createdProduct.currentStock = initialStock;
       }
+
+      // Also cache in local tenant storage for immediate UI rendering
+      const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+      local.unshift(createdProduct);
+      safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, local);
 
       return { product: createdProduct };
     } catch (e: any) {
@@ -180,7 +251,15 @@ export class ProductService {
 
   public async getProductAvailableStock(productId: string): Promise<number> {
     if (!isSupabaseConfigured()) {
-      const p = store.getProducts().find((prod) => prod.id === productId);
+      const receipts = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []).filter(
+        (r: any) => r.product_id === productId
+      );
+      if (receipts.length > 0) {
+        const batchSum = receipts.reduce((acc, row) => acc + (Number(row.quantity_remaining) || 0), 0);
+        return Math.max(0, batchSum);
+      }
+      const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+      const p = local.find((prod) => prod.id === productId) || store.getProducts().find((prod) => prod.id === productId);
       return Math.max(0, Number(p?.currentStock) || 0);
     }
 
@@ -221,6 +300,17 @@ export class ProductService {
   }
 
   public async updateProduct(id: string, product: Partial<Product>): Promise<{ product?: Product; error?: string }> {
+    if (!isSupabaseConfigured()) {
+      const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+      const idx = local.findIndex((p) => p.id === id);
+      if (idx !== -1) {
+        local[idx] = { ...local[idx], ...product, updatedAt: new Date().toISOString() };
+        safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, local);
+        return { product: local[idx] };
+      }
+      return { error: 'Product not found in local storage' };
+    }
+
     const wsId = this.getWorkspaceId();
     const payload = toDbProduct(product, wsId);
 
@@ -245,6 +335,13 @@ export class ProductService {
   }
 
   public async deleteProduct(id: string): Promise<{ success: boolean; error?: string }> {
+    if (!isSupabaseConfigured()) {
+      let local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+      local = local.filter((p) => p.id !== id);
+      safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, local);
+      return { success: true };
+    }
+
     const wsId = this.getWorkspaceId();
     try {
       const { error } = await supabase
@@ -269,6 +366,24 @@ export class ProductService {
   }
 
   public async getProductDetails(id: string): Promise<{ success: boolean; data?: any; error?: string }> {
+    if (!isSupabaseConfigured()) {
+      const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+      const product = local.find((p) => p.id === id);
+      if (!product) return { success: false, error: 'Product not found' };
+
+      const receipts = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []).filter(
+        (r: any) => r.product_id === id
+      );
+      return {
+        success: true,
+        data: {
+          product,
+          stockReceipts: receipts,
+          stockMovements: [],
+        },
+      };
+    }
+
     const wsId = this.getWorkspaceId();
     try {
       const { data: pData, error: pErr } = await supabase
