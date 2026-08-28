@@ -122,6 +122,18 @@ export class InventoryService {
         }
         return { error: errStr };
       }
+      if (data && data.product_id) {
+        // Also update products table current_stock in Supabase
+        const { data: recs } = await supabase
+          .from('stock_receipts')
+          .select('quantity_remaining')
+          .eq('workspace_id', wsId)
+          .eq('product_id', data.product_id);
+        if (recs) {
+          const sum = recs.reduce((acc, r) => acc + (Number(r.quantity_remaining) || 0), 0);
+          await supabase.from('products').update({ current_stock: sum, updated_at: new Date().toISOString() }).eq('id', data.product_id).eq('workspace_id', wsId);
+        }
+      }
       return { receipt: data };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'createStockReceipt');

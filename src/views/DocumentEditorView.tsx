@@ -25,6 +25,7 @@ import {
 import { store } from '../services/store';
 import { invoiceService } from '../services/supabase/invoiceService';
 import { paymentService } from '../services/supabase/paymentService';
+import { productService } from '../services/supabase/productService';
 import {
   DocumentType,
   BrandingConfig,
@@ -533,15 +534,15 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
       }
 
       if (documentType === 'invoice') {
-        // Stock validation for linked catalog products
+        // Live authoritative stock validation for linked catalog products
         for (const item of items) {
           if (item.productId) {
-            const storeProd = store.getProducts().find((p: Product) => p.id === item.productId);
-            const avail = (item as any).availableStock ?? storeProd?.currentStock ?? 0;
-            if (item.quantity > avail) {
+            const liveAvail = await productService.getProductAvailableStock(item.productId);
+            if (item.quantity > liveAvail) {
+              const storeProd = store.getProducts().find((p: Product) => p.id === item.productId);
               const pName = storeProd?.name || item.productName || 'Product';
               showToast(
-                `Insufficient stock for "${pName}". Available: ${avail}, Requested: ${item.quantity}`,
+                `Insufficient stock for "${pName}". Requested ${item.quantity}, but only ${liveAvail} units are available.`,
                 'error'
               );
               setIsFinalizing(false);

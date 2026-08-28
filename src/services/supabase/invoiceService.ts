@@ -4,6 +4,7 @@ import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError } from '../../lib/supabaseError';
 import { store } from '../store';
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+import { productService } from './productService';
 
 
 const LOCAL_INVOICES_KEY = 'vistaar_local_invoices_db';
@@ -199,16 +200,15 @@ export class InvoiceService {
         const qty = Number(item.quantity) || 0;
         if (!productId || qty <= 0) continue;
 
-        const prod = store.getProducts().find((p: Product) => p.id === productId);
-        const currentStock = prod ? prod.currentStock : 0;
+        const currentStock = await productService.getProductAvailableStock(productId);
         if (currentStock < qty) {
+          const prod = store.getProducts().find((p: Product) => p.id === productId);
           const pName = prod ? prod.name : item.product_name || 'Product';
           return {
             success: false,
             error: `Insufficient stock for "${pName}". Requested ${qty}, but only ${currentStock} units are available.`,
           };
         }
-
       }
 
       // Perform stock deduction across all line items

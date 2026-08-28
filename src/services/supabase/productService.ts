@@ -317,6 +317,7 @@ export class ProductService {
             notes: product.notes || 'Initial Stock on Creation',
           };
           await supabase.from('stock_receipts').insert([receiptPayload]);
+          await supabase.from('products').update({ current_stock: initialStock, updated_at: new Date().toISOString() }).eq('id', createdProduct.id).eq('workspace_id', wsId);
         } catch (e) {
           console.warn('Initial stock receipt creation failed:', e);
         }
@@ -366,7 +367,7 @@ export class ProductService {
 
       if (!recErr && receipts && receipts.length > 0) {
         const batchSum = receipts.reduce((acc, row) => acc + (Number(row.quantity_remaining) || 0), 0);
-        if (batchSum > 0) return Math.max(0, batchSum);
+        return Math.max(0, batchSum);
       }
 
       // 2. Fallback to product.current_stock directly on products table
