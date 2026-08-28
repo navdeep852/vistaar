@@ -634,12 +634,25 @@ class StoreService {
     // Deduct stock for linked product items ONLY if invoice is finalized (Issued / Paid)
     const isFinalized = newInvoice.status === 'Issued' || newInvoice.status === 'Paid';
     if (isFinalized) {
+      // Validate stock for ALL items before deducting stock for any item
+      for (const item of newInvoice.items) {
+        if (item.productId) {
+          const avail = this.getProductAvailableStock(item.productId);
+          if (avail < item.quantity) {
+            const prod = (this.state.products || []).find((p) => p.id === item.productId);
+            const pName = prod ? prod.name : item.productName || 'Product';
+            throw new Error(`Insufficient stock for "${pName}". Requested ${item.quantity}, but only ${avail} units are available.`);
+          }
+        }
+      }
+
       newInvoice.items.forEach((item) => {
         if (item.productId) {
           this.adjustStock(item.productId, 'Sale', -item.quantity, `Invoice Sale ${invoiceNumber}`, invoiceNumber);
         }
       });
     }
+
 
     this.saveLastUsedTemplate('invoice', newInvoice.templateId);
     this.state.invoices.unshift(newInvoice);
@@ -1118,8 +1131,13 @@ class StoreService {
 
   public getProductAvailableStock(productId: string): number {
     const receipts = (this.state.stockReceipts || []).filter((r) => r.productId === productId);
-    return receipts.reduce((acc, r) => acc + Math.max(0, r.quantityRemaining), 0);
+    if (receipts.length > 0) {
+      return receipts.reduce((acc, r) => acc + Math.max(0, r.quantityRemaining), 0);
+    }
+    const prod = (this.state.products || []).find((p) => p.id === productId);
+    return prod ? Math.max(0, Number(prod.currentStock) || 0) : 0;
   }
+
 
   public getProducts(): Product[] {
     if (!this.state.products) this.state.products = [];
@@ -1433,31 +1451,49 @@ class StoreService {
       .filter((r) => r.productId === productId && r.quantityRemaining > 0)
       .sort((a, b) => new Date(a.receivedDate).getTime() - new Date(b.receivedDate).getTime());
 
-    let remainingToDeduct = absQty;
-
-    for (const receipt of activeReceipts) {
-      if (remainingToDeduct <= 0) break;
-      const deductFromThisReceipt = Math.min(receipt.quantityRemaining, remainingToDeduct);
-      receipt.quantityRemaining -= deductFromThisReceipt;
-      receipt.updatedAt = now;
-      remainingToDeduct -= deductFromThisReceipt;
-
+    if (activeReceipts.length === 0) {
+      product.currentStock = Math.max(0, (Number(product.currentStock) || 0) - absQty);
       const mov: StockMovement = {
         id: `mov-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         productId,
-        stockReceiptId: receipt.id,
         type,
-        quantity: -deductFromThisReceipt,
+        quantity: -absQty,
         date: now.split('T')[0],
         referenceId: referenceId || 'ADJUSTMENT',
-        notes: notes || `${type} deduction of ${deductFromThisReceipt} units`,
+        notes: notes || `${type} deduction of ${absQty} units`,
         createdAt: now,
       };
+      if (!this.state.stockMovements) this.state.stockMovements = [];
       this.state.stockMovements.unshift(mov);
+    } else {
+      let remainingToDeduct = absQty;
+
+      for (const receipt of activeReceipts) {
+        if (remainingToDeduct <= 0) break;
+        const deductFromThisReceipt = Math.min(receipt.quantityRemaining, remainingToDeduct);
+        receipt.quantityRemaining -= deductFromThisReceipt;
+        receipt.updatedAt = now;
+        remainingToDeduct -= deductFromThisReceipt;
+
+        const mov: StockMovement = {
+          id: `mov-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          productId,
+          stockReceiptId: receipt.id,
+          type,
+          quantity: -deductFromThisReceipt,
+          date: now.split('T')[0],
+          referenceId: referenceId || 'ADJUSTMENT',
+          notes: notes || `${type} deduction of ${deductFromThisReceipt} units`,
+          createdAt: now,
+        };
+        if (!this.state.stockMovements) this.state.stockMovements = [];
+        this.state.stockMovements.unshift(mov);
+      }
     }
 
     product.currentStock = this.getProductAvailableStock(productId);
     product.updatedAt = now;
+
     this.saveToStorage();
   }
 
