@@ -115,6 +115,98 @@ export class ProductService {
     }
   }
 
+  public async searchProducts(searchTerm: string, limit: number = 20): Promise<{ data: Product[]; error?: string }> {
+    const s = (searchTerm || '').trim();
+    if (s.length < 1) return { data: [] };
+
+    // Also get products from local store cache for instant availability
+    const storeProducts = store.getProducts();
+
+    if (!isSupabaseConfigured()) {
+      let items = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+      const allItems = [...items];
+      storeProducts.forEach((sp) => {
+        if (!allItems.some((p) => p.id === sp.id)) {
+          allItems.push(sp);
+        }
+      });
+      const q = s.toLowerCase();
+      const matched = allItems.filter(
+        (p) =>
+          (p.name && p.name.toLowerCase().includes(q)) ||
+          ((p as any).productName && (p as any).productName.toLowerCase().includes(q)) ||
+          (p.sku && p.sku.toLowerCase().includes(q)) ||
+          (p.partNumber && p.partNumber.toLowerCase().includes(q)) ||
+          ((p as any).productCode && (p as any).productCode.toLowerCase().includes(q))
+      ).slice(0, limit);
+
+      return { data: matched };
+    }
+
+
+    const wsId = this.getWorkspaceId();
+    const pattern = `%${s}%`;
+
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .eq('workspace_id', wsId)
+        .or(`name.ilike.${pattern},sku.ilike.${pattern},part_number.ilike.${pattern}`)
+        .order('name', { ascending: true })
+        .limit(limit);
+
+      if (error) {
+        const errStr = handleSupabaseError(error, 'searchProducts');
+        const q = s.toLowerCase();
+        const matched = storeProducts.filter(
+          (p) =>
+            (p.name && p.name.toLowerCase().includes(q)) ||
+            (p.sku && p.sku.toLowerCase().includes(q)) ||
+            (p.partNumber && p.partNumber.toLowerCase().includes(q))
+        ).slice(0, limit);
+        return { data: matched, error: errStr };
+      }
+
+      // Fetch stock receipt sums for accurate stock values
+      const { data: receipts } = await supabase
+        .from('stock_receipts')
+        .select('product_id, quantity_remaining')
+        .eq('workspace_id', wsId);
+
+      const stockMap: Record<string, number> = {};
+      if (receipts && Array.isArray(receipts)) {
+        receipts.forEach((r: any) => {
+          if (r.product_id) {
+            stockMap[r.product_id] = (stockMap[r.product_id] || 0) + (r.quantity_remaining || 0);
+          }
+        });
+      }
+
+      const products = (data as DbProduct[]).map((row) => {
+        const p = fromDbProduct(row);
+        const calcStock = stockMap[row.id];
+        if (calcStock !== undefined) {
+          p.currentStock = calcStock;
+        }
+        return p;
+      });
+
+      return { data: products };
+    } catch (e: any) {
+      const errStr = handleSupabaseError(e, 'searchProducts');
+      const q = s.toLowerCase();
+      const matched = storeProducts.filter(
+        (p) =>
+          (p.name && p.name.toLowerCase().includes(q)) ||
+          (p.sku && p.sku.toLowerCase().includes(q)) ||
+          (p.partNumber && p.partNumber.toLowerCase().includes(q))
+      ).slice(0, limit);
+      return { data: matched, error: errStr };
+    }
+  }
+
+
   public async createProduct(product: Partial<Product>): Promise<{ product?: Product; error?: string }> {
     const prodName = (product.name || (product as any).productName || 'Untitled Product').trim();
     const partNo = (product.partNumber || (product as any).productCode || '').trim();

@@ -38,6 +38,8 @@ import { TemplateGalleryModal } from '../components/TemplateGalleryModal';
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
+import { ProductAutocomplete } from '../components/ProductAutocomplete';
+
 
 interface DocumentEditorViewProps {
   documentType: DocumentType;
@@ -122,12 +124,15 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
     productId?: string;
     productName: string;
     sku?: string;
+    partNumber?: string;
+    availableStock?: number;
     unit: string;
     quantity: number;
     sellingPrice: number;
     discountAmount: number;
     taxPercent: number;
   }
+
 
   const [items, setItems] = useState<EditorItem[]>(
     initialDraftData?.items || [
@@ -267,24 +272,26 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
     ]);
   };
 
-  const handleSelectItemForLine = (index: number, productId: string) => {
-    const prod = products.find((p) => p.id === productId);
-    if (!prod) return;
-
+  const handleSelectProductForLine = (index: number, prod: Product) => {
+    const availStock = Number(prod.currentStock ?? (prod as any).current_stock ?? 0);
     setItems((prev) => {
       const updated = [...prev];
       updated[index] = {
         ...updated[index],
         productId: prod.id,
-        productName: prod.name,
-        sku: prod.sku,
-        unit: prod.unit,
-        sellingPrice: prod.sellingPrice,
-        taxPercent: prod.taxPercent,
+        productName: prod.name || (prod as any).productName || 'Product',
+        sku: prod.sku || (prod as any).product_code || '',
+        partNumber: prod.partNumber || (prod as any).part_number || '',
+        unit: prod.unit || 'Pcs',
+        sellingPrice: prod.sellingPrice ?? (prod as any).selling_price ?? 0,
+        availableStock: availStock,
+        taxPercent: prod.taxPercent ?? 18,
       };
       return updated;
     });
   };
+
+
 
   const handleRemoveItem = (index: number) => {
     setItems((prev) => prev.filter((_, i) => i !== index));
@@ -474,7 +481,24 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
     }
 
     if (documentType === 'invoice') {
+      // Stock validation for linked catalog products
+      for (const item of items) {
+        if (item.productId) {
+          const storeProd = store.getProducts().find((p: Product) => p.id === item.productId);
+          const avail = (item as any).availableStock ?? storeProd?.currentStock ?? 0;
+          if (item.quantity > avail) {
+
+            showToast(
+              `Insufficient stock for "${item.productName}". Available: ${avail}, Requested: ${item.quantity}`,
+              'error'
+            );
+            return;
+          }
+        }
+      }
+
       const inv = store.addInvoice({
+
         customerId: selectedCustomerId || undefined,
         customerName,
         customerPhone,
@@ -857,25 +881,40 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
                       </button>
                     </div>
 
-                    {products.length > 0 && (
-                      <div>
-                        <label className="block text-[10px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">
-                          Select from Product Catalog (Optional)
-                        </label>
-                        <select
-                          value={item.productId || ''}
-                          onChange={(e) => handleSelectItemForLine(idx, e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-medium text-slate-900 dark:text-slate-100"
-                        >
-                          <option value="">-- Manual Item Entry --</option>
-                          {products.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name} ({settings.currency}{p.sellingPrice})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">
+                        Search & Select Product from Catalog
+                      </label>
+                      <ProductAutocomplete
+                        onSelectProduct={(prod) => handleSelectProductForLine(idx, prod)}
+                        selectedProductId={item.productId}
+                        selectedProductName={item.productName}
+                        currency={settings.currency}
+                        fallbackProducts={products}
+                      />
+                      {item.productId && (
+                        <div className="flex items-center justify-between text-[10px] pt-1">
+                          <span className="font-bold text-slate-500 dark:text-slate-400">
+                            Available Stock:{' '}
+                            <strong
+                              className={
+                                (item.quantity || 0) > ((item as any).availableStock ?? 0)
+                                  ? 'text-rose-600 dark:text-rose-400'
+                                  : 'text-emerald-600 dark:text-emerald-400'
+                              }
+                            >
+                              {(item as any).availableStock ?? 0} {item.unit || 'Pcs'}
+                            </strong>
+                          </span>
+                          {documentType === 'invoice' && (item.quantity || 0) > ((item as any).availableStock ?? 0) && (
+                            <span className="font-extrabold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                              ⚠️ Insufficient stock for finalization
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
 
                     <div>
                       <label className="block text-[10px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">

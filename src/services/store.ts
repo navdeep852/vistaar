@@ -631,18 +631,51 @@ class StoreService {
       updatedAt: new Date().toISOString(),
     };
 
-    // Deduct stock for linked product items
-    newInvoice.items.forEach((item) => {
-      if (item.productId) {
-        this.adjustStock(item.productId, 'Sale', -item.quantity, `Invoice Sale ${invoiceNumber}`, invoiceNumber);
-      }
-    });
+    // Deduct stock for linked product items ONLY if invoice is finalized (Issued / Paid)
+    const isFinalized = newInvoice.status === 'Issued' || newInvoice.status === 'Paid';
+    if (isFinalized) {
+      newInvoice.items.forEach((item) => {
+        if (item.productId) {
+          this.adjustStock(item.productId, 'Sale', -item.quantity, `Invoice Sale ${invoiceNumber}`, invoiceNumber);
+        }
+      });
+    }
 
     this.saveLastUsedTemplate('invoice', newInvoice.templateId);
     this.state.invoices.unshift(newInvoice);
     this.saveToStorage();
     return newInvoice;
   }
+
+  public finalizeDraftInvoice(invoiceId: string): boolean {
+    const inv = this.state.invoices.find((i) => i.id === invoiceId);
+    if (!inv) return false;
+    if (inv.status === 'Issued' || inv.status === 'Paid') return true;
+
+    // Validate stock for all items first
+    for (const item of inv.items) {
+      if (item.productId) {
+        const prod = this.state.products.find((p) => p.id === item.productId);
+        const avail = prod ? prod.currentStock : 0;
+        if (avail < item.quantity) {
+          throw new Error(`Insufficient stock for "${item.productName}". Requested ${item.quantity}, available ${avail}.`);
+        }
+      }
+    }
+
+    // Deduct stock for linked items
+    inv.items.forEach((item) => {
+      if (item.productId) {
+        this.adjustStock(item.productId, 'Sale', -item.quantity, `Invoice Sale ${inv.invoiceNumber}`, inv.invoiceNumber);
+      }
+    });
+
+    inv.status = 'Issued';
+    inv.updatedAt = new Date().toISOString();
+    this.saveToStorage();
+    return true;
+  }
+
 
   // Payments
   public getPayments(): Payment[] {
@@ -1233,9 +1266,9 @@ class StoreService {
       return existingProduct;
     }
 
-    // IF NEW MASTER PRODUCT:
     const newId = `prod-${Date.now()}`;
-    const generatedSku = cleanPartNo || `SKU-${Math.floor(1000 + Math.random() * 9000)}`;
+    const generatedSku = (productData.sku || cleanPartNo || `SKU-${Math.floor(1000 + Math.random() * 9000)}`).trim();
+
 
     const newProduct: Product = {
       id: newId,
