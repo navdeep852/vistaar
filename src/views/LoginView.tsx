@@ -14,8 +14,10 @@ import {
 } from 'lucide-react';
 import { supabaseAuthService as auth } from '../services/supabaseAuth';
 import { showToast } from '../components/Toast';
-import logoFullName from '../assets/Vistaar_Logo_With_Name_Light.png';
+import logoFullNameLight from '../assets/Vistaar_Logo_With_Name_Light.png';
+import logoFullNameDark from '../assets/Vistaar_Logo_With_Name.png';
 import { ThemeToggle } from '../components/ThemeToggle';
+
 import { validatePassword } from '../lib/passwordPolicy';
 import { Modal } from '../components/Modal';
 import { UserAccount } from '../types';
@@ -255,12 +257,20 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
 
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center z-10">
         <div className="mb-3">
+          {/* Light Mode Logo (Dark Text) */}
           <img
-            src={logoFullName}
+            src={logoFullNameDark}
             alt="VISTAAR"
-            className="h-20 sm:h-24 mx-auto object-contain drop-shadow-2xl hover:scale-105 transition-transform duration-300"
+            className="h-20 sm:h-24 mx-auto object-contain drop-shadow-xl hover:scale-105 transition-transform duration-300 dark:hidden"
+          />
+          {/* Dark Mode Logo (Light Text) */}
+          <img
+            src={logoFullNameLight}
+            alt="VISTAAR"
+            className="h-20 sm:h-24 mx-auto object-contain drop-shadow-2xl hover:scale-105 transition-transform duration-300 hidden dark:block"
           />
         </div>
+
         <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-slate-900 dark:text-white uppercase">
           VISTAAR
         </h1>
