@@ -22,7 +22,9 @@ import {
   PieChart,
 } from 'lucide-react';
 import { useWorkspace } from '../context/WorkspaceContext';
-import logoFullName from '../assets/Vistaar_Logo_With_Name_Light.png';
+import { useTheme } from '../context/ThemeContext';
+import logoDarkText from '../assets/Vistaar_Logo_With_Name.png';
+import logoLightText from '../assets/Vistaar_Logo_With_Name_Light.png';
 
 export interface DedicatedWorkspaceProps {
   title: string;
@@ -49,6 +51,9 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
 }) => {
   const [isNavOpen, setIsNavOpen] = useState(false);
   const { setIsWorkspaceActive, setActiveWorkspaceTitle } = useWorkspace();
+  const { theme } = useTheme();
+
+  const logoFullName = theme === 'dark' ? logoLightText : logoDarkText;
 
   useEffect(() => {
     setIsWorkspaceActive(true);
@@ -186,16 +191,16 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
           />
 
           {/* Slide-Over Drawer */}
-          <div className="relative w-80 max-w-[85vw] bg-slate-900 text-white h-full shadow-2xl flex flex-col z-10 border-r border-slate-800">
+          <div className="relative w-80 max-w-[85vw] bg-white dark:bg-slate-900 text-slate-900 dark:text-white h-full shadow-2xl flex flex-col z-10 border-r border-slate-200 dark:border-slate-800">
             {/* Drawer Header */}
-            <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/80">
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950/80">
               <div className="flex items-center gap-2">
                 <img src={logoFullName} alt="VISTAAR" className="h-8 w-auto object-contain" />
               </div>
               <button
                 type="button"
                 onClick={() => setIsNavOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -205,7 +210,7 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
             <div className="p-4 overflow-y-auto flex-1 space-y-5">
               {navGroups.map((group, idx) => (
                 <div key={idx}>
-                  <p className="px-2 text-[10px] font-bold text-slate-400 tracking-wider uppercase mb-1.5">
+                  <p className="px-2 text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-wider uppercase mb-1.5">
                     {group.title}
                   </p>
                   <div className="space-y-1">
@@ -220,15 +225,15 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
                           className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                             isActive
                               ? 'bg-blue-600 text-white shadow-md'
-                              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                              : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
                           }`}
                         >
                           <div className="flex items-center gap-3">
-                            <ItemIcon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                            <ItemIcon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-500 dark:text-slate-400'}`} />
                             <span>{item.label}</span>
                           </div>
                           {item.badge && (
-                            <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-black uppercase">
+                            <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[10px] font-black uppercase">
                               {item.badge}
                             </span>
                           )}
@@ -241,9 +246,9 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
             </div>
 
             {/* Drawer Footer */}
-            <div className="p-4 border-t border-slate-800 bg-slate-950/80 text-xs text-slate-400 flex items-center justify-between">
+            <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
               <span>Vistaar ERP</span>
-              <span className="text-emerald-400 font-bold">Online</span>
+              <span className="text-emerald-600 dark:text-emerald-400 font-bold">Online</span>
             </div>
           </div>
         </div>

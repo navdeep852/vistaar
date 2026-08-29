@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Menu,
   X,
@@ -22,12 +22,13 @@ import {
 } from 'lucide-react';
 
 import { supabaseAuthService } from '../services/supabaseAuth';
-
-import logoFullName from '../assets/Vistaar_Logo_With_Name_Light.png';
+import logoDarkText from '../assets/Vistaar_Logo_With_Name.png';
+import logoLightText from '../assets/Vistaar_Logo_With_Name_Light.png';
 import logoIcon from '../assets/Vistaar_Icon_logo.png';
 
 import { ThemeToggle } from './ThemeToggle';
 import { UserAvatar } from './UserAvatar';
+import { useTheme } from '../context/ThemeContext';
 
 interface MobileNavProps {
   activeTab: string;
@@ -42,12 +43,15 @@ export const MobileNav: React.FC<MobileNavProps> = ({
 }) => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [user, setUser] = useState(supabaseAuthService.getUser());
+  const { theme } = useTheme();
 
-  React.useEffect(() => {
+  useEffect(() => {
     const updateAuth = () => setUser(supabaseAuthService.getUser());
     updateAuth();
     return supabaseAuthService.subscribe(updateAuth);
   }, []);
+
+  const logoFullName = theme === 'dark' ? logoLightText : logoDarkText;
 
   const bottomTabs = [
     { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
@@ -88,11 +92,11 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   return (
     <>
       {/* Mobile Top Header */}
-      <header className="lg:hidden h-16 bg-slate-900 text-white flex items-center justify-between px-4 fixed top-0 left-0 right-0 z-40 border-b border-slate-800 no-print">
+      <header className="lg:hidden h-16 bg-white dark:bg-slate-900 text-slate-900 dark:text-white flex items-center justify-between px-4 fixed top-0 left-0 right-0 z-40 border-b border-slate-200 dark:border-slate-800 no-print transition-colors duration-200">
         <div className="flex items-center gap-3">
           <button
             onClick={() => setDrawerOpen(true)}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
           >
             <Menu className="w-6 h-6" />
           </button>
@@ -114,28 +118,28 @@ export const MobileNav: React.FC<MobileNavProps> = ({
       {/* Slide-out Mobile Drawer Backdrop */}
       {drawerOpen && (
         <div
-          className="lg:hidden fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 transition-opacity no-print"
+          className="lg:hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 transition-opacity no-print"
           onClick={() => setDrawerOpen(false)}
         />
       )}
 
       {/* Slide-out Drawer */}
       <div
-        className={`lg:hidden fixed inset-y-0 left-0 w-72 bg-slate-900 text-white z-50 transform transition-transform duration-300 ease-in-out flex flex-col no-print ${
+        className={`lg:hidden fixed inset-y-0 left-0 w-72 bg-white dark:bg-slate-900 text-slate-900 dark:text-white z-50 transform transition-transform duration-300 ease-in-out flex flex-col no-print border-r border-slate-200 dark:border-slate-800 ${
           drawerOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="p-4 flex items-center justify-between border-b border-slate-800">
+        <div className="p-4 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80">
           <div className="flex items-center gap-3 min-w-0">
             <UserAvatar name={user?.name} avatarUrl={user?.avatarUrl} size="md" />
             <div className="min-w-0">
-              <p className="text-xs font-bold text-slate-100 truncate">{user?.name || 'Owner'}</p>
-              <p className="text-[10px] text-blue-400 font-mono font-semibold truncate">{user?.employeeId || 'VST-00001'}</p>
+              <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">{user?.name || 'Owner'}</p>
+              <p className="text-[10px] text-blue-600 dark:text-blue-400 font-mono font-semibold truncate">{user?.employeeId || 'VST-00001'}</p>
             </div>
           </div>
           <button
             onClick={() => setDrawerOpen(false)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+            className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -149,24 +153,24 @@ export const MobileNav: React.FC<MobileNavProps> = ({
               <button
                 key={item.id}
                 onClick={() => handleTabClick(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
                   isActive
                     ? 'bg-blue-600 text-white font-semibold'
-                    : 'text-slate-300 hover:bg-slate-800'
+                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
               >
-                <Icon className="w-4 h-4 text-slate-400" />
+                <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-500 dark:text-slate-400'}`} />
                 <span>{item.label}</span>
               </button>
             );
           })}
         </nav>
 
-        <div className="p-4 border-t border-slate-800 space-y-2">
+        <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80 space-y-2">
           <ThemeToggle variant="button" />
           <button
             onClick={() => supabaseAuthService.logout()}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 transition-colors"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-100 dark:hover:bg-rose-500/20 transition-colors cursor-pointer"
           >
             <LogOut className="w-4 h-4" />
             <span>Sign Out</span>
@@ -183,7 +187,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
             <button
               key={tab.id}
               onClick={() => handleTabClick(tab.id)}
-              className={`flex flex-col items-center justify-center flex-1 h-full py-1 ${
+              className={`flex flex-col items-center justify-center flex-1 h-full py-1 cursor-pointer ${
                 isActive ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-slate-500 dark:text-slate-400 font-medium'
               }`}
             >

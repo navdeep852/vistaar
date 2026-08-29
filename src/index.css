@@ -29,9 +29,9 @@
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
 
-  --sidebar: #0f172a;
-  --sidebar-foreground: #cbd5e1;
-  --sidebar-border: #1e293b;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #334155;
+  --sidebar-border: #e2e8f0;
 }
 
 .dark {
