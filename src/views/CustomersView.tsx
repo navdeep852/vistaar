@@ -18,6 +18,8 @@ import { Customer } from '../types';
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
+import { PhoneInput } from '../components/PhoneInput';
+import { validateIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 
 interface CustomersViewProps {
   initialOpenCreate?: boolean;
@@ -67,10 +69,23 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
       return;
     }
 
+    if (!validateIndianPhoneNumber(phone)) {
+      showToast('Please enter a valid 10-digit Indian phone number (starting with 6-9).', 'error');
+      return;
+    }
+
+    if (whatsapp && !validateIndianPhoneNumber(whatsapp)) {
+      showToast('Please enter a valid 10-digit Indian WhatsApp number.', 'error');
+      return;
+    }
+
+    const cleanPhone = normalizeIndianPhoneNumber(phone);
+    const cleanWhatsapp = whatsapp ? normalizeIndianPhoneNumber(whatsapp) : cleanPhone;
+
     const res = await customerService.addCustomer({
       name,
-      phone,
-      whatsapp: whatsapp || phone,
+      phone: cleanPhone,
+      whatsapp: cleanWhatsapp,
       email,
       address,
       city,
@@ -175,7 +190,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                   <div className="mt-4 space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
                     <p className="flex items-center gap-2">
                       <Phone className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 shrink-0" />
-                      <span>{c.phone}</span>
+                      <span>{formatIndianPhoneNumber(c.phone)}</span>
                     </p>
                     {c.email && (
                       <p className="flex items-center gap-2">
@@ -235,32 +250,20 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                  Phone Number *
-                </label>
-                <input
-                  type="tel"
-                  required
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="9820011223"
-                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
-                />
-              </div>
+              <PhoneInput
+                label="Phone Number *"
+                required
+                value={phone}
+                onChange={setPhone}
+                placeholder="9820011223"
+              />
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                  WhatsApp Number
-                </label>
-                <input
-                  type="tel"
-                  value={whatsapp}
-                  onChange={(e) => setWhatsapp(e.target.value)}
-                  placeholder="9820011223"
-                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-medium text-slate-900 dark:text-slate-100"
-                />
-              </div>
+              <PhoneInput
+                label="WhatsApp Number"
+                value={whatsapp}
+                onChange={setWhatsapp}
+                placeholder="Leave blank to use phone number"
+              />
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">

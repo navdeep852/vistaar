@@ -19,6 +19,7 @@ import { DocumentRenderer } from '../components/DocumentRenderer';
 import { printDocument } from '../services/printService';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { showToast } from '../components/Toast';
+import { toWhatsAppNumber } from '../lib/phoneUtils';
 
 interface QuotationsViewProps {
   initialOpenCreate?: boolean;
@@ -72,8 +73,12 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
 
   const handleSendWhatsApp = (qt: Quotation) => {
     const text = `Hello ${qt.customerName} ji,\n\nPlease find quotation ${qt.quotationNumber} for ${settings.currency}${qt.grandTotal.toLocaleString()}.\nQuotation valid until ${qt.validUntil}.\n\nThank you,\n${settings.businessName}`;
-    const cleanPhone = (qt.customerWhatsapp || qt.customerPhone).replace(/[^0-9]/g, '');
-    const url = `https://wa.me/${cleanPhone.length === 10 ? '91' + cleanPhone : cleanPhone}?text=${encodeURIComponent(text)}`;
+    const cleanPhone = toWhatsAppNumber(qt.customerWhatsapp || qt.customerPhone);
+    if (!cleanPhone) {
+      showToast('Customer phone number is invalid for WhatsApp.', 'error');
+      return;
+    }
+    const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`;
     window.open(url, '_blank');
     showToast(`Opening WhatsApp for ${qt.customerName}...`, 'info');
   };

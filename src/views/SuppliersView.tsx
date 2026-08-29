@@ -20,6 +20,8 @@ import { Supplier, Product } from '../types';
 import { productService } from '../services/supabase';
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
+import { PhoneInput } from '../components/PhoneInput';
+import { validateIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 
 interface SuppliersViewProps {
   onNavigateTab?: (tab: string, supplierFilter?: string) => void;
@@ -123,12 +125,16 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ onNavigateTab }) =
       showToast('Supplier/Company name is required', 'error');
       return;
     }
+    if (phone.trim() && !validateIndianPhoneNumber(phone.trim())) {
+      showToast('Please enter a valid 10-digit Indian phone number (starting with 6-9).', 'error');
+      return;
+    }
     setSaving(true);
     try {
       const payload: Partial<Supplier> = {
         name: name.trim(),
         contactPerson: contactPerson.trim(),
-        phone: phone.trim(),
+        phone: phone.trim() ? normalizeIndianPhoneNumber(phone.trim()) : '',
         email: email.trim(),
         address: address.trim(),
       };
@@ -381,7 +387,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ onNavigateTab }) =
                     {sup.phone && (
                       <div className="flex items-center gap-2">
                         <Phone className="w-3.5 h-3.5 text-slate-400" />
-                        <span>{sup.phone}</span>
+                        <span>{formatIndianPhoneNumber(sup.phone)}</span>
                       </div>
                     )}
                     {sup.email && (
@@ -455,16 +461,12 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ onNavigateTab }) =
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Phone Number</label>
-              <input
-                type="text"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="e.g. +91 98765 43210"
-                className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
-              />
-            </div>
+            <PhoneInput
+              label="Phone Number"
+              value={phone}
+              onChange={setPhone}
+              placeholder="9876543210"
+            />
           </div>
 
           <div>

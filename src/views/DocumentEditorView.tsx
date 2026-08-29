@@ -26,6 +26,8 @@ import { store } from '../services/store';
 import { invoiceService } from '../services/supabase/invoiceService';
 import { paymentService } from '../services/supabase/paymentService';
 import { productService } from '../services/supabase/productService';
+import { PhoneInput } from '../components/PhoneInput';
+import { validateIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 import {
   DocumentType,
   BrandingConfig,
@@ -516,11 +518,25 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         return;
       }
 
+      if (customerPhone && !validateIndianPhoneNumber(customerPhone)) {
+        showToast('Please enter a valid 10-digit Indian phone number.', 'error');
+        setIsFinalizing(false);
+        return;
+      }
+      if (customerWhatsapp && !validateIndianPhoneNumber(customerWhatsapp)) {
+        showToast('Please enter a valid 10-digit Indian WhatsApp number.', 'error');
+        setIsFinalizing(false);
+        return;
+      }
+
+      const cleanPhone = customerPhone ? normalizeIndianPhoneNumber(customerPhone) : '';
+      const cleanWhatsapp = customerWhatsapp ? normalizeIndianPhoneNumber(customerWhatsapp) : cleanPhone;
+
       if (saveCustomerToDb && customerMode === 'manual') {
         store.addCustomer({
           name: customerName,
-          phone: customerPhone,
-          whatsapp: customerWhatsapp || customerPhone,
+          phone: cleanPhone,
+          whatsapp: cleanWhatsapp,
           email: customerEmail,
           address: customerAddress,
           city: 'City',
@@ -564,8 +580,8 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         const invoicePayload: Partial<Invoice> = {
           customerId: selectedCustomerId || undefined,
           customerName,
-          customerPhone,
-          customerWhatsapp,
+          customerPhone: cleanPhone,
+          customerWhatsapp: cleanWhatsapp,
           customerEmail,
           customerAddress,
           customerGstin,
@@ -917,27 +933,19 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">Phone</label>
-                      <input
-                        type="text"
-                        value={customerPhone}
-                        onChange={(e) => setCustomerPhone(e.target.value)}
-                        placeholder="9820011223"
-                        className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 rounded-xl text-xs font-medium"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">WhatsApp</label>
-                      <input
-                        type="text"
-                        value={customerWhatsapp}
-                        onChange={(e) => setCustomerWhatsapp(e.target.value)}
-                        placeholder="9820011223"
-                        className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 rounded-xl text-xs font-medium"
-                      />
-                    </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <PhoneInput
+                      label="Phone"
+                      value={customerPhone}
+                      onChange={setCustomerPhone}
+                      placeholder="9820011223"
+                    />
+                    <PhoneInput
+                      label="WhatsApp"
+                      value={customerWhatsapp}
+                      onChange={setCustomerWhatsapp}
+                      placeholder="9820011223"
+                    />
                   </div>
 
                   <div>

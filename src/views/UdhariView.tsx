@@ -24,6 +24,8 @@ import { udhariService } from '../services/supabase/udhariService';
 import { UdhariRecord, UdhariPaymentRecord, PaymentMethod, Customer } from '../types';
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
+import { PhoneInput } from '../components/PhoneInput';
+import { validateIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 
 type ViewTab = 'udharis' | 'payments' | 'customers';
 type StatusFilter = 'ALL' | 'UNPAID' | 'PARTIALLY PAID' | 'PAID' | 'OVERDUE';
@@ -235,8 +237,8 @@ export const UdhariView: React.FC = () => {
       showToast('Please enter customer name', 'error');
       return;
     }
-    if (!addPhone.trim() || addPhone.trim().length < 6) {
-      showToast('Please enter a valid contact number', 'error');
+    if (!validateIndianPhoneNumber(addPhone)) {
+      showToast('Please enter a valid 10-digit Indian contact number (starting with 6-9).', 'error');
       return;
     }
     const numAmount = parseFloat(addAmount);
@@ -252,7 +254,7 @@ export const UdhariView: React.FC = () => {
     try {
       const newRec = store.addUdhari({
         customerNameSnapshot: addCustomerName,
-        phoneSnapshot: addPhone,
+        phoneSnapshot: normalizeIndianPhoneNumber(addPhone),
         originalAmount: numAmount,
         dueDate: addDueDate,
         notes: addNotes,
@@ -284,6 +286,11 @@ export const UdhariView: React.FC = () => {
     e.preventDefault();
     if (!activeUdhari) return;
 
+    if (!validateIndianPhoneNumber(payPhone)) {
+      setPayError('Please enter a valid 10-digit Indian phone number.');
+      return;
+    }
+
     const numAmount = parseFloat(payAmount);
     if (isNaN(numAmount) || numAmount <= 0) {
       setPayError('Please enter a valid received amount greater than ₹0.');
@@ -301,7 +308,7 @@ export const UdhariView: React.FC = () => {
         amount: numAmount,
         paymentMethod: payMethod,
         paymentDate: payDate,
-        phoneNumber: payPhone,
+        phoneNumber: normalizeIndianPhoneNumber(payPhone),
         reference: payReference,
         notes: payNotes,
       });
@@ -323,15 +330,15 @@ export const UdhariView: React.FC = () => {
       showToast('Please enter customer name', 'error');
       return;
     }
-    if (!editPhone.trim()) {
-      showToast('Please enter contact number', 'error');
+    if (!validateIndianPhoneNumber(editPhone)) {
+      showToast('Please enter a valid 10-digit Indian contact number.', 'error');
       return;
     }
 
     try {
       store.editUdhari(activeUdhari.id, {
         customerNameSnapshot: editCustomerName,
-        phoneSnapshot: editPhone,
+        phoneSnapshot: normalizeIndianPhoneNumber(editPhone),
         originalAmount: activeUdhari.totalReceived === 0 ? parseFloat(editAmount) : undefined,
         dueDate: editDueDate,
         notes: editNotes,
@@ -1082,19 +1089,13 @@ export const UdhariView: React.FC = () => {
           </div>
 
           {/* Contact Number */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
-              Contact Number *
-            </label>
-            <input
-              type="tel"
-              required
-              value={addPhone}
-              onChange={(e) => setAddPhone(e.target.value)}
-              placeholder="e.g. +91 98765 43210"
-              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-500"
-            />
-          </div>
+          <PhoneInput
+            label="Contact Number *"
+            required
+            value={addPhone}
+            onChange={setAddPhone}
+            placeholder="9876543210"
+          />
 
           {/* Amount */}
           <div>
@@ -1282,18 +1283,13 @@ export const UdhariView: React.FC = () => {
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                  Phone Number *
-                </label>
-                <input
-                  type="tel"
-                  required
-                  value={payPhone}
-                  onChange={(e) => setPayPhone(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
-                />
-              </div>
+              <PhoneInput
+                label="Phone Number *"
+                required
+                value={payPhone}
+                onChange={setPayPhone}
+                placeholder="9876543210"
+              />
             </div>
 
             {/* Reference */}
@@ -1517,18 +1513,13 @@ export const UdhariView: React.FC = () => {
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                Contact Number *
-              </label>
-              <input
-                type="tel"
-                required
-                value={editPhone}
-                onChange={(e) => setEditPhone(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
-              />
-            </div>
+            <PhoneInput
+              label="Contact Number *"
+              required
+              value={editPhone}
+              onChange={setEditPhone}
+              placeholder="9876543210"
+            />
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">

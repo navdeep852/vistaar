@@ -29,6 +29,7 @@ import {
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { generateHumanFollowUpMessage, MessageTone } from '../services/messageGenerator';
+import { normalizeIndianPhoneNumber, formatIndianPhoneNumber, toWhatsAppNumber } from '../lib/phoneUtils';
 
 const TOPIC_SUGGESTIONS = [
   'Quotation follow-up',
@@ -184,16 +185,15 @@ export const FollowUpsView: React.FC = () => {
 
   const handleSendViaWhatsApp = (f: FollowUp) => {
     const rawPhone = f.customerWhatsapp || f.customerPhone || '';
-    const cleanPhone = rawPhone.replace(/[^0-9]/g, '');
-    if (!cleanPhone || cleanPhone.length < 10) {
+    const cleanPhone = toWhatsAppNumber(rawPhone);
+    if (!cleanPhone) {
       showToast('Customer does not have a valid WhatsApp phone number.', 'error');
       return;
     }
 
-    const formattedPhone = cleanPhone.length === 10 ? '91' + cleanPhone : cleanPhone;
     const msgText = f.actionConfig?.message || f.notes || f.title;
     const encodedText = encodeURIComponent(msgText);
-    const whatsappUrl = `https://wa.me/${formattedPhone}?text=${encodedText}`;
+    const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodedText}`;
 
     // Open WhatsApp Web or Mobile App in new tab/app launcher
     window.open(whatsappUrl, '_blank');
@@ -217,9 +217,9 @@ export const FollowUpsView: React.FC = () => {
 
   const renderMaskedPhone = (phone?: string) => {
     if (!phone) return 'N/A';
-    const clean = phone.replace(/[^0-9]/g, '');
+    const clean = normalizeIndianPhoneNumber(phone);
     if (clean.length < 4) return '****';
-    return '*'.repeat(Math.max(0, clean.length - 4)) + clean.slice(-4);
+    return '+91 ***** ' + clean.slice(-4);
   };
 
   return (

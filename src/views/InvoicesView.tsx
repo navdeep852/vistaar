@@ -19,6 +19,7 @@ import { DocumentRenderer } from '../components/DocumentRenderer';
 import { printDocument } from '../services/printService';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { showToast } from '../components/Toast';
+import { toWhatsAppNumber } from '../lib/phoneUtils';
 
 interface InvoicesViewProps {
   initialOpenCreate?: boolean;
@@ -100,8 +101,12 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   const handleSendWhatsApp = (inv: Invoice) => {
     const text = `Hello ${inv.customerName} ji,\n\nPlease find invoice ${inv.invoiceNumber} for ${settings.currency}${inv.grandTotal.toLocaleString()}.\nPaid: ${settings.currency}${inv.paidAmount} | Balance Due: ${settings.currency}${inv.balanceAmount}.\n\nThank you,\n${settings.businessName}`;
-    const cleanPhone = (inv.customerWhatsapp || inv.customerPhone).replace(/[^0-9]/g, '');
-    const url = `https://wa.me/${cleanPhone.length === 10 ? '91' + cleanPhone : cleanPhone}?text=${encodeURIComponent(text)}`;
+    const cleanPhone = toWhatsAppNumber(inv.customerWhatsapp || inv.customerPhone);
+    if (!cleanPhone) {
+      showToast('Customer phone number is invalid for WhatsApp.', 'error');
+      return;
+    }
+    const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`;
     window.open(url, '_blank');
     showToast(`Opening WhatsApp for ${inv.customerName}...`, 'info');
   };

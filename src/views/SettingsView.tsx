@@ -39,6 +39,8 @@ import { PasswordRequirementsWidget } from './LoginView';
 import { UserAvatar } from '../components/UserAvatar';
 import { ImageCropModal } from '../components/ImageCropModal';
 import { getUserInitials } from '../lib/utils';
+import { PhoneInput } from '../components/PhoneInput';
+import { validateIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 
 export const SettingsView: React.FC = () => {
   const [currentUser, setCurrentUser] = useState(auth.getUser());
@@ -118,7 +120,20 @@ export const SettingsView: React.FC = () => {
 
   const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const res = await businessSettingsService.updateSettings(formData);
+    if (formData.phone && !validateIndianPhoneNumber(formData.phone)) {
+      showToast('Please enter a valid 10-digit Indian phone number for Business Contact.', 'error');
+      return;
+    }
+    if (formData.alternatePhone && !validateIndianPhoneNumber(formData.alternatePhone)) {
+      showToast('Please enter a valid 10-digit Indian phone number for Alternate Contact.', 'error');
+      return;
+    }
+    const cleanFormData = {
+      ...formData,
+      phone: formData.phone ? normalizeIndianPhoneNumber(formData.phone) : '',
+      alternatePhone: formData.alternatePhone ? normalizeIndianPhoneNumber(formData.alternatePhone) : '',
+    };
+    const res = await businessSettingsService.updateSettings(cleanFormData);
     if (res.success) {
       showToast('Business Profile & Document Branding saved successfully!', 'success');
     } else {
@@ -215,9 +230,14 @@ export const SettingsView: React.FC = () => {
 
   const handleSavePersonalProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (profilePhone && !validateIndianPhoneNumber(profilePhone)) {
+      showToast('Please enter a valid 10-digit Indian phone number.', 'error');
+      return;
+    }
+    const cleanPhone = profilePhone ? normalizeIndianPhoneNumber(profilePhone) : '';
     const res = await auth.updateUserProfile({
       name: profileName,
-      phone: profilePhone,
+      phone: cleanPhone,
       department: profileDept,
       designation: profileDesig,
     });
@@ -232,10 +252,15 @@ export const SettingsView: React.FC = () => {
   // Add Employee Handler
   const handleAddEmployeeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (newEmpPhone && !validateIndianPhoneNumber(newEmpPhone)) {
+      showToast('Please enter a valid 10-digit Indian phone number for the employee.', 'error');
+      return;
+    }
+    const cleanPhone = newEmpPhone ? normalizeIndianPhoneNumber(newEmpPhone) : '';
     const res = await auth.createEmployee({
       name: newEmpName,
       email: newEmpEmail,
-      phone: newEmpPhone,
+      phone: cleanPhone,
       department: newEmpDept,
       designation: newEmpDesig,
       role: newEmpRole,
@@ -453,17 +478,12 @@ export const SettingsView: React.FC = () => {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                      Phone Number
-                    </label>
-                    <input
-                      type="tel"
-                      value={profilePhone}
-                      onChange={(e) => setProfilePhone(e.target.value)}
-                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold"
-                    />
-                  </div>
+                  <PhoneInput
+                    label="Phone Number"
+                    value={profilePhone}
+                    onChange={setProfilePhone}
+                    placeholder="9876543210"
+                  />
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
@@ -572,32 +592,20 @@ export const SettingsView: React.FC = () => {
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                  Phone Number *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formData.phone}
-                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  placeholder="+91 98765 43210"
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
-                />
-              </div>
+              <PhoneInput
+                label="Phone Number *"
+                required
+                value={formData.phone || ''}
+                onChange={(val) => setFormData({ ...formData, phone: val })}
+                placeholder="9876543210"
+              />
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                  Alternate Phone / WhatsApp
-                </label>
-                <input
-                  type="text"
-                  value={formData.alternatePhone || ''}
-                  onChange={(e) => setFormData({ ...formData, alternatePhone: e.target.value })}
-                  placeholder="+91 98111 22233"
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
-                />
-              </div>
+              <PhoneInput
+                label="Alternate Phone / WhatsApp"
+                value={formData.alternatePhone || ''}
+                onChange={(val) => setFormData({ ...formData, alternatePhone: val })}
+                placeholder="9876543210"
+              />
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
@@ -1324,7 +1332,9 @@ export const SettingsView: React.FC = () => {
                           <span className="font-bold text-slate-900 dark:text-slate-100 block">{emp.name}</span>
                           <span className="text-[11px] text-slate-400 dark:text-slate-500">{emp.email}</span>
                         </td>
-                        <td className="p-3.5 text-slate-600 dark:text-slate-300">{emp.phone || '—'}</td>
+                        <td className="p-3.5 text-slate-600 dark:text-slate-300">
+                          {emp.phone ? formatIndianPhoneNumber(emp.phone) : '—'}
+                        </td>
                         <td className="p-3.5">
                           <span className="font-semibold text-slate-800 dark:text-slate-200 block">{emp.department || 'General'}</span>
                           <span className="text-[10px] text-slate-400 dark:text-slate-500">{emp.designation || 'Staff'}</span>
@@ -1754,19 +1764,13 @@ export const SettingsView: React.FC = () => {
               />
             </div>
 
-            <div className="space-y-1">
-              <label className="block font-bold text-slate-700 dark:text-slate-300 uppercase">
-                Phone Number *
-              </label>
-              <input
-                type="tel"
-                required
-                value={newEmpPhone}
-                onChange={(e) => setNewEmpPhone(e.target.value)}
-                placeholder="+91 98765 12345"
-                className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl font-semibold"
-              />
-            </div>
+            <PhoneInput
+              label="Phone Number *"
+              required
+              value={newEmpPhone}
+              onChange={setNewEmpPhone}
+              placeholder="9876543210"
+            />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
