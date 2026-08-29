@@ -489,6 +489,7 @@ export class SupabaseAuthService {
     }
 
     if (!isSupabaseConfigured()) {
+      console.warn('[OTP_REQUEST_ERROR] Supabase Auth is not configured or URL is invalid.');
       return {
         success: false,
         error: 'Email OTP service is unavailable. Please verify that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are configured with a valid Supabase project.',
@@ -496,6 +497,7 @@ export class SupabaseAuthService {
     }
 
     try {
+      console.log(`[OTP_REQUEST_STARTED] Target Email: ${cleanEmail.replace(/^(.)(.*)(@.*)$/, '$1***$3')}`);
       const { data: existingProfile } = await supabase
         .from('profiles')
         .select('id')
@@ -503,6 +505,7 @@ export class SupabaseAuthService {
         .maybeSingle();
 
       if (existingProfile) {
+        console.warn('[OTP_REQUEST_ERROR] Account already exists for this email.');
         return {
           success: false,
           error: 'An account already exists with this email address. Please sign in instead.',
@@ -519,11 +522,15 @@ export class SupabaseAuthService {
 
       if (error) {
         const normalized = normalizeAuthError(error);
+        console.error('[OTP_REQUEST_ERROR]', normalized);
         return { success: false, error: normalized };
       }
+
+      console.log('[OTP_REQUEST_SUCCESS] Supabase Auth OTP email request accepted.');
       return { success: true };
     } catch (err: any) {
       const normalized = normalizeAuthError(err);
+      console.error('[OTP_REQUEST_ERROR] Unhandled exception:', normalized);
       return { success: false, error: normalized };
     }
   }
@@ -540,6 +547,7 @@ export class SupabaseAuthService {
     }
 
     if (!isSupabaseConfigured()) {
+      console.warn('[OTP_VERIFY_ERROR] Supabase Auth is not configured or URL is invalid.');
       return {
         success: false,
         error: 'Unable to verify code: Authentication service is unavailable or unconfigured. Please check your Supabase connection settings.',
@@ -547,6 +555,7 @@ export class SupabaseAuthService {
     }
 
     try {
+      console.log(`[OTP_VERIFY_STARTED] Target Email: ${cleanEmail.replace(/^(.)(.*)(@.*)$/, '$1***$3')}`);
       let { data, error } = await supabase.auth.verifyOtp({
         email: cleanEmail,
         token: cleanToken,
@@ -564,6 +573,7 @@ export class SupabaseAuthService {
       }
 
       if (error) {
+        console.warn('[OTP_VERIFY_ERROR] Supabase verifyOtp rejected token:', error.message);
         if (error.message?.includes('expired') || error.message?.includes('Token has expired')) {
           return { success: false, error: 'The verification code has expired. Please request a new code.' };
         }
@@ -571,12 +581,15 @@ export class SupabaseAuthService {
       }
 
       if (!data || (!data.session && !data.user)) {
+        console.warn('[OTP_VERIFY_ERROR] Supabase verifyOtp returned no session or user.');
         return { success: false, error: 'Verification failed. Could not verify email code with authentication server.' };
       }
 
+      console.log('[OTP_VERIFY_SUCCESS] Supabase Auth OTP successfully verified.');
       return { success: true };
     } catch (err: any) {
       const normalized = normalizeAuthError(err);
+      console.error('[OTP_VERIFY_ERROR] Unhandled exception:', normalized);
       return { success: false, error: normalized };
     }
   }
