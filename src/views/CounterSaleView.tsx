@@ -85,6 +85,7 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   // Form State: New Counter Sale Workspace
   const [custName, setCustName] = useState('Walk-in Customer');
   const [custPhone, setCustPhone] = useState('');
+  const [custPhoneError, setCustPhoneError] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
   const [saleDate, setSaleDate] = useState(new Date().toISOString().split('T')[0]);
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -272,12 +273,16 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
     validationErrors.push(`Discount (${formatCurrency(discountAmount)}) cannot exceed Subtotal.`);
   }
 
-  if (custPhone && !isValidIndianPhoneNumber(custPhone, false)) {
-    validationErrors.push('Please enter a valid 10-digit Indian phone number.');
-  }
-
   // Open Pre-Submission Review Modal
   const handleOpenReviewModal = () => {
+    if (custPhone && !isValidIndianPhoneNumber(custPhone, false)) {
+      setCustPhoneError('Enter a valid 10-digit mobile number starting with 6–9.');
+      document.getElementById('counter-sale-phone')?.focus();
+      return;
+    } else {
+      setCustPhoneError('');
+    }
+
     if (validationErrors.length > 0) {
       showToast(validationErrors[0], 'error');
       return;
@@ -482,9 +487,14 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
                 </div>
 
                 <PhoneInput
+                  id="counter-sale-phone"
                   label="Phone Number (Optional)"
                   value={custPhone}
-                  onChange={setCustPhone}
+                  onChange={(val) => {
+                    setCustPhone(val);
+                    if (custPhoneError) setCustPhoneError('');
+                  }}
+                  error={custPhoneError}
                   placeholder="9876543210"
                 />
               </div>

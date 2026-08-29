@@ -1,4 +1,5 @@
 import React, { ClipboardEvent, ChangeEvent } from 'react';
+import { AlertCircle } from 'lucide-react';
 import { normalizeIndianPhoneNumber } from '../lib/phoneUtils';
 
 export interface PhoneInputProps {
@@ -45,6 +46,8 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
     onChange(normalized);
   };
 
+  const errorId = id ? `${id}-error` : undefined;
+
   return (
     <div className={`space-y-1 ${className}`}>
       {label && (
@@ -56,12 +59,12 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
       <div
         className={`flex rounded-xl overflow-hidden border transition-all ${
           error
-            ? 'border-rose-500 ring-2 ring-rose-500/10'
-            : 'border-slate-200 dark:border-slate-700 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500'
-        } ${disabled ? 'opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-800'}`}
+            ? 'border-rose-500 ring-2 ring-rose-500/10 bg-rose-50/20 dark:bg-rose-950/20'
+            : 'border-slate-200 dark:border-slate-700 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 bg-slate-50 dark:bg-slate-800'
+        } ${disabled ? 'opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-800' : ''}`}
       >
         {/* +91 Country Code Badge */}
-        <div className="flex items-center gap-1 px-3 bg-slate-100 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 text-xs font-bold border-r border-slate-200 dark:border-slate-700 select-none flex-shrink-0">
+        <div className="flex items-center gap-1 px-3 bg-slate-100 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 text-xs font-bold border-r border-slate-200 dark:border-slate-700 select-none shrink-0">
           <span className="text-sm">🇮🇳</span>
           <span>+91</span>
         </div>
@@ -79,12 +82,19 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
           onChange={handleInputChange}
           onPaste={handlePaste}
           onBlur={onBlur}
+          aria-invalid={!!error}
+          aria-describedby={errorId}
           placeholder={placeholder}
           className="w-full px-3 py-2 bg-transparent text-xs font-medium text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none disabled:cursor-not-allowed"
         />
       </div>
 
-      {error && <p className="text-[11px] font-medium text-rose-500 mt-1">{error}</p>}
+      {error && (
+        <p id={errorId} className="text-xs font-semibold text-rose-600 dark:text-rose-400 mt-1 flex items-center gap-1.5 animate-fade-in">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <span>{error}</span>
+        </p>
+      )}
     </div>
   );
 };

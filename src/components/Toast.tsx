@@ -6,6 +6,7 @@ export interface ToastMessage {
   type: 'success' | 'error' | 'info';
   title: string;
   message?: string;
+  duration?: number;
 }
 
 let toastListener: ((toast: ToastMessage) => void) | null = null;
@@ -28,9 +29,11 @@ export const ToastContainer: React.FC = () => {
     toastListener = (toast: ToastMessage) => {
       setToasts((prev) => [...prev, toast]);
 
+      const dismissDelay = toast.duration || (toast.type === 'error' ? 5000 : 3500);
+
       setTimeout(() => {
         setToasts((prev) => prev.filter((t) => t.id !== toast.id));
-      }, 4000);
+      }, dismissDelay);
     };
 
     return () => {
@@ -45,32 +48,36 @@ export const ToastContainer: React.FC = () => {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full px-4 no-print">
+    <div className="fixed top-4 right-4 z-50 flex flex-col gap-2.5 max-w-[380px] w-full px-4 sm:px-0 pointer-events-none no-print">
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`flex items-start gap-3 p-4 rounded-xl shadow-lg border animate-fade-in transition-colors ${
+          role={toast.type === 'error' ? 'alert' : 'status'}
+          aria-live="polite"
+          className={`pointer-events-auto flex items-start gap-3 p-3.5 rounded-2xl shadow-xl border backdrop-blur-md transition-all duration-200 animate-fade-in ${
             toast.type === 'success'
-              ? 'bg-emerald-50 dark:bg-emerald-950/90 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-100'
+              ? 'bg-white/95 dark:bg-slate-900/95 border-emerald-500/30 text-slate-900 dark:text-slate-100 shadow-emerald-500/10'
               : toast.type === 'error'
-              ? 'bg-rose-50 dark:bg-rose-950/90 border-rose-200 dark:border-rose-800 text-rose-900 dark:text-rose-100'
-              : 'bg-blue-50 dark:bg-blue-950/90 border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-100'
+              ? 'bg-white/95 dark:bg-slate-900/95 border-rose-500/30 text-slate-900 dark:text-slate-100 shadow-rose-500/10'
+              : 'bg-white/95 dark:bg-slate-900/95 border-blue-500/30 text-slate-900 dark:text-slate-100 shadow-blue-500/10'
           }`}
         >
-          {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />}
-          {toast.type === 'error' && <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />}
-          {toast.type === 'info' && <Info className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />}
-          
-          <div className="flex-1 min-w-0">
-            <h4 className="text-sm font-semibold">{toast.title}</h4>
-            {toast.message && <p className="text-xs opacity-90 mt-0.5">{toast.message}</p>}
+          {toast.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />}
+          {toast.type === 'error' && <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />}
+          {toast.type === 'info' && <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />}
+
+          <div className="flex-1 min-w-0 pr-1">
+            <h4 className="text-xs font-bold leading-tight text-slate-900 dark:text-slate-100">{toast.title}</h4>
+            {toast.message && <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">{toast.message}</p>}
           </div>
 
           <button
+            type="button"
             onClick={() => removeToast(toast.id)}
-            className="text-gray-400 hover:text-gray-600 transition-colors p-0.5 rounded"
+            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+            aria-label="Close notification"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       ))}

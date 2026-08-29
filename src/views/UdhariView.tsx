@@ -58,6 +58,7 @@ export const UdhariView: React.FC = () => {
   } | null>(null);
 
   // Form State: Add Udhari
+  const [addCustomerId, setAddCustomerId] = useState<string>('');
   const [addCustomerName, setAddCustomerName] = useState('');
   const [addPhone, setAddPhone] = useState('');
   const [addAmount, setAddAmount] = useState<string>('');
@@ -65,7 +66,11 @@ export const UdhariView: React.FC = () => {
     new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]
   );
   const [addNotes, setAddNotes] = useState('');
-  const [addCustomerId, setAddCustomerId] = useState<string>('');
+
+  const [addNameError, setAddNameError] = useState<string>('');
+  const [addPhoneError, setAddPhoneError] = useState<string>('');
+  const [addAmountError, setAddAmountError] = useState<string>('');
+  const [addDueDateError, setAddDueDateError] = useState<string>('');
 
   // Form State: Record Payment
   const [payAmount, setPayAmount] = useState<string>('');
@@ -77,11 +82,13 @@ export const UdhariView: React.FC = () => {
   const [payError, setPayError] = useState<string>('');
 
   // Form State: Edit Udhari
-  const [editCustomerName, setEditCustomerName] = useState('');
-  const [editPhone, setEditPhone] = useState('');
+  const [editCustomerName, setEditCustomerName] = useState<string>('');
+  const [editPhone, setEditPhone] = useState<string>('');
   const [editAmount, setEditAmount] = useState<string>('');
-  const [editDueDate, setEditDueDate] = useState('');
-  const [editNotes, setEditNotes] = useState('');
+  const [editDueDate, setEditDueDate] = useState<string>('');
+  const [editNotes, setEditNotes] = useState<string>('');
+  const [editNameError, setEditNameError] = useState<string>('');
+  const [editPhoneError, setEditPhoneError] = useState<string>('');
 
   const settings = store.getSettings();
   const metrics = store.getUdhariMetrics();
@@ -233,21 +240,45 @@ export const UdhariView: React.FC = () => {
   // Submit Handlers
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    let hasErr = false;
+
     if (!addCustomerName.trim()) {
-      showToast('Please enter customer name', 'error');
-      return;
+      setAddNameError('Customer name is required.');
+      hasErr = true;
+    } else {
+      setAddNameError('');
     }
+
     if (!isValidIndianPhoneNumber(addPhone, true)) {
-      showToast('Please enter a valid 10-digit Indian contact number (starting with 6-9).', 'error');
-      return;
+      setAddPhoneError('Enter a valid 10-digit mobile number starting with 6–9.');
+      hasErr = true;
+    } else {
+      setAddPhoneError('');
     }
+
     const numAmount = parseFloat(addAmount);
     if (isNaN(numAmount) || numAmount <= 0) {
-      showToast('Please enter a valid Udhari amount greater than ₹0', 'error');
-      return;
+      setAddAmountError('Enter a valid Udhari amount greater than ₹0.');
+      hasErr = true;
+    } else {
+      setAddAmountError('');
     }
+
     if (!addDueDate) {
-      showToast('Please select a due date', 'error');
+      setAddDueDateError('Due date is required.');
+      hasErr = true;
+    } else {
+      setAddDueDateError('');
+    }
+
+    if (hasErr) {
+      if (!addCustomerName.trim()) {
+        document.getElementById('add-udhari-name')?.focus();
+      } else if (!isValidIndianPhoneNumber(addPhone, true)) {
+        document.getElementById('add-udhari-phone')?.focus();
+      } else if (isNaN(numAmount) || numAmount <= 0) {
+        document.getElementById('add-udhari-amount')?.focus();
+      }
       return;
     }
 
@@ -326,12 +357,28 @@ export const UdhariView: React.FC = () => {
   const handleEditSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeUdhari) return;
+    let hasErr = false;
+
     if (!editCustomerName.trim()) {
-      showToast('Please enter customer name', 'error');
-      return;
+      setEditNameError('Customer name is required.');
+      hasErr = true;
+    } else {
+      setEditNameError('');
     }
+
     if (!isValidIndianPhoneNumber(editPhone, true)) {
-      showToast('Please enter a valid 10-digit Indian contact number.', 'error');
+      setEditPhoneError('Enter a valid 10-digit mobile number starting with 6–9.');
+      hasErr = true;
+    } else {
+      setEditPhoneError('');
+    }
+
+    if (hasErr) {
+      if (!editCustomerName.trim()) {
+        document.getElementById('edit-udhari-name')?.focus();
+      } else {
+        document.getElementById('edit-udhari-phone')?.focus();
+      }
       return;
     }
 
@@ -1075,25 +1122,43 @@ export const UdhariView: React.FC = () => {
 
           {/* Customer Name */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
-              Customer Name *
+            <label htmlFor="add-udhari-name" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+              Customer Name <span className="text-rose-500">*</span>
             </label>
             <input
+              id="add-udhari-name"
               type="text"
-              required
               value={addCustomerName}
-              onChange={(e) => setAddCustomerName(e.target.value)}
+              onChange={(e) => {
+                setAddCustomerName(e.target.value);
+                if (addNameError) setAddNameError('');
+              }}
               placeholder="e.g. Rajesh Kumar"
-              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-500"
+              className={`w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 transition-all ${
+                addNameError
+                  ? 'border-rose-500 ring-2 ring-rose-500/10 bg-rose-50/20 dark:bg-rose-950/20'
+                  : 'border-slate-200 dark:border-slate-800 focus:border-blue-500'
+              }`}
             />
+            {addNameError && (
+              <p className="text-xs font-semibold text-rose-600 dark:text-rose-400 mt-1 flex items-center gap-1.5 animate-fade-in">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{addNameError}</span>
+              </p>
+            )}
           </div>
 
           {/* Contact Number */}
           <PhoneInput
+            id="add-udhari-phone"
             label="Contact Number *"
             required
             value={addPhone}
-            onChange={setAddPhone}
+            onChange={(val) => {
+              setAddPhone(val);
+              if (addPhoneError) setAddPhoneError('');
+            }}
+            error={addPhoneError}
             placeholder="9876543210"
           />
 
@@ -1501,23 +1566,41 @@ export const UdhariView: React.FC = () => {
         >
           <form onSubmit={handleEditSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                Customer Name *
+              <label htmlFor="edit-udhari-name" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                Customer Name <span className="text-rose-500">*</span>
               </label>
               <input
+                id="edit-udhari-name"
                 type="text"
-                required
                 value={editCustomerName}
-                onChange={(e) => setEditCustomerName(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
+                onChange={(e) => {
+                  setEditCustomerName(e.target.value);
+                  if (editNameError) setEditNameError('');
+                }}
+                className={`w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 transition-all ${
+                  editNameError
+                    ? 'border-rose-500 ring-2 ring-rose-500/10 bg-rose-50/20 dark:bg-rose-950/20'
+                    : 'border-slate-200 dark:border-slate-800 focus:border-blue-500'
+                }`}
               />
+              {editNameError && (
+                <p className="text-xs font-semibold text-rose-600 dark:text-rose-400 mt-1 flex items-center gap-1.5 animate-fade-in">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{editNameError}</span>
+                </p>
+              )}
             </div>
 
             <PhoneInput
+              id="edit-udhari-phone"
               label="Contact Number *"
               required
               value={editPhone}
-              onChange={setEditPhone}
+              onChange={(val) => {
+                setEditPhone(val);
+                if (editPhoneError) setEditPhoneError('');
+              }}
+              error={editPhoneError}
               placeholder="9876543210"
             />
 

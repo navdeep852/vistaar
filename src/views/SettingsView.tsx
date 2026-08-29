@@ -67,10 +67,14 @@ export const SettingsView: React.FC = () => {
   }, []);
 
   // Personal Profile State
-  const [profileName, setProfileName] = useState(currentUser?.name || '');
-  const [profilePhone, setProfilePhone] = useState(currentUser?.phone || '');
-  const [profileDept, setProfileDept] = useState(currentUser?.department || '');
-  const [profileDesig, setProfileDesig] = useState(currentUser?.designation || '');
+  const [profileName, setProfileName] = useState('');
+  const [profilePhone, setProfilePhone] = useState('');
+  const [profileDept, setProfileDept] = useState('');
+  const [profileDesig, setProfileDesig] = useState('');
+
+  const [phoneError, setPhoneError] = useState('');
+  const [alternatePhoneError, setAlternatePhoneError] = useState('');
+  const [profilePhoneError, setProfilePhoneError] = useState('');
 
   // Profile Photo Upload / Crop / Remove Modal States
   const [cropModalOpen, setCropModalOpen] = useState(false);
@@ -120,12 +124,28 @@ export const SettingsView: React.FC = () => {
 
   const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    let hasErr = false;
+
     if (formData.phone && !isValidIndianPhoneNumber(formData.phone, false)) {
-      showToast('Please enter a valid 10-digit Indian phone number for Business Contact.', 'error');
-      return;
+      setPhoneError('Enter a valid 10-digit mobile number starting with 6–9.');
+      hasErr = true;
+    } else {
+      setPhoneError('');
     }
+
     if (formData.alternatePhone && !isValidIndianPhoneNumber(formData.alternatePhone, false)) {
-      showToast('Please enter a valid 10-digit Indian phone number for Alternate Contact.', 'error');
+      setAlternatePhoneError('Enter a valid 10-digit mobile number starting with 6–9.');
+      hasErr = true;
+    } else {
+      setAlternatePhoneError('');
+    }
+
+    if (hasErr) {
+      if (formData.phone && !isValidIndianPhoneNumber(formData.phone, false)) {
+        document.getElementById('settings-phone')?.focus();
+      } else {
+        document.getElementById('settings-alt-phone')?.focus();
+      }
       return;
     }
     const cleanFormData = {
@@ -231,8 +251,11 @@ export const SettingsView: React.FC = () => {
   const handleSavePersonalProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (profilePhone && !isValidIndianPhoneNumber(profilePhone, false)) {
-      showToast('Please enter a valid 10-digit Indian phone number.', 'error');
+      setProfilePhoneError('Enter a valid 10-digit mobile number starting with 6–9.');
+      document.getElementById('profile-phone')?.focus();
       return;
+    } else {
+      setProfilePhoneError('');
     }
     const cleanPhone = profilePhone ? normalizeIndianPhoneNumber(profilePhone) : '';
     const res = await auth.updateUserProfile({
@@ -479,9 +502,14 @@ export const SettingsView: React.FC = () => {
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <PhoneInput
+                    id="profile-phone"
                     label="Phone Number"
                     value={profilePhone}
-                    onChange={setProfilePhone}
+                    onChange={(val) => {
+                      setProfilePhone(val);
+                      if (profilePhoneError) setProfilePhoneError('');
+                    }}
+                    error={profilePhoneError}
                     placeholder="9876543210"
                   />
 
@@ -593,17 +621,27 @@ export const SettingsView: React.FC = () => {
               </div>
 
               <PhoneInput
+                id="settings-phone"
                 label="Phone Number *"
                 required
                 value={formData.phone || ''}
-                onChange={(val) => setFormData({ ...formData, phone: val })}
+                onChange={(val) => {
+                  setFormData({ ...formData, phone: val });
+                  if (phoneError) setPhoneError('');
+                }}
+                error={phoneError}
                 placeholder="9876543210"
               />
 
               <PhoneInput
+                id="settings-alt-phone"
                 label="Alternate Phone / WhatsApp"
                 value={formData.alternatePhone || ''}
-                onChange={(val) => setFormData({ ...formData, alternatePhone: val })}
+                onChange={(val) => {
+                  setFormData({ ...formData, alternatePhone: val });
+                  if (alternatePhoneError) setAlternatePhoneError('');
+                }}
+                error={alternatePhoneError}
                 placeholder="9876543210"
               />
 
