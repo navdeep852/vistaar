@@ -4,6 +4,7 @@ import { QuotationItem, InvoiceItem } from '../types';
 import { INVOICE_TEMPLATES } from '../templates/invoiceTemplates';
 import { QUOTATION_TEMPLATES } from '../templates/quotationTemplates';
 import { QuotationTemplateEngineRenderer } from '../templates/quotations/renderer';
+import { InvoiceTemplateEngineRenderer } from '../templates/invoices/InvoiceTemplateEngineRenderer';
 
 export interface DocumentRendererProps {
   templateId: string;
@@ -61,7 +62,6 @@ export interface DocumentRendererProps {
   // Print Mode Override
   isPrintMode?: boolean;
 }
-
 export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
   templateId,
   documentType,
@@ -114,6 +114,68 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
           discountTotal: Number(discountTotal || 0),
           taxTotal: Number(taxTotal || 0),
           grandTotal: Number(grandTotal || 0),
+          currency: currency,
+          notes: notes,
+          terms: terms,
+        }}
+        business={{
+          businessName: businessName || 'Business Name',
+          phone: phone,
+          email: email,
+          address: address,
+          city: city,
+          state: state,
+          pincode: pincode,
+          gstin: gstin,
+          pan: pan,
+          bankDetails: bankDetails,
+        }}
+        customer={{
+          name: customerName || 'Customer Name',
+          phone: customerPhone,
+          email: customerEmail,
+          address: customerAddress,
+          gstin: customerGstin,
+        }}
+        branding={{
+          logoUrl: branding?.logoUrl,
+          signatureUrl: branding?.signatureUrl,
+          stampUrl: branding?.stampUrl,
+          logoAlignment: branding?.logoAlignment || 'left',
+          logoScale: branding?.logoScale || 1,
+          signatureScale: branding?.signatureScale || 1,
+          stampScale: branding?.stampScale || 1,
+        }}
+        theme={theme as any}
+        customization={customization}
+        isPrintMode={isPrintMode}
+      />
+    );
+  }
+
+  // Delegate invoice documents to the modular 30-layout Invoice Template Engine
+  if (documentType === 'invoice') {
+    const sGrand = Number(grandTotal || 0);
+    const sPaid = Number(paidAmount || 0);
+    const sBalance = Number(balanceAmount || (sGrand - sPaid));
+    const calculatedStatus = (sPaid >= sGrand && sGrand > 0) ? 'PAID' : sPaid > 0 ? 'PARTIAL' : 'UNPAID';
+
+    return (
+      <InvoiceTemplateEngineRenderer
+        templateId={templateId}
+        invoice={{
+          id: documentNumber,
+          invoiceNumber: documentNumber,
+          date: date,
+          dueDate: dueDateOrValidUntil,
+          items: (items || []) as InvoiceItem[],
+          subtotal: Number(subtotal || 0),
+          discountTotal: Number(discountTotal || 0),
+          taxTotal: Number(taxTotal || 0),
+          grandTotal: sGrand,
+          paidAmount: sPaid,
+          balanceAmount: sBalance,
+          paymentStatus: calculatedStatus,
           currency: currency,
           notes: notes,
           terms: terms,
