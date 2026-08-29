@@ -314,6 +314,57 @@ class AuthService {
   }
 
   /**
+   * Request Email OTP Verification for Signup
+   */
+  public async requestEmailOtp(email: string): Promise<{ success: boolean; error?: string; accountExists?: boolean }> {
+    await new Promise((res) => setTimeout(res, 300));
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail || !validateEmailFormat(cleanEmail)) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+
+    const existing = this.accounts.find((a) => a.email.toLowerCase() === cleanEmail);
+    if (existing) {
+      return {
+        success: false,
+        error: 'An account already exists with this email address. Please sign in instead.',
+        accountExists: true,
+      };
+    }
+
+    return { success: true };
+  }
+
+  /**
+   * Verify Email OTP Code
+   */
+  public async verifyEmailOtp(email: string, token: string): Promise<{ success: boolean; error?: string }> {
+    await new Promise((res) => setTimeout(res, 300));
+    const cleanToken = token.trim();
+
+    if (!cleanToken || cleanToken.length !== 6 || !/^\d+$/.test(cleanToken)) {
+      return { success: false, error: 'Please enter a valid 6-digit numeric verification code.' };
+    }
+
+    return { success: true };
+  }
+
+  /**
+   * Complete Registration after Email OTP Verification
+   */
+  public async completeRegistration(params: {
+    email: string;
+    companyName: string;
+    ownerName: string;
+    phone: string;
+    password: string;
+    confirmPassword: string;
+  }): Promise<{ success: boolean; error?: string }> {
+    return this.signUpCompany(params);
+  }
+
+  /**
    * 1. COMPANY SIGN-UP
    */
   public async signUpCompany(params: {

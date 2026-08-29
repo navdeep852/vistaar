@@ -453,6 +453,291 @@ export class SupabaseAuthService {
   }
 
   /**
+   * Request Email OTP Verification for Signup
+   */
+  public async requestEmailOtp(email: string): Promise<{ success: boolean; error?: string; accountExists?: boolean }> {
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail || !validateEmailFormat(cleanEmail)) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+
+    // Demo email check
+    if (cleanEmail === 'admin@vistaar.com' || cleanEmail === 'priya@vistaar.com') {
+      return {
+        success: false,
+        error: 'An account already exists with this email address. Please sign in instead.',
+        accountExists: true,
+      };
+    }
+
+    // Check local registered DB fallback
+    try {
+      const localDbStr = safeStorageGet(REGISTERED_USERS_KEY);
+      if (localDbStr) {
+        const localDb: any[] = JSON.parse(localDbStr);
+        if (localDb.some((u) => u.email.toLowerCase() === cleanEmail)) {
+          return {
+            success: false,
+            error: 'An account already exists with this email address. Please sign in instead.',
+            accountExists: true,
+          };
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    if (isSupabaseConfigured()) {
+      try {
+        const { data: existingProfile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', cleanEmail)
+          .maybeSingle();
+
+        if (existingProfile) {
+          return {
+            success: false,
+            error: 'An account already exists with this email address. Please sign in instead.',
+            accountExists: true,
+          };
+        }
+
+        const { error } = await supabase.auth.signInWithOtp({
+          email: cleanEmail,
+          options: {
+            shouldCreateUser: true,
+          },
+        });
+
+        if (error) {
+          const normalized = normalizeAuthError(error);
+          return { success: false, error: normalized };
+        }
+        return { success: true };
+      } catch (err: any) {
+        const normalized = normalizeAuthError(err);
+        if (normalized.includes('Unable to reach Supabase')) {
+          return { success: true };
+        }
+        return { success: false, error: normalized };
+      }
+    }
+
+    return { success: true };
+  }
+
+  /**
+   * Verify Email OTP Code
+   */
+  public async verifyEmailOtp(email: string, token: string): Promise<{ success: boolean; error?: string }> {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanToken = token.trim();
+
+    if (!cleanToken || cleanToken.length !== 6 || !/^\d+$/.test(cleanToken)) {
+      return { success: false, error: 'Please enter a valid 6-digit numeric verification code.' };
+    }
+
+    if (isSupabaseConfigured()) {
+      try {
+        let { error } = await supabase.auth.verifyOtp({
+          email: cleanEmail,
+          token: cleanToken,
+          type: 'email',
+        });
+
+        if (error) {
+          const res = await supabase.auth.verifyOtp({
+            email: cleanEmail,
+            token: cleanToken,
+            type: 'signup',
+          });
+          error = res.error;
+        }
+
+        if (error) {
+          if (error.message?.includes('expired') || error.message?.includes('Token has expired')) {
+            return { success: false, error: 'The verification code has expired. Please request a new code.' };
+          }
+          return { success: false, error: 'That code is incorrect. Please check the latest code sent to your email.' };
+        }
+
+        return { success: true };
+      } catch (err: any) {
+        const normalized = normalizeAuthError(err);
+        if (normalized.includes('Unable to reach Supabase')) {
+          return { success: true };
+        }
+        return { success: false, error: normalized };
+      }
+    }
+
+    return { success: true };
+  }
+
+  /**
+   * Complete Registration after Email OTP Verification
+   */
+  public async completeRegistration(params: {
+    email: string;
+    companyName: string;
+    ownerName: string;
+    phone: string;
+    password: string;
+    confirmPassword: string;
+  }): Promise<{ success: boolean; error?: string }> {
+    const cleanEmail = params.email.trim().toLowerCase();
+    const companyName = params.companyName.trim();
+    const ownerName = params.ownerName.trim();
+    const phone = params.phone.trim();
+    const password = params.password;
+    const confirmPassword = params.confirmPassword;
+
+    if (!companyName) {
+      return { success: false, error: 'Company Name is required.' };
+    }
+    if (!ownerName) {
+      return { success: false, error: 'Owner Name is required.' };
+    }
+    if (!phone) {
+      return { success: false, error: 'Phone Number is required.' };
+    }
+
+    const pRes = validateIndianPhoneNumber(phone, false);
+    if (!pRes.isValid) {
+      return { success: false, error: pRes.error || 'Please enter a valid 10-digit Indian phone number.' };
+    }
+
+    if (password !== confirmPassword) {
+      return { success: false, error: 'Password and Confirm Password do not match.' };
+    }
+
+    const strength = validatePassword(password);
+    if (!strength.isValid) {
+      return {
+        success: false,
+        error: 'Password does not meet security requirements: Minimum 12 characters, 1 uppercase, 1 lowercase, 1 digit, and 1 special symbol.',
+      };
+    }
+
+    if (!isSupabaseConfigured()) {
+      return this.signUpFallback(companyName, ownerName, cleanEmail, pRes.normalized, password);
+    }
+
+    try {
+      const { data: userRes, error: passErr } = await supabase.auth.updateUser({
+        password,
+        data: {
+          name: ownerName,
+          phone: pRes.normalized,
+          company_name: companyName,
+        },
+      });
+
+      if (passErr) {
+        return this.signUpCompany({
+          companyName,
+          ownerName,
+          email: cleanEmail,
+          phone: pRes.normalized,
+          password,
+          confirmPassword,
+        });
+      }
+
+      const authUser = userRes.user;
+      if (!authUser) {
+        return { success: false, error: 'Authentication session expired. Please verify your email again.' };
+      }
+
+      let workspaceId = authUser.id;
+      const { data: wsData, error: wsErr } = await supabase
+        .from('workspaces')
+        .insert([
+          {
+            company_name: companyName,
+            owner_name: ownerName,
+            owner_email: cleanEmail,
+            owner_phone: pRes.normalized,
+          },
+        ])
+        .select('id')
+        .single();
+
+      if (wsData?.id) {
+        workspaceId = wsData.id;
+      } else if (wsErr && !wsErr.message?.includes('duplicate key')) {
+        console.warn('Workspace insertion warning:', wsErr);
+      }
+
+      await supabase.from('profiles').upsert([
+        {
+          id: authUser.id,
+          workspace_id: workspaceId,
+          employee_id: 'VST-00001',
+          name: ownerName,
+          email: cleanEmail,
+          phone: pRes.normalized,
+          department: 'Management',
+          designation: 'Managing Director / Owner',
+          role: 'owner',
+          status: 'Active',
+          must_change_password: false,
+        },
+      ]);
+
+      await supabase.from('business_settings').upsert(
+        [
+          {
+            workspace_id: workspaceId,
+            legal_name: companyName,
+            owner_name: ownerName,
+            phone: pRes.normalized,
+            email: cleanEmail,
+            address: 'Main Office',
+            city: 'City',
+            state: 'State',
+            pincode: '000000',
+            country: 'India',
+          },
+        ],
+        { onConflict: 'workspace_id' }
+      );
+
+      await this.syncProfileFromSupabaseUser(authUser.id, cleanEmail);
+      if (!this.currentProfile || !this.currentProfile.companyId) {
+        this.currentProfile = {
+          id: authUser.id,
+          companyId: workspaceId,
+          employeeId: 'VST-00001',
+          name: ownerName,
+          email: cleanEmail,
+          phone: pRes.normalized,
+          department: 'Management',
+          designation: 'Company Owner & Founder',
+          role: 'owner',
+          status: 'Active',
+          businessName: companyName,
+          mustChangePassword: false,
+          avatarUrl: '',
+        };
+        this.saveSessionToStorage(this.currentProfile);
+      }
+
+      store.reloadTenantState();
+      this.notify();
+      return { success: true };
+    } catch (err: any) {
+      const normalized = normalizeAuthError(err);
+      if (normalized.includes('Unable to reach Supabase')) {
+        return this.signUpFallback(companyName, ownerName, cleanEmail, pRes.normalized, password);
+      }
+      return { success: false, error: normalized };
+    }
+  }
+
+  /**
    * Register Company Workspace
    */
   public async signUpCompany(
