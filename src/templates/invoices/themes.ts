@@ -81,7 +81,83 @@ export const INVOICE_THEMES: Record<string, InvoiceTemplateTheme> = {
     backgroundColor: '#ffffff',
     fontFamily: 'Poppins',
   },
+  'slate-dark': {
+    id: 'slate-dark',
+    name: 'Slate Dark',
+    primaryColor: '#0f172a',
+    secondaryColor: '#1e293b',
+    textColor: '#0f172a',
+    accentColor: '#f59e0b',
+    backgroundColor: '#ffffff',
+    fontFamily: 'Inter',
+  },
+  'violet-premium': {
+    id: 'violet-premium',
+    name: 'Violet Premium',
+    primaryColor: '#7c3aed',
+    secondaryColor: '#6d28d9',
+    textColor: '#1e1b4b',
+    accentColor: '#a78bfa',
+    backgroundColor: '#ffffff',
+    fontFamily: 'Poppins',
+  },
+  'minimal-dark': {
+    id: 'minimal-dark',
+    name: 'Minimal Dark',
+    primaryColor: '#18181b',
+    secondaryColor: '#27272a',
+    textColor: '#09090b',
+    accentColor: '#a1a1aa',
+    backgroundColor: '#ffffff',
+    fontFamily: 'Inter',
+  },
+  'gold-luxury': {
+    id: 'gold-luxury',
+    name: 'Gold Luxury',
+    primaryColor: '#b45309',
+    secondaryColor: '#d97706',
+    textColor: '#451a03',
+    accentColor: '#f59e0b',
+    backgroundColor: '#ffffff',
+    fontFamily: 'Playfair Display',
+  },
+  'monochrome': {
+    id: 'monochrome',
+    name: 'Monochrome',
+    primaryColor: '#09090b',
+    secondaryColor: '#18181b',
+    textColor: '#09090b',
+    accentColor: '#52525b',
+    backgroundColor: '#ffffff',
+    fontFamily: 'Inter',
+  },
+  'rose-creative': {
+    id: 'rose-creative',
+    name: 'Rose Creative',
+    primaryColor: '#e11d48',
+    secondaryColor: '#be123c',
+    textColor: '#4c0519',
+    accentColor: '#fb7185',
+    backgroundColor: '#ffffff',
+    fontFamily: 'Outfit',
+  },
+  'amber-retail': {
+    id: 'amber-retail',
+    name: 'Amber Retail',
+    primaryColor: '#d97706',
+    secondaryColor: '#b45309',
+    textColor: '#451a03',
+    accentColor: '#fbbf24',
+    backgroundColor: '#ffffff',
+    fontFamily: 'Roboto',
+  },
 };
 
-export const defaultInvoiceThemes = INVOICE_THEMES;
 export const DEFAULT_INVOICE_THEME: InvoiceTemplateTheme = INVOICE_THEMES['modern-blue'];
+
+// Fallback proxy to return DEFAULT_INVOICE_THEME for any missing theme key
+export const defaultInvoiceThemes = new Proxy(INVOICE_THEMES, {
+  get: (target, prop: string) => {
+    return target[prop] || DEFAULT_INVOICE_THEME;
+  },
+});

@@ -61,6 +61,13 @@ const badgeMap: Record<string, string> = {
 
 export const INVOICE_TEMPLATES: DocumentTemplate[] = ENGINE_INVOICE_TEMPLATES.map((def) => {
   const catName = categoryCapitalizeMap[def.category] || 'Corporate';
+  const theme = def.defaultTheme || {
+    primaryColor: '#2563eb',
+    secondaryColor: '#3b82f6',
+    textColor: '#0f172a',
+    fontFamily: 'Inter',
+  };
+
   return {
     id: def.id,
     name: def.name,
@@ -68,7 +75,7 @@ export const INVOICE_TEMPLATES: DocumentTemplate[] = ENGINE_INVOICE_TEMPLATES.ma
     category: catName,
     description: def.description,
     style: `${catName} • Professional Layout`,
-    previewColor: previewColorMap[def.id] || def.defaultTheme.primaryColor || '#2563eb',
+    previewColor: previewColorMap[def.id] || theme.primaryColor || '#2563eb',
     badgeText: badgeMap[def.id],
     layout: {
       headerStyle: 'modern',
@@ -78,10 +85,10 @@ export const INVOICE_TEMPLATES: DocumentTemplate[] = ENGINE_INVOICE_TEMPLATES.ma
       signaturePlacement: 'bottom-right',
     },
     defaultTheme: {
-      primaryColor: def.defaultTheme.primaryColor,
-      secondaryColor: def.defaultTheme.secondaryColor,
-      textColor: def.defaultTheme.textColor,
-      fontFamily: (def.defaultTheme.fontFamily as any) || 'Inter',
+      primaryColor: theme.primaryColor || '#2563eb',
+      secondaryColor: theme.secondaryColor || '#3b82f6',
+      textColor: theme.textColor || '#0f172a',
+      fontFamily: (theme.fontFamily as any) || 'Inter',
     },
   };
 });

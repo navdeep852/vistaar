@@ -28,6 +28,14 @@
             document.documentElement.classList.remove('dark');
           }
         } catch (e) {}
+
+        window.addEventListener('error', function (e) {
+          console.error('[VISTAAR Global Error]', e.error || e.message);
+          var root = document.getElementById('root');
+          if (root && !root.hasChildNodes()) {
+            root.innerHTML = '<div style="padding:2rem;font-family:system-ui,sans-serif;max-width:600px;margin:2rem auto;background:#fff;border:1px solid #e2e8f0;border-radius:1rem;box-shadow:0 10px 25px -5px rgba(0,0,0,0.1);"><h2 style="color:#e11d48;margin-top:0;">VISTAAR Application Initialization Error</h2><p style="color:#475569;font-size:14px;">An unexpected error occurred during application startup.</p><pre style="background:#0f172a;color:#f8fafc;padding:1rem;border-radius:0.5rem;font-size:12px;overflow-x:auto;">' + (e.error ? (e.error.stack || e.error.message) : e.message) + '</pre><button onclick="window.location.reload()" style="background:#2563eb;color:#fff;border:none;padding:0.6rem 1.2rem;border-radius:0.5rem;font-weight:bold;cursor:pointer;margin-top:1rem;">Reload Application</button></div>';
+          }
+        });
       })();
     </script>
   </head>
