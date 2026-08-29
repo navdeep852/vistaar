@@ -116,27 +116,37 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNavigateTab })
     try {
       if (editingCategory) {
         const res = await productService.updateCategory(editingCategory.id, {
-          name: nameInput,
-          description: descInput,
+          name: nameInput.trim(),
+          description: descInput.trim(),
         });
         if (res.error) {
           showToast(res.error, 'error');
-        } else {
+        } else if (res.category) {
+          const updatedCat = res.category;
           showToast('Category updated successfully!', 'success');
           setModalOpen(false);
-          fetchData();
+          setCategories((prev) => prev.map((c) => (c.id === updatedCat.id ? updatedCat : c)));
+          await fetchData();
+        } else {
+          showToast('Unable to update category.', 'error');
         }
       } else {
         const res = await productService.createCategory({
-          name: nameInput,
-          description: descInput,
+          name: nameInput.trim(),
+          description: descInput.trim(),
         });
         if (res.error) {
           showToast(res.error, 'error');
-        } else {
+        } else if (res.category) {
+          const newCat = res.category;
           showToast('Category created successfully!', 'success');
           setModalOpen(false);
-          fetchData();
+          setNameInput('');
+          setDescInput('');
+          setCategories((prev) => [newCat, ...prev.filter((c) => c.id !== newCat.id)]);
+          await fetchData();
+        } else {
+          showToast('Unable to create category record.', 'error');
         }
       }
     } catch (e: any) {
@@ -148,18 +158,20 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNavigateTab })
 
   const handleDelete = async () => {
     if (!deleteConfirmCat) return;
+    const targetId = deleteConfirmCat.id;
     setDeleting(true);
     try {
-      const res = await productService.deleteCategory(deleteConfirmCat.id);
+      const res = await productService.deleteCategory(targetId);
       if (res.error) {
         showToast(res.error, 'error');
       } else {
         showToast('Category deleted successfully', 'success');
         setDeleteConfirmCat(null);
-        if (selectedCategory?.id === deleteConfirmCat.id) {
+        setCategories((prev) => prev.filter((c) => c.id !== targetId));
+        if (selectedCategory?.id === targetId) {
           setDrawerOpen(false);
         }
-        fetchData();
+        await fetchData();
       }
     } catch (e: any) {
       showToast(e.message || 'Failed to delete category', 'error');

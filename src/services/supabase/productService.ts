@@ -577,20 +577,29 @@ export class ProductService {
     }
 
     if (!isSupabaseConfigured()) {
-      return { data: store.getCategories() };
+      const stored = safeGetTenantStorage<Category>('vistaar_local_categories_db', store.getCategories());
+      return { data: stored };
     }
 
     try {
-      const { data, error } = await supabase.from('categories').select('id, name, description').eq('workspace_id', wsId);
+      const { data, error } = await supabase
+        .from('categories')
+        .select('id, name, description')
+        .eq('workspace_id', wsId)
+        .order('created_at', { ascending: false });
+
       if (error) {
         const errStr = handleSupabaseError(error, 'getCategories');
-        return { data: [], error: errStr };
+        const fallback = safeGetTenantStorage<Category>('vistaar_local_categories_db', []);
+        return { data: fallback, error: errStr };
       }
       const categories: Category[] = (data as DbCategory[]).map((c) => ({
         id: c.id,
         name: c.name,
-        description: c.description,
+        description: c.description || '',
       }));
+
+      safeSaveTenantStorage('vistaar_local_categories_db', categories);
 
       this.categoriesCache = {
         data: categories,
@@ -601,20 +610,28 @@ export class ProductService {
       return { data: categories };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getCategories');
-      return { data: [], error: errStr };
+      const fallback = safeGetTenantStorage<Category>('vistaar_local_categories_db', []);
+      return { data: fallback, error: errStr };
     }
   }
 
   public async getSuppliers(): Promise<{ data: Supplier[]; error?: string }> {
     if (!isSupabaseConfigured()) {
-      return { data: store.getSuppliers() };
+      const stored = safeGetTenantStorage<Supplier>('vistaar_local_suppliers_db', store.getSuppliers());
+      return { data: stored };
     }
     const wsId = this.getWorkspaceId();
     try {
-      const { data, error } = await supabase.from('suppliers').select('*').eq('workspace_id', wsId);
+      const { data, error } = await supabase
+        .from('suppliers')
+        .select('*')
+        .eq('workspace_id', wsId)
+        .order('created_at', { ascending: false });
+
       if (error) {
         const errStr = handleSupabaseError(error, 'getSuppliers');
-        return { data: [], error: errStr };
+        const fallback = safeGetTenantStorage<Supplier>('vistaar_local_suppliers_db', []);
+        return { data: fallback, error: errStr };
       }
       const suppliers: Supplier[] = (data as DbSupplier[]).map((s) => ({
         id: s.id,
@@ -624,27 +641,53 @@ export class ProductService {
         email: s.email || '',
         address: s.address || '',
       }));
+
+      safeSaveTenantStorage('vistaar_local_suppliers_db', suppliers);
+
       return { data: suppliers };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getSuppliers');
-      return { data: [], error: errStr };
+      const fallback = safeGetTenantStorage<Supplier>('vistaar_local_suppliers_db', []);
+      return { data: fallback, error: errStr };
     }
   }
+
   public async createCategory(category: { name: string; description?: string }): Promise<{ category?: Category; error?: string }> {
     const wsId = this.getWorkspaceId();
+    if (!category.name || !category.name.trim()) {
+      return { error: 'Category name is required.' };
+    }
+
+    const newCat: Category = {
+      id: `cat-${Date.now()}`,
+      name: category.name.trim(),
+      description: category.description?.trim() || '',
+    };
+
     if (!isSupabaseConfigured()) {
-      const newCat: Category = { id: `cat-${Date.now()}`, name: category.name, description: category.description || '' };
+      const existing = safeGetTenantStorage<Category>('vistaar_local_categories_db', store.getCategories());
+      const updated = [newCat, ...existing.filter((c) => c.id !== newCat.id)];
+      safeSaveTenantStorage('vistaar_local_categories_db', updated);
+      this.invalidateCache();
       return { category: newCat };
     }
+
     try {
       const { data, error } = await supabase
         .from('categories')
-        .insert([{ workspace_id: wsId, name: category.name.trim(), description: category.description || null }])
+        .insert([{ workspace_id: wsId, name: category.name.trim(), description: category.description?.trim() || null }])
         .select()
         .single();
+
       if (error) return { error: handleSupabaseError(error, 'createCategory') };
+      if (!data) return { error: 'Database failed to return inserted category.' };
+
+      const created: Category = { id: data.id, name: data.name, description: data.description || '' };
+      const existing = safeGetTenantStorage<Category>('vistaar_local_categories_db', []);
+      safeSaveTenantStorage('vistaar_local_categories_db', [created, ...existing.filter((c) => c.id !== created.id)]);
+
       this.invalidateCache();
-      return { category: { id: data.id, name: data.name, description: data.description || '' } };
+      return { category: created };
     } catch (e: any) {
       return { error: handleSupabaseError(e, 'createCategory') };
     }
@@ -652,20 +695,37 @@ export class ProductService {
 
   public async updateCategory(id: string, category: { name: string; description?: string }): Promise<{ category?: Category; error?: string }> {
     const wsId = this.getWorkspaceId();
-    if (!isSupabaseConfigured()) {
-      return { category: { id, name: category.name, description: category.description || '' } };
+    if (!category.name || !category.name.trim()) {
+      return { error: 'Category name is required.' };
     }
+
+    if (!isSupabaseConfigured()) {
+      const existing = safeGetTenantStorage<Category>('vistaar_local_categories_db', store.getCategories());
+      const updatedCat: Category = { id, name: category.name.trim(), description: category.description?.trim() || '' };
+      const updatedList = existing.map((c) => (c.id === id ? updatedCat : c));
+      safeSaveTenantStorage('vistaar_local_categories_db', updatedList);
+      this.invalidateCache();
+      return { category: updatedCat };
+    }
+
     try {
       const { data, error } = await supabase
         .from('categories')
-        .update({ name: category.name.trim(), description: category.description || null, updated_at: new Date().toISOString() })
+        .update({ name: category.name.trim(), description: category.description?.trim() || null, updated_at: new Date().toISOString() })
         .eq('workspace_id', wsId)
         .eq('id', id)
         .select()
         .single();
+
       if (error) return { error: handleSupabaseError(error, 'updateCategory') };
+      if (!data) return { error: 'Category update failed.' };
+
+      const updated: Category = { id: data.id, name: data.name, description: data.description || '' };
+      const existing = safeGetTenantStorage<Category>('vistaar_local_categories_db', []);
+      safeSaveTenantStorage('vistaar_local_categories_db', existing.map((c) => (c.id === id ? updated : c)));
+
       this.invalidateCache();
-      return { category: { id: data.id, name: data.name, description: data.description || '' } };
+      return { category: updated };
     } catch (e: any) {
       return { error: handleSupabaseError(e, 'updateCategory') };
     }
@@ -674,15 +734,24 @@ export class ProductService {
   public async deleteCategory(id: string): Promise<{ success: boolean; error?: string }> {
     const wsId = this.getWorkspaceId();
     if (!isSupabaseConfigured()) {
+      const existing = safeGetTenantStorage<Category>('vistaar_local_categories_db', store.getCategories());
+      safeSaveTenantStorage('vistaar_local_categories_db', existing.filter((c) => c.id !== id));
+      this.invalidateCache();
       return { success: true };
     }
+
     try {
       const { error } = await supabase
         .from('categories')
         .delete()
         .eq('workspace_id', wsId)
         .eq('id', id);
+
       if (error) return { success: false, error: handleSupabaseError(error, 'deleteCategory') };
+
+      const existing = safeGetTenantStorage<Category>('vistaar_local_categories_db', []);
+      safeSaveTenantStorage('vistaar_local_categories_db', existing.filter((c) => c.id !== id));
+
       this.invalidateCache();
       return { success: true };
     } catch (e: any) {
@@ -692,41 +761,56 @@ export class ProductService {
 
   public async createSupplier(supplier: Partial<Supplier>): Promise<{ supplier?: Supplier; error?: string }> {
     const wsId = this.getWorkspaceId();
+    if (!supplier.name || !supplier.name.trim()) {
+      return { error: 'Supplier company name is required.' };
+    }
+
+    const newSup: Supplier = {
+      id: `sup-${Date.now()}`,
+      name: supplier.name.trim(),
+      contactPerson: supplier.contactPerson?.trim() || '',
+      phone: supplier.phone?.trim() || '',
+      email: supplier.email?.trim() || '',
+      address: supplier.address?.trim() || '',
+    };
+
     if (!isSupabaseConfigured()) {
-      const newSup: Supplier = {
-        id: `sup-${Date.now()}`,
-        name: supplier.name || 'New Supplier',
-        contactPerson: supplier.contactPerson || '',
-        phone: supplier.phone || '',
-        email: supplier.email || '',
-        address: supplier.address || '',
-      };
+      const existing = safeGetTenantStorage<Supplier>('vistaar_local_suppliers_db', store.getSuppliers());
+      const updated = [newSup, ...existing.filter((s) => s.id !== newSup.id)];
+      safeSaveTenantStorage('vistaar_local_suppliers_db', updated);
       return { supplier: newSup };
     }
+
     try {
       const { data, error } = await supabase
         .from('suppliers')
         .insert([{
           workspace_id: wsId,
-          name: supplier.name?.trim(),
-          contact_person: supplier.contactPerson || null,
-          phone: supplier.phone || '',
-          email: supplier.email || null,
-          address: supplier.address || null,
+          name: supplier.name.trim(),
+          contact_person: supplier.contactPerson?.trim() || null,
+          phone: supplier.phone?.trim() || '',
+          email: supplier.email?.trim() || null,
+          address: supplier.address?.trim() || null,
         }])
         .select()
         .single();
+
       if (error) return { error: handleSupabaseError(error, 'createSupplier') };
-      return {
-        supplier: {
-          id: data.id,
-          name: data.name,
-          contactPerson: data.contact_person || '',
-          phone: data.phone || '',
-          email: data.email || '',
-          address: data.address || '',
-        },
+      if (!data) return { error: 'Database failed to return inserted supplier record.' };
+
+      const created: Supplier = {
+        id: data.id,
+        name: data.name,
+        contactPerson: data.contact_person || '',
+        phone: data.phone || '',
+        email: data.email || '',
+        address: data.address || '',
       };
+
+      const existing = safeGetTenantStorage<Supplier>('vistaar_local_suppliers_db', []);
+      safeSaveTenantStorage('vistaar_local_suppliers_db', [created, ...existing.filter((s) => s.id !== created.id)]);
+
+      return { supplier: created };
     } catch (e: any) {
       return { error: handleSupabaseError(e, 'createSupplier') };
     }
@@ -734,35 +818,56 @@ export class ProductService {
 
   public async updateSupplier(id: string, supplier: Partial<Supplier>): Promise<{ supplier?: Supplier; error?: string }> {
     const wsId = this.getWorkspaceId();
-    if (!isSupabaseConfigured()) {
-      return { supplier: { id, name: supplier.name || '', contactPerson: supplier.contactPerson || '', phone: supplier.phone || '', email: supplier.email || '', address: supplier.address || '' } };
+    if (!supplier.name || !supplier.name.trim()) {
+      return { error: 'Supplier company name is required.' };
     }
+
+    if (!isSupabaseConfigured()) {
+      const existing = safeGetTenantStorage<Supplier>('vistaar_local_suppliers_db', store.getSuppliers());
+      const updatedSup: Supplier = {
+        id,
+        name: supplier.name.trim(),
+        contactPerson: supplier.contactPerson?.trim() || '',
+        phone: supplier.phone?.trim() || '',
+        email: supplier.email?.trim() || '',
+        address: supplier.address?.trim() || '',
+      };
+      safeSaveTenantStorage('vistaar_local_suppliers_db', existing.map((s) => (s.id === id ? updatedSup : s)));
+      return { supplier: updatedSup };
+    }
+
     try {
       const { data, error } = await supabase
         .from('suppliers')
         .update({
-          name: supplier.name?.trim(),
-          contact_person: supplier.contactPerson || null,
-          phone: supplier.phone || '',
-          email: supplier.email || null,
-          address: supplier.address || null,
+          name: supplier.name.trim(),
+          contact_person: supplier.contactPerson?.trim() || null,
+          phone: supplier.phone?.trim() || '',
+          email: supplier.email?.trim() || null,
+          address: supplier.address?.trim() || null,
           updated_at: new Date().toISOString(),
         })
         .eq('workspace_id', wsId)
         .eq('id', id)
         .select()
         .single();
+
       if (error) return { error: handleSupabaseError(error, 'updateSupplier') };
-      return {
-        supplier: {
-          id: data.id,
-          name: data.name,
-          contactPerson: data.contact_person || '',
-          phone: data.phone || '',
-          email: data.email || '',
-          address: data.address || '',
-        },
+      if (!data) return { error: 'Supplier update failed.' };
+
+      const updated: Supplier = {
+        id: data.id,
+        name: data.name,
+        contactPerson: data.contact_person || '',
+        phone: data.phone || '',
+        email: data.email || '',
+        address: data.address || '',
       };
+
+      const existing = safeGetTenantStorage<Supplier>('vistaar_local_suppliers_db', []);
+      safeSaveTenantStorage('vistaar_local_suppliers_db', existing.map((s) => (s.id === id ? updated : s)));
+
+      return { supplier: updated };
     } catch (e: any) {
       return { error: handleSupabaseError(e, 'updateSupplier') };
     }
@@ -771,15 +876,23 @@ export class ProductService {
   public async deleteSupplier(id: string): Promise<{ success: boolean; error?: string }> {
     const wsId = this.getWorkspaceId();
     if (!isSupabaseConfigured()) {
+      const existing = safeGetTenantStorage<Supplier>('vistaar_local_suppliers_db', store.getSuppliers());
+      safeSaveTenantStorage('vistaar_local_suppliers_db', existing.filter((s) => s.id !== id));
       return { success: true };
     }
+
     try {
       const { error } = await supabase
         .from('suppliers')
         .delete()
         .eq('workspace_id', wsId)
         .eq('id', id);
+
       if (error) return { success: false, error: handleSupabaseError(error, 'deleteSupplier') };
+
+      const existing = safeGetTenantStorage<Supplier>('vistaar_local_suppliers_db', []);
+      safeSaveTenantStorage('vistaar_local_suppliers_db', existing.filter((s) => s.id !== id));
+
       return { success: true };
     } catch (e: any) {
       return { success: false, error: handleSupabaseError(e, 'deleteSupplier') };

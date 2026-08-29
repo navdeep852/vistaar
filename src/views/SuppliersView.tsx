@@ -126,30 +126,43 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ onNavigateTab }) =
     setSaving(true);
     try {
       const payload: Partial<Supplier> = {
-        name,
-        contactPerson,
-        phone,
-        email,
-        address,
+        name: name.trim(),
+        contactPerson: contactPerson.trim(),
+        phone: phone.trim(),
+        email: email.trim(),
+        address: address.trim(),
       };
 
       if (editingSupplier) {
         const res = await productService.updateSupplier(editingSupplier.id, payload);
         if (res.error) {
           showToast(res.error, 'error');
-        } else {
+        } else if (res.supplier) {
+          const updatedSup = res.supplier;
           showToast('Supplier updated successfully!', 'success');
           setModalOpen(false);
-          fetchData();
+          setSuppliers((prev) => prev.map((s) => (s.id === updatedSup.id ? updatedSup : s)));
+          await fetchData();
+        } else {
+          showToast('Unable to update supplier profile.', 'error');
         }
       } else {
         const res = await productService.createSupplier(payload);
         if (res.error) {
           showToast(res.error, 'error');
-        } else {
+        } else if (res.supplier) {
+          const newSup = res.supplier;
           showToast('Supplier created successfully!', 'success');
           setModalOpen(false);
-          fetchData();
+          setName('');
+          setContactPerson('');
+          setPhone('');
+          setEmail('');
+          setAddress('');
+          setSuppliers((prev) => [newSup, ...prev.filter((s) => s.id !== newSup.id)]);
+          await fetchData();
+        } else {
+          showToast('Unable to create supplier record.', 'error');
         }
       }
     } catch (e: any) {
@@ -161,18 +174,20 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ onNavigateTab }) =
 
   const handleDelete = async () => {
     if (!deleteConfirmSup) return;
+    const targetId = deleteConfirmSup.id;
     setDeleting(true);
     try {
-      const res = await productService.deleteSupplier(deleteConfirmSup.id);
+      const res = await productService.deleteSupplier(targetId);
       if (res.error) {
         showToast(res.error, 'error');
       } else {
         showToast('Supplier removed successfully', 'success');
         setDeleteConfirmSup(null);
-        if (selectedSupplier?.id === deleteConfirmSup.id) {
+        setSuppliers((prev) => prev.filter((s) => s.id !== targetId));
+        if (selectedSupplier?.id === targetId) {
           setDrawerOpen(false);
         }
-        fetchData();
+        await fetchData();
       }
     } catch (e: any) {
       showToast(e.message || 'Failed to delete supplier', 'error');
