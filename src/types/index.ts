@@ -138,6 +138,7 @@ export interface Product {
   hsnSac?: string;
   gstRate?: number;
   supplierId?: string;
+  supplier?: string;
   description?: string;
   notes?: string;
   createdAt: string;

@@ -630,6 +630,161 @@ export class ProductService {
       return { data: [], error: errStr };
     }
   }
+  public async createCategory(category: { name: string; description?: string }): Promise<{ category?: Category; error?: string }> {
+    const wsId = this.getWorkspaceId();
+    if (!isSupabaseConfigured()) {
+      const newCat: Category = { id: `cat-${Date.now()}`, name: category.name, description: category.description || '' };
+      return { category: newCat };
+    }
+    try {
+      const { data, error } = await supabase
+        .from('categories')
+        .insert([{ workspace_id: wsId, name: category.name.trim(), description: category.description || null }])
+        .select()
+        .single();
+      if (error) return { error: handleSupabaseError(error, 'createCategory') };
+      this.invalidateCache();
+      return { category: { id: data.id, name: data.name, description: data.description || '' } };
+    } catch (e: any) {
+      return { error: handleSupabaseError(e, 'createCategory') };
+    }
+  }
+
+  public async updateCategory(id: string, category: { name: string; description?: string }): Promise<{ category?: Category; error?: string }> {
+    const wsId = this.getWorkspaceId();
+    if (!isSupabaseConfigured()) {
+      return { category: { id, name: category.name, description: category.description || '' } };
+    }
+    try {
+      const { data, error } = await supabase
+        .from('categories')
+        .update({ name: category.name.trim(), description: category.description || null, updated_at: new Date().toISOString() })
+        .eq('workspace_id', wsId)
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) return { error: handleSupabaseError(error, 'updateCategory') };
+      this.invalidateCache();
+      return { category: { id: data.id, name: data.name, description: data.description || '' } };
+    } catch (e: any) {
+      return { error: handleSupabaseError(e, 'updateCategory') };
+    }
+  }
+
+  public async deleteCategory(id: string): Promise<{ success: boolean; error?: string }> {
+    const wsId = this.getWorkspaceId();
+    if (!isSupabaseConfigured()) {
+      return { success: true };
+    }
+    try {
+      const { error } = await supabase
+        .from('categories')
+        .delete()
+        .eq('workspace_id', wsId)
+        .eq('id', id);
+      if (error) return { success: false, error: handleSupabaseError(error, 'deleteCategory') };
+      this.invalidateCache();
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: handleSupabaseError(e, 'deleteCategory') };
+    }
+  }
+
+  public async createSupplier(supplier: Partial<Supplier>): Promise<{ supplier?: Supplier; error?: string }> {
+    const wsId = this.getWorkspaceId();
+    if (!isSupabaseConfigured()) {
+      const newSup: Supplier = {
+        id: `sup-${Date.now()}`,
+        name: supplier.name || 'New Supplier',
+        contactPerson: supplier.contactPerson || '',
+        phone: supplier.phone || '',
+        email: supplier.email || '',
+        address: supplier.address || '',
+      };
+      return { supplier: newSup };
+    }
+    try {
+      const { data, error } = await supabase
+        .from('suppliers')
+        .insert([{
+          workspace_id: wsId,
+          name: supplier.name?.trim(),
+          contact_person: supplier.contactPerson || null,
+          phone: supplier.phone || '',
+          email: supplier.email || null,
+          address: supplier.address || null,
+        }])
+        .select()
+        .single();
+      if (error) return { error: handleSupabaseError(error, 'createSupplier') };
+      return {
+        supplier: {
+          id: data.id,
+          name: data.name,
+          contactPerson: data.contact_person || '',
+          phone: data.phone || '',
+          email: data.email || '',
+          address: data.address || '',
+        },
+      };
+    } catch (e: any) {
+      return { error: handleSupabaseError(e, 'createSupplier') };
+    }
+  }
+
+  public async updateSupplier(id: string, supplier: Partial<Supplier>): Promise<{ supplier?: Supplier; error?: string }> {
+    const wsId = this.getWorkspaceId();
+    if (!isSupabaseConfigured()) {
+      return { supplier: { id, name: supplier.name || '', contactPerson: supplier.contactPerson || '', phone: supplier.phone || '', email: supplier.email || '', address: supplier.address || '' } };
+    }
+    try {
+      const { data, error } = await supabase
+        .from('suppliers')
+        .update({
+          name: supplier.name?.trim(),
+          contact_person: supplier.contactPerson || null,
+          phone: supplier.phone || '',
+          email: supplier.email || null,
+          address: supplier.address || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('workspace_id', wsId)
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) return { error: handleSupabaseError(error, 'updateSupplier') };
+      return {
+        supplier: {
+          id: data.id,
+          name: data.name,
+          contactPerson: data.contact_person || '',
+          phone: data.phone || '',
+          email: data.email || '',
+          address: data.address || '',
+        },
+      };
+    } catch (e: any) {
+      return { error: handleSupabaseError(e, 'updateSupplier') };
+    }
+  }
+
+  public async deleteSupplier(id: string): Promise<{ success: boolean; error?: string }> {
+    const wsId = this.getWorkspaceId();
+    if (!isSupabaseConfigured()) {
+      return { success: true };
+    }
+    try {
+      const { error } = await supabase
+        .from('suppliers')
+        .delete()
+        .eq('workspace_id', wsId)
+        .eq('id', id);
+      if (error) return { success: false, error: handleSupabaseError(error, 'deleteSupplier') };
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: handleSupabaseError(e, 'deleteSupplier') };
+    }
+  }
 }
 
 export const productService = new ProductService();

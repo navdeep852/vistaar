@@ -18,6 +18,8 @@ import { StockView } from './views/StockView';
 import { CounterSaleView } from './views/CounterSaleView';
 import { ExpensesView } from './views/ExpensesView';
 
+import { CategoriesView } from './views/CategoriesView';
+import { SuppliersView } from './views/SuppliersView';
 import { ProfitLossView } from './views/ProfitLossView';
 import { FollowUpsView } from './views/FollowUpsView';
 import { FeedbackView } from './views/FeedbackView';
@@ -32,6 +34,7 @@ function MainAppContent() {
   const [isAuthenticated, setIsAuthenticated] = useState(supabaseAuthService.isAuthenticated());
   const [activeTab, setActiveTab] = useState('dashboard');
   const [modalToOpen, setModalToOpen] = useState<string | null>(null);
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string | undefined>(undefined);
 
   const [lowStockCount, setLowStockCount] = useState(0);
   const [pendingFollowupsCount, setPendingFollowupsCount] = useState(0);
@@ -124,13 +127,29 @@ function MainAppContent() {
       case 'payments':
         return <InvoicesView onNavigateTab={setActiveTab} activeTab={activeTab} />;
       case 'products':
-      case 'categories':
-      case 'suppliers':
         return (
           <ProductsView
             initialOpenCreate={modalToOpen === 'product'}
             onNavigateTab={setActiveTab}
             activeTab={activeTab}
+            initialCategoryFilter={selectedCategoryFilter}
+          />
+        );
+      case 'categories':
+        return (
+          <CategoriesView
+            onNavigateTab={(tab, catId) => {
+              setSelectedCategoryFilter(catId);
+              setActiveTab(tab);
+            }}
+          />
+        );
+      case 'suppliers':
+        return (
+          <SuppliersView
+            onNavigateTab={(tab) => {
+              setActiveTab(tab);
+            }}
           />
         );
       case 'stock':

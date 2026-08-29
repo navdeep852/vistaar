@@ -43,6 +43,8 @@ interface ProductsViewProps {
   initialOpenCreate?: boolean;
   onNavigateTab?: (tab: string) => void;
   activeTab?: string;
+  initialCategoryFilter?: string;
+  initialSupplierFilter?: string;
 }
 
 type ViewMode = 'inventory' | 'import_history';
@@ -54,6 +56,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
   initialOpenCreate,
   onNavigateTab,
   activeTab,
+  initialCategoryFilter,
+  initialSupplierFilter,
 }) => {
 
   // Store Collections
@@ -181,6 +185,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
 
   useEffect(() => {
     refreshData();
+    if (initialCategoryFilter) {
+      setCategoryFilter(initialCategoryFilter);
+    }
     if (initialOpenCreate) {
       handleOpenAddProduct();
     }
@@ -191,7 +198,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
     return () => {
       unsubscribeAuth();
     };
-  }, [initialOpenCreate]);
+  }, [initialOpenCreate, initialCategoryFilter]);
 
   // Format Helpers
   const formatCurrency = (val: number) => {
