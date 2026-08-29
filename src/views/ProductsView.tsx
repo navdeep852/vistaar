@@ -10,12 +10,20 @@ import {
   Layers,
   Trash2,
   Eye,
+  EyeOff,
   Download,
   Upload,
   ChevronRight,
   DollarSign,
   X,
   HelpCircle,
+  Shield,
+  Lock,
+  Loader2,
+  TrendingUp,
+  Barcode,
+  Tag,
+  Boxes,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { productService, inventoryService } from '../services/supabase';
@@ -55,6 +63,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
+  // User Profile & Role Authorization
+  const currentUser = supabaseAuthService.getUser();
+  const isOwner = currentUser?.role === 'owner';
 
   // Navigation & Filtering
   const [viewMode, setViewMode] = useState<ViewMode>('inventory');
@@ -68,6 +79,17 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
   const [addProductModalOpen, setAddProductModalOpen] = useState(false);
   const [receiveStockModalOpen, setReceiveStockModalOpen] = useState(false);
   const [detailsDrawerOpen, setDetailsDrawerOpen] = useState(false);
+
+  // Product Details Loading & State
+  const [loadingDetails, setLoadingDetails] = useState<boolean>(false);
+
+  // Owner Password Verification Modal State
+  const [deleteModalOpen, setDeleteModalOpen] = useState<boolean>(false);
+  const [targetProductToDelete, setTargetProductToDelete] = useState<Product | null>(null);
+  const [ownerPasswordInput, setOwnerPasswordInput] = useState<string>('');
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [verifyingPassword, setVerifyingPassword] = useState<boolean>(false);
+  const [showPasswordText, setShowPasswordText] = useState<boolean>(false);
 
   // Import Workflow Modals & Steps
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -184,7 +206,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
   };
 
   // Search & Exact Part Number Prioritization (Section 15, 16, 56)
-  const filteredProducts = products.filter((p) => {
+  const filteredProducts = products.filter((p: Product) => {
     // Status Filter
     if (statusFilter === 'IN_STOCK' && p.currentStock <= 0) return false;
     if (statusFilter === 'LOW_STOCK' && (p.currentStock <= 0 || p.currentStock > p.minimumStock)) return false;
@@ -204,7 +226,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
       if (!matchName && !matchPartNo && !matchCode && !matchSku && !matchBrand) return false;
     }
     return true;
-  }).sort((a, b) => {
+  }).sort((a: Product, b: Product) => {
     // Exact Part Number match priority
     if (search.trim()) {
       const q = search.toLowerCase().trim();
@@ -217,10 +239,10 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
   });
 
   // Calculate Metrics
-  const totalAvailableStockUnits = products.reduce((acc, p) => acc + p.currentStock, 0);
-  const totalStockValue = products.reduce((acc, p) => acc + (p.currentStock * (p.currentBuyPrice || p.buyPrice)), 0);
-  const lowStockCount = products.filter((p) => p.currentStock <= p.minimumStock && p.currentStock > 0).length;
-  const outOfStockCount = products.filter((p) => p.currentStock <= 0).length;
+  const totalAvailableStockUnits = products.reduce((acc: number, p: Product) => acc + p.currentStock, 0);
+  const totalStockValue = products.reduce((acc: number, p: Product) => acc + (p.currentStock * (p.currentBuyPrice || p.buyPrice)), 0);
+  const lowStockCount = products.filter((p: Product) => p.currentStock <= p.minimumStock && p.currentStock > 0).length;
+  const outOfStockCount = products.filter((p: Product) => p.currentStock <= 0).length;
 
   // Handlers: Part Number Preference
   const handleSetPartNumberPreference = async (usesPartNo: boolean) => {
@@ -320,7 +342,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
   const handleOpenReceiveStock = (prodId?: string) => {
     const targetId = prodId || (products.length > 0 ? products[0].id : '');
     setRecProductId(targetId);
-    const targetProd = products.find((p) => p.id === targetId);
+    const targetProd = products.find((p: Product) => p.id === targetId);
     setRecQty('10');
     setRecBuyPrice(targetProd ? String(targetProd.currentBuyPrice || targetProd.buyPrice) : '');
     setRecDate(new Date().toISOString().split('T')[0]);
@@ -354,7 +376,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
       });
 
       if (res.success && res.data) {
-        const p = products.find((prod) => prod.id === recProductId);
+        const p = products.find((prod: Product) => prod.id === recProductId);
         showToast(`Stock Receipt ${res.data.receiptNumber} created! Added ${qty} units to ${p?.name || 'Product'}.`, 'success');
         setReceiveStockModalOpen(false);
         refreshData();
@@ -367,25 +389,75 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
   };
 
   // View Product Details Drawer
-  const handleViewDetails = (productId: string) => {
+  const handleViewDetails = async (productId: string) => {
     setActiveProductId(productId);
+    setProductDetails(null);
+    setLoadingDetails(true);
     setDetailsDrawerOpen(true);
-  };
 
-  // Deactivate Product
-  const handleDeactivate = async (productId: string) => {
-    const p = products.find((prod) => prod.id === productId);
-    if (!window.confirm(`Are you sure you want to deactivate/delete ${p?.name}?`)) return;
     try {
-      const res = await productService.deactivateProduct(productId);
-      if (res.success) {
-        showToast(`${p?.name || 'Product'} deactivated`, 'info');
-        refreshData();
+      const res = await productService.getProductDetails(productId);
+      if (res.data) {
+        setProductDetails(res.data);
       } else {
-        showToast(res.error || 'Action failed', 'error');
+        showToast(res.error || 'Failed to load product details', 'error');
       }
     } catch (err: any) {
-      showToast(err.message || 'Action failed', 'error');
+      showToast(err.message || 'Failed to load product details', 'error');
+    } finally {
+      setLoadingDetails(false);
+    }
+  };
+
+  // Open Owner Deletion Confirmation Prompt
+  const handleOpenDeleteConfirm = (product: Product) => {
+    if (!isOwner) {
+      showToast('Unauthorized: Product deletion is restricted to Business Owners only.', 'error');
+      return;
+    }
+    setTargetProductToDelete(product);
+    setOwnerPasswordInput('');
+    setPasswordError(null);
+    setShowPasswordText(false);
+    setDeleteModalOpen(true);
+  };
+
+  // Submit Password & Delete Product
+  const handleConfirmDeleteSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!targetProductToDelete) return;
+    if (!ownerPasswordInput || !ownerPasswordInput.trim()) {
+      setPasswordError('Please enter your password to re-authenticate.');
+      return;
+    }
+
+    setVerifyingPassword(true);
+    setPasswordError(null);
+
+    try {
+      // 1. Verify owner password
+      const authRes = await supabaseAuthService.verifyOwnerPassword(ownerPasswordInput);
+      if (!authRes.success) {
+        setPasswordError(authRes.error || 'Invalid owner password.');
+        setVerifyingPassword(false);
+        return;
+      }
+
+      // 2. Perform deletion / deactivation
+      const delRes = await productService.deactivateProduct(targetProductToDelete.id);
+      if (delRes.success) {
+        showToast(`Product "${targetProductToDelete.name}" deactivated and archived!`, 'success');
+        setDeleteModalOpen(false);
+        setTargetProductToDelete(null);
+        setOwnerPasswordInput('');
+        refreshData();
+      } else {
+        setPasswordError(delRes.error || 'Failed to delete product.');
+      }
+    } catch (err: any) {
+      setPasswordError(err.message || 'Product deletion failed.');
+    } finally {
+      setVerifyingPassword(false);
     }
   };
 
@@ -575,7 +647,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
     const todayStr = new Date().toISOString().split('T')[0];
 
     // Build Staging Rows (Section 34, 35, 36)
-    const staged: ImportRowData[] = rawParsedRows.map((rawRow, idx) => {
+    const staged: ImportRowData[] = rawParsedRows.map((rawRow: any, idx: number) => {
       const getVal = (targetField: string) => {
         const colHeader = Object.keys(columnMappings).find((k) => columnMappings[k] === targetField);
         return colHeader ? String(rawRow[colHeader] || '').trim() : '';
@@ -629,7 +701,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
 
       if (partNumber) {
         const match = products.find(
-          (p) => p.partNumber?.toLowerCase() === partNumber.toLowerCase() || p.sku.toLowerCase() === partNumber.toLowerCase()
+          (p: Product) => p.partNumber?.toLowerCase() === partNumber.toLowerCase() || p.sku.toLowerCase() === partNumber.toLowerCase()
         );
         if (match) {
           isExisting = true;
@@ -637,7 +709,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
         }
       }
       if (!isExisting && productName) {
-        const match = products.find((p) => p.name.toLowerCase() === productName.toLowerCase());
+        const match = products.find((p: Product) => p.name.toLowerCase() === productName.toLowerCase());
         if (match) {
           isExisting = true;
           matchedId = match.id;
@@ -682,7 +754,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
 
   // Step 3: Edit Staged Row
   const handleUpdateStagedRow = (index: number, updatedFields: Partial<ImportRowData>) => {
-    setStagedImportRows((prev) => {
+    setStagedImportRows((prev: ImportRowData[]) => {
       const next = [...prev];
       const target = { ...next[index], ...updatedFields };
 
@@ -717,7 +789,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
 
   // Step 4: Final Confirmation & Commit (Sections 41-43)
   const handleConfirmImport = () => {
-    const errorCount = stagedImportRows.filter((r) => r.status === 'ERROR').length;
+    const errorCount = stagedImportRows.filter((r: ImportRowData) => r.status === 'ERROR').length;
     if (errorCount > 0) {
       showToast(`Cannot import. Please resolve the ${errorCount} error row(s) first.`, 'error');
       return;
@@ -729,8 +801,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
       uploadedAt: new Date().toISOString(),
       status: 'CONFIRMED',
       totalRows: stagedImportRows.length,
-      validRows: stagedImportRows.filter((r) => r.status === 'VALID').length,
-      warningRows: stagedImportRows.filter((r) => r.status === 'WARNING').length,
+      validRows: stagedImportRows.filter((r: ImportRowData) => r.status === 'VALID').length,
+      warningRows: stagedImportRows.filter((r: ImportRowData) => r.status === 'WARNING').length,
       errorRows: 0,
       rows: stagedImportRows,
       columnMappings,
@@ -973,7 +1045,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                     : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-900/60 hover:bg-emerald-100'
                 }`}
               >
-                In Stock ({products.filter((p) => p.currentStock > 0).length})
+                In Stock ({products.filter((p: Product) => p.currentStock > 0).length})
               </button>
               <button
                 onClick={() => setStatusFilter('LOW_STOCK')}
@@ -1007,7 +1079,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                   className="px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-300 focus:outline-none"
                 >
                   <option value="ALL">All Categories</option>
-                  {categories.map((c) => (
+                  {categories.map((c: Category) => (
                     <option key={c.id} value={c.name}>
                       {c.name}
                     </option>
@@ -1132,13 +1204,15 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                                 >
                                   <Plus className="w-3.5 h-3.5" />
                                 </button>
-                                <button
-                                  onClick={() => handleDeactivate(p.id)}
-                                  className="p-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 transition-colors cursor-pointer"
-                                  title="Deactivate Product"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                                {isOwner && (
+                                  <button
+                                    onClick={() => handleOpenDeleteConfirm(p)}
+                                    className="p-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 transition-colors cursor-pointer"
+                                    title="Delete Product (Owner Only)"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -1210,6 +1284,15 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                         >
                           + Receive
                         </button>
+                        {isOwner && (
+                          <button
+                            onClick={() => handleOpenDeleteConfirm(p)}
+                            className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 font-bold text-xs hover:bg-rose-100 dark:hover:bg-rose-900/60 cursor-pointer"
+                            title="Delete Product (Owner Only)"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -1255,7 +1338,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                     </td>
                   </tr>
                 ) : (
-                  importSessions.map((sess) => (
+                  importSessions.map((sess: any) => (
                     <tr key={sess.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                       <td className="p-4 font-mono font-bold text-blue-600 dark:text-blue-400">{sess.id}</td>
                       <td className="p-4 font-bold text-slate-900 dark:text-slate-100">{sess.fileName}</td>
@@ -1604,12 +1687,12 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
               value={recProductId}
               onChange={(e) => {
                 setRecProductId(e.target.value);
-                const p = products.find((prod) => prod.id === e.target.value);
+                const p = products.find((prod: Product) => prod.id === e.target.value);
                 if (p) setRecBuyPrice(String(p.currentBuyPrice || p.buyPrice));
               }}
               className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
             >
-              {products.map((p) => (
+              {products.map((p: Product) => (
                 <option key={p.id} value={p.id} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
                   {p.name} (Part #: {p.partNumber || p.sku}) — Avail: {p.currentStock} {p.unit}
                 </option>
@@ -1705,94 +1788,148 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
         </form>
       </Modal>
 
-      {/* 5. PRODUCT DETAILS & STOCK RECEIPT HISTORY DRAWER / MODAL (SECTIONS 19, 20, 21, 45, 46) */}
+      {/* 5. PRODUCT DETAILS & STOCK RECEIPT HISTORY DRAWER / MODAL */}
       {activeProductId && (
         <Modal
           isOpen={detailsDrawerOpen}
           onClose={() => setDetailsDrawerOpen(false)}
-          title="Product Information & Stock Receipt History"
-          maxWidth="xl"
+          title="Master Product Details & Inventory Ledger"
+          maxWidth="2xl"
         >
-          {(() => {
-            const details = productDetails || { product: products.find((prod) => prod.id === activeProductId), stockReceipts: [], stockMovements: [] };
-            if (!details.product) return null;
-            const p = details.product;
+          {loadingDetails || !productDetails ? (
+            <div className="py-12 text-center space-y-3">
+              <Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto" />
+              <p className="text-xs font-bold text-slate-500">Loading master product ledger & stock movements...</p>
+            </div>
+          ) : (() => {
+            const details = productDetails;
+            const p: Product = details.product || products.find((prod: Product) => prod.id === activeProductId);
+            if (!p) return null;
+
+            const buyPrice = Number(p.currentBuyPrice || p.buyPrice || 0);
+            const sellPrice = Number(p.currentSellPrice || p.sellingPrice || 0);
+            const unitProfit = sellPrice - buyPrice;
+            const marginPercent = sellPrice > 0 ? ((unitProfit / sellPrice) * 100).toFixed(1) : '0';
+            const stockReceiptsList = details.stockReceipts || details.receipts || [];
+            const stockMovementsList = details.stockMovements || details.movements || [];
 
             return (
               <div className="space-y-6">
-                {/* Master Info Header */}
-                <div className="bg-slate-900 text-white p-5 rounded-3xl space-y-3">
-                  <div className="flex justify-between items-start">
+                {/* Header Card */}
+                <div className="bg-slate-900 text-white p-6 rounded-3xl space-y-4 shadow-xl">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                     <div>
-                      <span className="text-[10px] text-amber-400 font-mono font-bold uppercase">
-                        Part #: {p.partNumber || p.sku}
-                      </span>
-                      <h2 className="text-xl font-black text-white mt-0.5">{p.name}</h2>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-amber-400 font-mono font-black uppercase px-2 py-0.5 bg-amber-400/10 rounded-md border border-amber-400/20">
+                          Part #: {p.partNumber || p.productCode || p.sku}
+                        </span>
+                        {p.hsnSac && (
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            HSN: {p.hsnSac}
+                          </span>
+                        )}
+                      </div>
+                      <h2 className="text-2xl font-black text-white mt-1">{p.productName || p.name}</h2>
                       <p className="text-xs text-slate-400 mt-0.5">
-                        Category: {p.category || 'General'} • Brand: {p.brand || 'N/A'} • Unit: {p.unit}
+                        Category: <strong className="text-slate-200">{p.category || 'General'}</strong> • Brand: <strong className="text-slate-200">{p.brand || 'N/A'}</strong> • Unit: <strong className="text-slate-200">{p.unit}</strong>
                       </p>
                     </div>
 
-                    <div className="text-right">
-                      <span className="text-2xl font-black text-emerald-400">
-                        {details.availableStock} {p.unit}
+                    <div className="bg-slate-800/80 p-3.5 rounded-2xl border border-slate-700/60 text-right min-w-[140px]">
+                      <span className="text-2xl font-black text-emerald-400 block">
+                        {details.availableStock !== undefined ? details.availableStock : p.currentStock} {p.unit}
                       </span>
-                      <span className="text-[10px] text-slate-400 uppercase block font-bold">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">
                         Available Stock
                       </span>
                     </div>
                   </div>
 
-                  {/* Summary Bar (Section 20 & 46) */}
-                  <div className="grid grid-cols-4 gap-2 pt-3 border-t border-slate-800 text-center text-xs">
-                    <div>
-                      <span className="text-[10px] text-slate-400 block uppercase">Total Received</span>
-                      <span className="font-bold text-white">{details.totalReceived}</span>
+                  {/* Summary Bar */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-slate-800 text-center text-xs">
+                    <div className="bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
+                      <span className="text-[10px] text-slate-400 block uppercase font-bold">Total Received</span>
+                      <span className="font-extrabold text-white text-sm">{details.totalReceived}</span>
                     </div>
-                    <div>
-                      <span className="text-[10px] text-slate-400 block uppercase">Total Sold</span>
-                      <span className="font-bold text-emerald-400">{details.totalSold}</span>
+                    <div className="bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
+                      <span className="text-[10px] text-slate-400 block uppercase font-bold">Total Sold</span>
+                      <span className="font-extrabold text-emerald-400 text-sm">{details.totalSold}</span>
                     </div>
-                    <div>
-                      <span className="text-[10px] text-slate-400 block uppercase">Total Damaged</span>
-                      <span className="font-bold text-rose-400">{details.totalDamaged}</span>
+                    <div className="bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
+                      <span className="text-[10px] text-slate-400 block uppercase font-bold">Total Damaged</span>
+                      <span className="font-extrabold text-rose-400 text-sm">{details.totalDamaged}</span>
                     </div>
-                    <div>
-                      <span className="text-[10px] text-slate-400 block uppercase">Current Available</span>
-                      <span className="font-black text-amber-400">{details.availableStock}</span>
+                    <div className="bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
+                      <span className="text-[10px] text-slate-400 block uppercase font-bold">Valuation</span>
+                      <span className="font-extrabold text-amber-400 text-sm">{formatCurrency((details.availableStock !== undefined ? details.availableStock : p.currentStock) * buyPrice)}</span>
                     </div>
                   </div>
                 </div>
 
-                {/* STOCK RECEIPT HISTORY (SECTION 20 & 21) */}
+                {/* Pricing & Margins Card */}
+                <div className="bg-slate-50 dark:bg-slate-950 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 space-y-3">
+                  <h3 className="text-xs font-black text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <TrendingUp className="w-4 h-4 text-emerald-500" />
+                    <span>Pricing, Tax & Profitability Margins</span>
+                  </h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                    <div className="bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase block">Cost / Buy Price</span>
+                      <span className="text-sm font-bold text-slate-800 dark:text-slate-200">{formatCurrency(buyPrice)}</span>
+                    </div>
+                    <div className="bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase block">Sell Price</span>
+                      <span className="text-sm font-black text-emerald-600 dark:text-emerald-400">{formatCurrency(sellPrice)}</span>
+                    </div>
+                    <div className="bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase block">Unit Margin (₹)</span>
+                      <span className={`text-sm font-black ${unitProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                        {formatCurrency(unitProfit)}
+                      </span>
+                    </div>
+                    <div className="bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase block">Profit Margin (%)</span>
+                      <span className={`text-sm font-black ${Number(marginPercent) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                        {marginPercent}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Stock Receipt History */}
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                      Stock Receipt History ({details.receipts.length} Batches)
+                    <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Boxes className="w-4 h-4 text-blue-500" />
+                      <span>Stock Receipt History ({stockReceiptsList.length} Batches)</span>
                     </h3>
                     <button
                       onClick={() => {
                         setDetailsDrawerOpen(false);
                         handleOpenReceiveStock(p.id);
                       }}
-                      className="text-xs text-blue-600 font-bold hover:underline"
+                      className="text-xs text-blue-600 dark:text-blue-400 font-bold hover:underline cursor-pointer"
                     >
-                      + Add New Receipt Batch
+                      + Add Receipt Batch
                     </button>
                   </div>
 
-                  <div className="space-y-2.5">
-                    {((details.stockReceipts || details.receipts || []) as any[]).length === 0 ? (
-                      <p className="text-xs text-slate-400 py-3 text-center">No receipts recorded yet.</p>
+                  <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                    {stockReceiptsList.length === 0 ? (
+                      <p className="text-xs text-slate-400 dark:text-slate-500 py-4 text-center bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800">
+                        No batch receipts recorded yet.
+                      </p>
                     ) : (
-                      ((details.stockReceipts || details.receipts || []) as any[]).map((r: any) => (
+                      stockReceiptsList.map((r: any) => (
                         <div
                           key={r.id}
                           className="bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3"
                         >
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="font-mono font-bold text-xs text-blue-600 dark:text-blue-400">{r.receiptNumber || r.receipt_number}</span>
+                              <span className="font-mono font-bold text-xs text-blue-600 dark:text-blue-400">
+                                {r.receiptNumber || r.receipt_number}
+                              </span>
                               {(r.purchaseOrderNumber || r.purchase_order_number) && (
                                 <span className="px-2 py-0.5 rounded-md bg-slate-200 dark:bg-slate-800 text-[10px] font-bold text-slate-700 dark:text-slate-300">
                                   PO: {r.purchaseOrderNumber || r.purchase_order_number}
@@ -1825,17 +1962,17 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                   </div>
                 </div>
 
-                {/* STOCK MOVEMENT LOG (SECTION 45) */}
-                <div className="space-y-3 pt-2">
-                  <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                    Stock Movement History Log ({((details.stockMovements || details.movements || []) as any[]).length})
+                {/* Stock Movement Log */}
+                <div className="space-y-3">
+                  <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    Stock Movement History Log ({stockMovementsList.length})
                   </h3>
-                  <div className="max-h-48 overflow-y-auto space-y-1.5 border border-slate-100 dark:border-slate-800 rounded-2xl p-3 bg-slate-50/50 dark:bg-slate-950/50">
-                    {((details.stockMovements || details.movements || []) as any[]).length === 0 ? (
-                      <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-2">No movements recorded yet.</p>
+                  <div className="max-h-48 overflow-y-auto space-y-1.5 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 bg-slate-50/50 dark:bg-slate-950/50">
+                    {stockMovementsList.length === 0 ? (
+                      <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-3">No stock movements recorded yet.</p>
                     ) : (
-                      ((details.stockMovements || details.movements || []) as any[]).map((m: any) => (
-                        <div key={m.id} className="flex justify-between items-center text-xs p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800">
+                      stockMovementsList.map((m: any) => (
+                        <div key={m.id} className="flex justify-between items-center text-xs p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800">
                           <div>
                             <span className="font-bold text-slate-900 dark:text-slate-100">{m.type}</span>
                             <span className="text-[10px] text-slate-400 dark:text-slate-500 ml-2">{formatDate(m.date || m.created_at)}</span>
@@ -1854,6 +1991,105 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
           })()}
         </Modal>
       )}
+
+      {/* 6. OWNER PASSWORD VERIFICATION DELETE MODAL */}
+      <Modal
+        isOpen={deleteModalOpen}
+        onClose={() => {
+          if (!verifyingPassword) setDeleteModalOpen(false);
+        }}
+        title="Owner Re-authentication Required"
+        maxWidth="md"
+      >
+        <form onSubmit={handleConfirmDeleteSubmit} className="space-y-4">
+          <div className="flex items-center gap-3 p-4 bg-rose-50 dark:bg-rose-950/60 rounded-2xl border border-rose-200 dark:border-rose-900/60">
+            <div className="w-10 h-10 bg-rose-100 dark:bg-rose-900 text-rose-600 dark:text-rose-300 rounded-xl flex items-center justify-center shrink-0">
+              <Shield className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-rose-900 dark:text-rose-200 uppercase tracking-wider">
+                Owner-Only Action
+              </h4>
+              <p className="text-xs text-rose-700 dark:text-rose-300 mt-0.5">
+                Product deletion/archival requires re-authenticating with your Business Owner password.
+              </p>
+            </div>
+          </div>
+
+          {targetProductToDelete && (
+            <div className="bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-1">
+              <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase block">
+                Target Product to Deactivate:
+              </span>
+              <p className="text-sm font-extrabold text-slate-900 dark:text-slate-100">
+                {targetProductToDelete.productName || targetProductToDelete.name}
+              </p>
+              <p className="text-xs text-blue-600 dark:text-blue-400 font-mono font-bold">
+                Part #: {targetProductToDelete.partNumber || targetProductToDelete.productCode || targetProductToDelete.sku}
+              </p>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+              Owner Password *
+            </label>
+            <div className="relative">
+              <input
+                type={showPasswordText ? 'text' : 'password'}
+                required
+                value={ownerPasswordInput}
+                onChange={(e) => setOwnerPasswordInput(e.target.value)}
+                placeholder="Enter owner password..."
+                className="w-full pl-9 pr-10 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-rose-500"
+              />
+              <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <button
+                type="button"
+                onClick={() => setShowPasswordText(!showPasswordText)}
+                className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                {showPasswordText ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          {passwordError && (
+            <div className="p-3 bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 rounded-xl text-xs font-bold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{passwordError}</span>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+            <button
+              type="button"
+              disabled={verifyingPassword}
+              onClick={() => setDeleteModalOpen(false)}
+              className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={verifyingPassword}
+              className="px-6 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-md shadow-rose-600/20 inline-flex items-center gap-2 cursor-pointer"
+            >
+              {verifyingPassword ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Verifying...</span>
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Confirm & Deactivate</span>
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </Modal>
 
       {/* 6. BULK EXCEL/CSV IMPORT WORKFLOW MODAL (SECTIONS 27-43) */}
       <Modal
@@ -1942,7 +2178,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
               </div>
 
               <div className="max-h-72 overflow-y-auto space-y-2 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
-                {rawParsedHeaders.map((header) => (
+                {rawParsedHeaders.map((header: string) => (
                   <div key={header} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100 dark:border-slate-800">
                     <span className="font-bold text-slate-800 dark:text-slate-200 w-1/2 truncate">{header}</span>
                     <select
@@ -2001,19 +2237,19 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                 <div className="bg-emerald-50 dark:bg-emerald-950/60 p-2.5 rounded-xl border border-emerald-200 dark:border-emerald-900/60">
                   <span className="text-[10px] text-emerald-700 dark:text-emerald-300 block uppercase font-bold">Valid</span>
                   <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">
-                    {stagedImportRows.filter((r) => r.status === 'VALID').length}
+                    {stagedImportRows.filter((r: ImportRowData) => r.status === 'VALID').length}
                   </span>
                 </div>
                 <div className="bg-amber-50 dark:bg-amber-950/60 p-2.5 rounded-xl border border-amber-200 dark:border-amber-900/60">
                   <span className="text-[10px] text-amber-700 dark:text-amber-300 block uppercase font-bold">Existing/Receipts</span>
                   <span className="font-black text-amber-600 dark:text-amber-400 text-sm">
-                    {stagedImportRows.filter((r) => r.status === 'WARNING').length}
+                    {stagedImportRows.filter((r: ImportRowData) => r.status === 'WARNING').length}
                   </span>
                 </div>
                 <div className="bg-rose-50 dark:bg-rose-950/60 p-2.5 rounded-xl border border-rose-200 dark:border-rose-900/60">
                   <span className="text-[10px] text-rose-700 dark:text-rose-300 block uppercase font-bold">Errors</span>
                   <span className="font-black text-rose-600 dark:text-rose-400 text-sm">
-                    {stagedImportRows.filter((r) => r.status === 'ERROR').length}
+                    {stagedImportRows.filter((r: ImportRowData) => r.status === 'ERROR').length}
                   </span>
                 </div>
               </div>
@@ -2033,7 +2269,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {stagedImportRows.map((r, idx) => (
+                    {stagedImportRows.map((r: ImportRowData, idx: number) => (
                       <tr
                         key={idx}
                         className={
@@ -2106,7 +2342,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                 </button>
                 <button
                   type="button"
-                  disabled={stagedImportRows.some((r) => r.status === 'ERROR')}
+                  disabled={stagedImportRows.some((r: ImportRowData) => r.status === 'ERROR')}
                   onClick={handleConfirmImport}
                   className="px-6 py-2.5 rounded-xl bg-emerald-600 text-white font-bold text-xs hover:bg-emerald-500 disabled:opacity-50 shadow-md shadow-emerald-600/20 cursor-pointer"
                 >

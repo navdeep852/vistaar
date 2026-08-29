@@ -428,25 +428,47 @@ export class ProductService {
   }
 
   public async deleteProduct(id: string): Promise<{ success: boolean; error?: string }> {
+    // 1. Authorize owner role
+    const user = supabaseAuthService.getUser();
+    if (!user || user.role !== 'owner') {
+      return { success: false, error: 'Unauthorized: Product deletion is restricted to Business Owners only.' };
+    }
+
     if (!isSupabaseConfigured()) {
       let local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
-      local = local.filter((p) => p.id !== id);
+      local = local.map((p) => (p.id === id ? { ...p, active: false } : p));
       safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, local);
       return { success: true };
     }
 
     const wsId = this.getWorkspaceId();
     try {
-      const { error } = await supabase
+      // Try hard deletion first
+      const { error: delErr } = await supabase
         .from('products')
         .delete()
         .eq('workspace_id', wsId)
         .eq('id', id);
 
-      if (error) {
-        const errStr = handleSupabaseError(error, 'deleteProduct');
-        return { success: false, error: errStr };
+      if (delErr) {
+        // Fallback to soft deletion (deactivation) if FK constraint blocks hard delete
+        const { error: softErr } = await supabase
+          .from('products')
+          .update({ active: false, updated_at: new Date().toISOString() })
+          .eq('workspace_id', wsId)
+          .eq('id', id);
+
+        if (softErr) {
+          const errStr = handleSupabaseError(softErr, 'deleteProduct');
+          return { success: false, error: errStr };
+        }
       }
+
+      // Sync local tenant storage
+      let local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+      local = local.filter((p) => p.id !== id);
+      safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, local);
+
       return { success: true };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'deleteProduct');
@@ -467,13 +489,25 @@ export class ProductService {
       const receipts = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []).filter(
         (r: any) => r.product_id === id
       );
+
+      const totalReceived = receipts.reduce((acc: number, r: any) => acc + (Number(r.quantity_received) || Number(r.quantityReceived) || 0), 0);
+      const totalRemaining = receipts.reduce((acc: number, r: any) => acc + (Number(r.quantity_remaining) || Number(r.quantityRemaining) || 0), 0);
+
+      const resultData = {
+        product,
+        stockReceipts: receipts || [],
+        receipts: receipts || [],
+        stockMovements: [],
+        movements: [],
+        totalReceived: totalReceived || product.currentStock || 0,
+        totalSold: Math.max(0, (totalReceived || product.currentStock || 0) - totalRemaining),
+        totalDamaged: 0,
+        availableStock: totalRemaining !== undefined && receipts.length > 0 ? totalRemaining : product.currentStock || 0,
+      };
+
       return {
         success: true,
-        data: {
-          product,
-          stockReceipts: receipts,
-          stockMovements: [],
-        },
+        data: resultData,
       };
     }
 
@@ -492,23 +526,49 @@ export class ProductService {
       }
       if (!pData) return { success: false, error: 'Product not found' };
       const product = fromDbProduct(pData as DbProduct);
+
       const { data: receipts } = await supabase
         .from('stock_receipts')
         .select('*')
         .eq('workspace_id', wsId)
-        .eq('product_id', id);
+        .eq('product_id', id)
+        .order('received_date', { ascending: false });
+
       const { data: movements } = await supabase
         .from('stock_movements')
         .select('*')
         .eq('workspace_id', wsId)
-        .eq('product_id', id);
+        .eq('product_id', id)
+        .order('movement_date', { ascending: false });
+
+      const safeReceipts = receipts || [];
+      const safeMovements = movements || [];
+
+      const totalReceived = safeReceipts.reduce((acc, r: any) => acc + (Number(r.quantity_received) || 0), 0);
+      const totalRemaining = safeReceipts.reduce((acc, r: any) => acc + (Number(r.quantity_remaining) || 0), 0);
+
+      const totalSold = safeMovements
+        .filter((m: any) => m.type === 'SALE')
+        .reduce((acc, m: any) => acc + Math.abs(Number(m.quantity) || 0), 0);
+
+      const totalDamaged = safeMovements
+        .filter((m: any) => m.type === 'DAMAGE' || m.type === 'LOSS')
+        .reduce((acc, m: any) => acc + Math.abs(Number(m.quantity) || 0), 0);
+
+      const availStock = safeReceipts.length > 0 ? totalRemaining : product.currentStock;
 
       return {
         success: true,
         data: {
           product,
-          stockReceipts: receipts || [],
-          stockMovements: movements || [],
+          stockReceipts: safeReceipts,
+          receipts: safeReceipts,
+          stockMovements: safeMovements,
+          movements: safeMovements,
+          totalReceived: totalReceived || product.currentStock,
+          totalSold,
+          totalDamaged,
+          availableStock: availStock,
         },
       };
     } catch (e: any) {
