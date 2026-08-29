@@ -7,7 +7,8 @@ export type TemplateCategory =
   | 'Creative'
   | 'Retail'
   | 'Service'
-  | 'Premium';
+  | 'Premium'
+  | 'Industry';
 
 export type DocumentType = 'invoice' | 'quotation';
 export type LogoAlignment = 'left' | 'center' | 'right';

@@ -3,6 +3,7 @@ import { DocumentTemplate, BrandingConfig, ThemeConfig, DocumentCustomization } 
 import { QuotationItem, InvoiceItem } from '../types';
 import { INVOICE_TEMPLATES } from '../templates/invoiceTemplates';
 import { QUOTATION_TEMPLATES } from '../templates/quotationTemplates';
+import { QuotationTemplateEngineRenderer } from '../templates/quotations/renderer';
 
 export interface DocumentRendererProps {
   templateId: string;
@@ -98,6 +99,60 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
   customization,
   isPrintMode = false,
 }) => {
+  // Delegate quotation documents to the modular 30-layout Quotation Template Engine
+  if (documentType === 'quotation') {
+    return (
+      <QuotationTemplateEngineRenderer
+        templateId={templateId}
+        quotation={{
+          id: documentNumber,
+          quotationNumber: documentNumber,
+          date: date,
+          validUntil: dueDateOrValidUntil,
+          items: (items || []) as QuotationItem[],
+          subtotal: Number(subtotal || 0),
+          discountTotal: Number(discountTotal || 0),
+          taxTotal: Number(taxTotal || 0),
+          grandTotal: Number(grandTotal || 0),
+          currency: currency,
+          notes: notes,
+          terms: terms,
+        }}
+        business={{
+          businessName: businessName || 'Business Name',
+          phone: phone,
+          email: email,
+          address: address,
+          city: city,
+          state: state,
+          pincode: pincode,
+          gstin: gstin,
+          pan: pan,
+          bankDetails: bankDetails,
+        }}
+        customer={{
+          name: customerName || 'Customer Name',
+          phone: customerPhone,
+          email: customerEmail,
+          address: customerAddress,
+          gstin: customerGstin,
+        }}
+        branding={{
+          logoUrl: branding?.logoUrl,
+          signatureUrl: branding?.signatureUrl,
+          stampUrl: branding?.stampUrl,
+          logoAlignment: branding?.logoAlignment || 'left',
+          logoScale: branding?.logoScale || 1,
+          signatureScale: branding?.signatureScale || 1,
+          stampScale: branding?.stampScale || 1,
+        }}
+        theme={theme as any}
+        customization={customization}
+        isPrintMode={isPrintMode}
+      />
+    );
+  }
+
   // Safe template definition lookup
   const allTemplates = [...INVOICE_TEMPLATES, ...QUOTATION_TEMPLATES];
   const template =

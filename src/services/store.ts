@@ -368,7 +368,7 @@ class StoreService {
   public getLastUsedTemplate(type: 'invoice' | 'quotation'): string {
     return type === 'invoice'
       ? this.state.lastUsedInvoiceTemplate || 'inv-modern-blue'
-      : this.state.lastUsedQuotationTemplate || 'qt-modern-blue';
+      : this.state.lastUsedQuotationTemplate || 'modern-split';
   }
 
   public saveLastUsedTemplate(type: 'invoice' | 'quotation', templateId: string) {

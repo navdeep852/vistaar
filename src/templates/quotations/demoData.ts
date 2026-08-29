@@ -1,0 +1,103 @@
+import { QuotationData, BusinessData, CustomerData } from './types';
+import { BrandingConfig } from '../../types/template';
+
+export const DEMO_BUSINESS: BusinessData = {
+  businessName: 'VISTAAR Business Solutions',
+  legalName: 'VISTAAR Technologies Private Limited',
+  ownerName: 'Rajesh Kumar',
+  phone: '+91 98765 43210',
+  email: 'contact@vistaar.app',
+  website: 'https://vistaar.app',
+  address: 'Plot 42, Tech Park Sector 5',
+  addressLine2: 'Powai Industrial Area',
+  city: 'Mumbai',
+  state: 'Maharashtra',
+  pincode: '400076',
+  country: 'India',
+  gstin: '27AAAAA0000A1Z5',
+  pan: 'ABCDE1234F',
+  bankDetails: {
+    bankName: 'HDFC Bank Ltd.',
+    accountHolder: 'VISTAAR Technologies Pvt Ltd',
+    accountNo: '50200012345678',
+    ifscCode: 'HDFC0000240',
+    branch: 'Powai Branch',
+    upiId: 'vistaar@hdfcbank',
+  },
+};
+
+export const DEMO_CUSTOMER: CustomerData = {
+  id: 'cust-demo-01',
+  name: 'Apex Enterprises Pvt Ltd',
+  phone: '+91 98200 11223',
+  whatsapp: '+91 98200 11223',
+  email: 'procurement@apexenterprises.in',
+  address: 'Suite 802, Synergy Towers, BKC',
+  city: 'Mumbai',
+  state: 'Maharashtra',
+  pincode: '400051',
+  gstin: '27AAACA9999B1Z2',
+};
+
+export const DEMO_QUOTATION: QuotationData = {
+  quotationNumber: 'QTN-2026-089',
+  date: '2026-08-29',
+  validUntil: '2026-09-15',
+  referenceNumber: 'PO-REQ-7741',
+  currency: '₹',
+  items: [
+    {
+      id: 'demo-item-1',
+      productName: 'Business Management Software Suite',
+      sku: 'SW-VST-ENTERPRISE',
+      unit: 'License',
+      quantity: 1,
+      buyPrice: 30000,
+      sellingPrice: 45000,
+      discountAmount: 2500,
+      taxPercent: 18,
+      taxAmount: 7650,
+      total: 50150,
+    },
+    {
+      id: 'demo-item-2',
+      productName: 'Cloud Server Infrastructure Setup & Optimization',
+      sku: 'SRV-CLOUD-PRO',
+      unit: 'Hours',
+      quantity: 15,
+      buyPrice: 1200,
+      sellingPrice: 2000,
+      discountAmount: 1500,
+      taxPercent: 18,
+      taxAmount: 5130,
+      total: 33630,
+    },
+    {
+      id: 'demo-item-3',
+      productName: 'Dedicated 24/7 Technical Support Retainer',
+      sku: 'SUP-ANNUAL-PLUS',
+      unit: 'Month',
+      quantity: 12,
+      buyPrice: 800,
+      sellingPrice: 1500,
+      discountAmount: 0,
+      taxPercent: 18,
+      taxAmount: 3240,
+      total: 21240,
+    },
+  ],
+  subtotal: 93000,
+  discountTotal: 4000,
+  taxTotal: 16020,
+  grandTotal: 105020,
+  notes: 'All software licenses include complimentary 1-year version updates and priority security patches.',
+  terms: '1. Quotation valid until 15th September 2026.\n2. Payment: 50% advance upon PO confirmation, 50% post implementation.\n3. Applicable GST 18% included as specified above.',
+  footerText: 'Thank you for choosing VISTAAR Business Solutions. We look forward to a successful partnership!',
+};
+
+export const DEMO_BRANDING: BrandingConfig = {
+  logoAlignment: 'left',
+  logoScale: 1,
+  signatureScale: 1,
+  stampScale: 1,
+};
