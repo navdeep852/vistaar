@@ -10,8 +10,17 @@ import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 const LOCAL_PRODUCTS_KEY = 'vistaar_local_products_db';
 
 export class ProductService {
+  private productsCache: { data: Product[]; count: number; timestamp: number; wsId: string } | null = null;
+  private categoriesCache: { data: Category[]; timestamp: number; wsId: string } | null = null;
+  private CACHE_TTL_MS = 30000; // 30 seconds
+
   private getWorkspaceId(): string {
     return supabaseAuthService.getCurrentCompanyId();
+  }
+
+  public invalidateCache(): void {
+    this.productsCache = null;
+    this.categoriesCache = null;
   }
 
   public async getProducts(options?: {
@@ -20,6 +29,14 @@ export class ProductService {
     page?: number;
     pageSize?: number;
   }): Promise<{ data: Product[]; count: number; error?: string }> {
+    const wsId = this.getWorkspaceId();
+    const isDefaultFetch = !options?.search && !options?.categoryId && !options?.page;
+
+    // Return from in-memory cache if available and fresh (<30s)
+    if (isDefaultFetch && this.productsCache && this.productsCache.wsId === wsId && (Date.now() - this.productsCache.timestamp < this.CACHE_TTL_MS)) {
+      return { data: this.productsCache.data, count: this.productsCache.count };
+    }
+
     if (!isSupabaseConfigured()) {
       let items = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
       const receipts = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []);
@@ -57,8 +74,13 @@ export class ProductService {
       return { data: items, count: items.length };
     }
 
-    const wsId = this.getWorkspaceId();
-    let query = supabase.from('products').select('*', { count: 'exact' }).eq('workspace_id', wsId);
+    const SELECT_FIELDS = 'id, workspace_id, name, sku, part_number, product_code, category_id, category, brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, gst_rate, tax_percent, active, created_at, updated_at';
+
+    let query = supabase
+      .from('products')
+      .select(SELECT_FIELDS, { count: 'exact' })
+      .eq('workspace_id', wsId)
+      .eq('active', true);
 
     if (options?.search) {
       const s = `%${options.search}%`;
@@ -84,29 +106,16 @@ export class ProductService {
         return { data: [], count: 0, error: errStr };
       }
 
-      // Fetch stock receipt sums for accurate available stock calculation
-      const { data: receipts } = await supabase
-        .from('stock_receipts')
-        .select('product_id, quantity_remaining')
-        .eq('workspace_id', wsId);
+      const products = (data as DbProduct[]).map((row) => fromDbProduct(row));
 
-      const stockMap: Record<string, number> = {};
-      if (receipts && Array.isArray(receipts)) {
-        receipts.forEach((r: any) => {
-          if (r.product_id) {
-            stockMap[r.product_id] = (stockMap[r.product_id] || 0) + (r.quantity_remaining || 0);
-          }
-        });
+      if (isDefaultFetch) {
+        this.productsCache = {
+          data: products,
+          count: count || products.length,
+          timestamp: Date.now(),
+          wsId,
+        };
       }
-
-      const products = (data as DbProduct[]).map((row) => {
-        const p = fromDbProduct(row);
-        const calculatedStock = stockMap[row.id];
-        if (calculatedStock !== undefined) {
-          p.currentStock = calculatedStock;
-        }
-        return p;
-      });
 
       return { data: products, count: count || 0 };
     } catch (e: any) {
@@ -148,10 +157,13 @@ export class ProductService {
     const pattern = `%${s}%`;
 
     try {
+      const SELECT_FIELDS = 'id, workspace_id, name, sku, part_number, product_code, category_id, category, brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, gst_rate, tax_percent, active, created_at, updated_at';
+
       const { data, error } = await supabase
         .from('products')
-        .select('*')
+        .select(SELECT_FIELDS)
         .eq('workspace_id', wsId)
+        .eq('active', true)
         .or(`name.ilike.${pattern},sku.ilike.${pattern},part_number.ilike.${pattern}`)
         .order('name', { ascending: true })
         .limit(limit);
@@ -168,29 +180,7 @@ export class ProductService {
         return { data: matched, error: errStr };
       }
 
-      // Fetch stock receipt sums for accurate stock values
-      const { data: receipts } = await supabase
-        .from('stock_receipts')
-        .select('product_id, quantity_remaining')
-        .eq('workspace_id', wsId);
-
-      const stockMap: Record<string, number> = {};
-      if (receipts && Array.isArray(receipts)) {
-        receipts.forEach((r: any) => {
-          if (r.product_id) {
-            stockMap[r.product_id] = (stockMap[r.product_id] || 0) + (r.quantity_remaining || 0);
-          }
-        });
-      }
-
-      const products = (data as DbProduct[]).map((row) => {
-        const p = fromDbProduct(row);
-        const calcStock = stockMap[row.id];
-        if (calcStock !== undefined) {
-          p.currentStock = calcStock;
-        }
-        return p;
-      });
+      const products = (data as DbProduct[]).map((row) => fromDbProduct(row));
 
       return { data: products };
     } catch (e: any) {
@@ -329,6 +319,7 @@ export class ProductService {
       local.unshift(createdProduct);
       safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, local);
 
+      this.invalidateCache();
       return { product: createdProduct };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'createProduct');
@@ -420,6 +411,7 @@ export class ProductService {
         const errStr = handleSupabaseError(error, 'updateProduct');
         return { error: errStr };
       }
+      this.invalidateCache();
       return { product: fromDbProduct(data as DbProduct) };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'updateProduct');
@@ -469,6 +461,7 @@ export class ProductService {
       local = local.filter((p) => p.id !== id);
       safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, local);
 
+      this.invalidateCache();
       return { success: true };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'deleteProduct');
@@ -578,12 +571,17 @@ export class ProductService {
   }
 
   public async getCategories(): Promise<{ data: Category[]; error?: string }> {
+    const wsId = this.getWorkspaceId();
+    if (this.categoriesCache && this.categoriesCache.wsId === wsId && (Date.now() - this.categoriesCache.timestamp < this.CACHE_TTL_MS)) {
+      return { data: this.categoriesCache.data };
+    }
+
     if (!isSupabaseConfigured()) {
       return { data: store.getCategories() };
     }
-    const wsId = this.getWorkspaceId();
+
     try {
-      const { data, error } = await supabase.from('categories').select('*').eq('workspace_id', wsId);
+      const { data, error } = await supabase.from('categories').select('id, name, description').eq('workspace_id', wsId);
       if (error) {
         const errStr = handleSupabaseError(error, 'getCategories');
         return { data: [], error: errStr };
@@ -593,6 +591,13 @@ export class ProductService {
         name: c.name,
         description: c.description,
       }));
+
+      this.categoriesCache = {
+        data: categories,
+        timestamp: Date.now(),
+        wsId,
+      };
+
       return { data: categories };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getCategories');
