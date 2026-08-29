@@ -471,7 +471,7 @@ export class SupabaseAuthService {
       };
     }
 
-    // Check local registered DB fallback
+    // Check local registered DB
     try {
       const localDbStr = safeStorageGet(REGISTERED_USERS_KEY);
       if (localDbStr) {
@@ -488,44 +488,44 @@ export class SupabaseAuthService {
       // ignore
     }
 
-    if (isSupabaseConfigured()) {
-      try {
-        const { data: existingProfile } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('email', cleanEmail)
-          .maybeSingle();
-
-        if (existingProfile) {
-          return {
-            success: false,
-            error: 'An account already exists with this email address. Please sign in instead.',
-            accountExists: true,
-          };
-        }
-
-        const { error } = await supabase.auth.signInWithOtp({
-          email: cleanEmail,
-          options: {
-            shouldCreateUser: true,
-          },
-        });
-
-        if (error) {
-          const normalized = normalizeAuthError(error);
-          return { success: false, error: normalized };
-        }
-        return { success: true };
-      } catch (err: any) {
-        const normalized = normalizeAuthError(err);
-        if (normalized.includes('Unable to reach Supabase')) {
-          return { success: true };
-        }
-        return { success: false, error: normalized };
-      }
+    if (!isSupabaseConfigured()) {
+      return {
+        success: false,
+        error: 'Email OTP service is unavailable. Please verify that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are configured with a valid Supabase project.',
+      };
     }
 
-    return { success: true };
+    try {
+      const { data: existingProfile } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', cleanEmail)
+        .maybeSingle();
+
+      if (existingProfile) {
+        return {
+          success: false,
+          error: 'An account already exists with this email address. Please sign in instead.',
+          accountExists: true,
+        };
+      }
+
+      const { error } = await supabase.auth.signInWithOtp({
+        email: cleanEmail,
+        options: {
+          shouldCreateUser: true,
+        },
+      });
+
+      if (error) {
+        const normalized = normalizeAuthError(error);
+        return { success: false, error: normalized };
+      }
+      return { success: true };
+    } catch (err: any) {
+      const normalized = normalizeAuthError(err);
+      return { success: false, error: normalized };
+    }
   }
 
   /**
@@ -539,41 +539,46 @@ export class SupabaseAuthService {
       return { success: false, error: 'Please enter a valid 6-digit numeric verification code.' };
     }
 
-    if (isSupabaseConfigured()) {
-      try {
-        let { error } = await supabase.auth.verifyOtp({
-          email: cleanEmail,
-          token: cleanToken,
-          type: 'email',
-        });
-
-        if (error) {
-          const res = await supabase.auth.verifyOtp({
-            email: cleanEmail,
-            token: cleanToken,
-            type: 'signup',
-          });
-          error = res.error;
-        }
-
-        if (error) {
-          if (error.message?.includes('expired') || error.message?.includes('Token has expired')) {
-            return { success: false, error: 'The verification code has expired. Please request a new code.' };
-          }
-          return { success: false, error: 'That code is incorrect. Please check the latest code sent to your email.' };
-        }
-
-        return { success: true };
-      } catch (err: any) {
-        const normalized = normalizeAuthError(err);
-        if (normalized.includes('Unable to reach Supabase')) {
-          return { success: true };
-        }
-        return { success: false, error: normalized };
-      }
+    if (!isSupabaseConfigured()) {
+      return {
+        success: false,
+        error: 'Unable to verify code: Authentication service is unavailable or unconfigured. Please check your Supabase connection settings.',
+      };
     }
 
-    return { success: true };
+    try {
+      let { data, error } = await supabase.auth.verifyOtp({
+        email: cleanEmail,
+        token: cleanToken,
+        type: 'email',
+      });
+
+      if (error) {
+        const res = await supabase.auth.verifyOtp({
+          email: cleanEmail,
+          token: cleanToken,
+          type: 'signup',
+        });
+        data = res.data;
+        error = res.error;
+      }
+
+      if (error) {
+        if (error.message?.includes('expired') || error.message?.includes('Token has expired')) {
+          return { success: false, error: 'The verification code has expired. Please request a new code.' };
+        }
+        return { success: false, error: 'That verification code is incorrect. Please check the latest code sent to your email.' };
+      }
+
+      if (!data || (!data.session && !data.user)) {
+        return { success: false, error: 'Verification failed. Could not verify email code with authentication server.' };
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      const normalized = normalizeAuthError(err);
+      return { success: false, error: normalized };
+    }
   }
 
   /**
