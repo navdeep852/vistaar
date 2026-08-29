@@ -577,7 +577,26 @@ export class ProductService {
     }
 
     if (!isSupabaseConfigured()) {
-      const stored = safeGetTenantStorage<Category>('vistaar_local_categories_db', store.getCategories());
+      let stored = safeGetTenantStorage<Category>('vistaar_local_categories_db', store.getCategories());
+      const localProducts = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, store.getProducts());
+      const catNames = new Set(stored.map((c) => c.name.toLowerCase()));
+      let added = false;
+      localProducts.forEach((p) => {
+        const pCat = p.category?.trim();
+        if (pCat && !catNames.has(pCat.toLowerCase())) {
+          const newCat: Category = {
+            id: `cat-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            name: pCat,
+            description: 'Auto-reconciled category from inventory products',
+          };
+          stored.push(newCat);
+          catNames.add(pCat.toLowerCase());
+          added = true;
+        }
+      });
+      if (added) {
+        safeSaveTenantStorage('vistaar_local_categories_db', stored);
+      }
       return { data: stored };
     }
 
@@ -593,11 +612,57 @@ export class ProductService {
         const fallback = safeGetTenantStorage<Category>('vistaar_local_categories_db', []);
         return { data: fallback, error: errStr };
       }
-      const categories: Category[] = (data as DbCategory[]).map((c) => ({
+      let categories: Category[] = (data as DbCategory[]).map((c) => ({
         id: c.id,
         name: c.name,
         description: c.description || '',
       }));
+
+      // Data Integrity Auto-Reconciliation: Ensure any product referencing a category string has a matching Category record
+      try {
+        const { data: prodData } = await supabase
+          .from('products')
+          .select('category, category_id')
+          .eq('workspace_id', wsId)
+          .eq('active', true);
+
+        if (prodData && prodData.length > 0) {
+          const existingNames = new Set(categories.map((c) => c.name.trim().toLowerCase()));
+          const missingNames = new Set<string>();
+
+          prodData.forEach((p: any) => {
+            const catName = p.category?.trim();
+            if (catName && !existingNames.has(catName.toLowerCase())) {
+              missingNames.add(catName);
+            }
+          });
+
+          if (missingNames.size > 0) {
+            const inserts = Array.from(missingNames).map((name) => ({
+              workspace_id: wsId,
+              name,
+              description: 'Auto-reconciled category from inventory products',
+            }));
+
+            const { data: insertedData } = await supabase
+              .from('categories')
+              .insert(inserts)
+              .select();
+
+            if (insertedData) {
+              insertedData.forEach((ic: any) => {
+                categories.push({
+                  id: ic.id,
+                  name: ic.name,
+                  description: ic.description || '',
+                });
+              });
+            }
+          }
+        }
+      } catch (reconcileErr) {
+        console.warn('[Category Sync] Auto-reconciliation warning:', reconcileErr);
+      }
 
       safeSaveTenantStorage('vistaar_local_categories_db', categories);
 
@@ -736,11 +801,41 @@ export class ProductService {
     if (!isSupabaseConfigured()) {
       const existing = safeGetTenantStorage<Category>('vistaar_local_categories_db', store.getCategories());
       safeSaveTenantStorage('vistaar_local_categories_db', existing.filter((c) => c.id !== id));
+      const localProducts = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, store.getProducts());
+      const updatedProducts = localProducts.map((p) => {
+        if (p.categoryId === id || p.category === id) {
+          return { ...p, categoryId: undefined, category: '' };
+        }
+        return p;
+      });
+      safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, updatedProducts);
       this.invalidateCache();
       return { success: true };
     }
 
     try {
+      const catToDelete = this.categoriesCache?.data.find((c) => c.id === id);
+      const catName = catToDelete?.name;
+
+      // Safely unassign linked products so no orphaned category references remain
+      try {
+        await supabase
+          .from('products')
+          .update({ category_id: null, category: null })
+          .eq('workspace_id', wsId)
+          .eq('category_id', id);
+
+        if (catName) {
+          await supabase
+            .from('products')
+            .update({ category_id: null, category: null })
+            .eq('workspace_id', wsId)
+            .eq('category', catName);
+        }
+      } catch (unassignErr) {
+        console.warn('[Category Delete] Product unassign warning:', unassignErr);
+      }
+
       const { error } = await supabase
         .from('categories')
         .delete()

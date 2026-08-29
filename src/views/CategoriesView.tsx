@@ -15,6 +15,7 @@ import {
   Tag,
   AlertCircle,
   TrendingUp,
+  RefreshCw,
 } from 'lucide-react';
 import { Category, Product } from '../types';
 import { productService } from '../services/supabase';
@@ -29,6 +30,7 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNavigateTab })
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [errorState, setErrorState] = useState<string | null>(null);
   const [search, setSearch] = useState<string>('');
 
   // Modals & Drawers State
@@ -48,15 +50,25 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNavigateTab })
 
   const fetchData = async () => {
     setLoading(true);
+    setErrorState(null);
     try {
       const [catRes, prodRes] = await Promise.all([
         productService.getCategories(),
         productService.getProducts(),
       ]);
-      setCategories(catRes.data || []);
+
+      if (catRes.error) {
+        setErrorState(catRes.error);
+        showToast(catRes.error, 'error');
+      } else {
+        setCategories(catRes.data || []);
+      }
+
       setProducts(prodRes.data || []);
     } catch (err: any) {
-      showToast(err.message || 'Failed to load categories', 'error');
+      const errMsg = err.message || 'Failed to load categories';
+      setErrorState(errMsg);
+      showToast(errMsg, 'error');
     } finally {
       setLoading(false);
     }
@@ -67,12 +79,16 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNavigateTab })
   }, []);
 
   // Filter Categories
-  const filteredCategories = categories.filter((c) =>
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    (c.description && c.description.toLowerCase().includes(search.toLowerCase()))
-  );
+  const filteredCategories = categories.filter((c) => {
+    const q = search.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      c.name.toLowerCase().includes(q) ||
+      (c.description && c.description.toLowerCase().includes(q))
+    );
+  });
 
-  // Helper Calculations
+  // Helper Calculations per Category
   const getCategoryMetrics = (cat: Category) => {
     const catProds = products.filter(
       (p) => p.categoryId === cat.id || p.category === cat.name || p.category === cat.id
@@ -83,11 +99,21 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNavigateTab })
     return { catProds, productCount, totalStock, totalValue };
   };
 
-  // Overall KPIs
+  // Authoritative Overall KPIs
   const totalCategories = categories.length;
-  const uncategorizedProds = products.filter((p) => !p.categoryId && !p.category);
-  const totalCategorizedProds = products.length - uncategorizedProds.length;
-  const totalInventoryValue = products.reduce(
+  
+  // Categorized products: products assigned to a valid category record in workspace
+  const categorizedProductsList = products.filter((p) =>
+    categories.some(
+      (c) => c.id === p.categoryId || c.name === p.category || c.id === p.category
+    )
+  );
+
+  const totalCategorizedProds = categorizedProductsList.length;
+  const totalUncategorizedProds = Math.max(0, products.length - totalCategorizedProds);
+
+  // Category Inventory Value: Sum of value for products belonging to valid category records
+  const categoryInventoryValue = categorizedProductsList.reduce(
     (sum, p) => sum + (p.currentStock || 0) * (p.buyPrice || 0),
     0
   );
@@ -249,97 +275,139 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNavigateTab })
           </div>
           <div>
             <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Category Inventory Value</p>
-            <p className="text-xl font-bold text-slate-900 dark:text-slate-100">{formatCurrency(totalInventoryValue)}</p>
+            <p className="text-xl font-bold text-slate-900 dark:text-slate-100">{formatCurrency(categoryInventoryValue)}</p>
           </div>
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-4">
           <div className="p-3 bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 rounded-xl">
-            <Tag className="w-6 h-6" />
+            <AlertCircle className="w-6 h-6" />
           </div>
           <div>
             <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Uncategorized Items</p>
-            <p className="text-xl font-bold text-slate-900 dark:text-slate-100">{uncategorizedProds.length}</p>
+            <p className="text-xl font-bold text-slate-900 dark:text-slate-100">{totalUncategorizedProds}</p>
           </div>
         </div>
       </div>
 
-      {/* 3. TOOLBAR & SEARCH */}
+      {/* 3. ERROR BANNER */}
+      {errorState && (
+        <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 p-4 rounded-2xl flex items-center justify-between gap-4 text-rose-700 dark:text-rose-300">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+            <div>
+              <p className="text-sm font-bold">Unable to load category data</p>
+              <p className="text-xs">{errorState}</p>
+            </div>
+          </div>
+          <button
+            onClick={fetchData}
+            className="px-4 py-2 bg-rose-600 text-white rounded-xl text-xs font-bold hover:bg-rose-500 flex items-center gap-1.5 shadow-sm transition-all"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry</span>
+          </button>
+        </div>
+      )}
+
+      {/* 4. SEARCH & FILTER CONTROLS */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
         <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
+            placeholder="Search category name or description..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search categories..."
-            className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-500"
+            className="w-full pl-10 pr-9 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 dark:text-slate-100"
           />
           {search && (
-            <button onClick={() => setSearch('')} className="absolute right-3 top-3 text-slate-400 hover:text-slate-600">
+            <button
+              onClick={() => setSearch('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+            >
               <X className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
-        <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-          Showing {filteredCategories.length} of {categories.length} categories
+
+        <div className="text-xs text-slate-500 dark:text-slate-400 font-medium self-end sm:self-center">
+          Showing <span className="font-bold text-slate-900 dark:text-slate-100">{filteredCategories.length}</span> of{' '}
+          <span className="font-bold text-slate-900 dark:text-slate-100">{categories.length}</span> categories
         </div>
       </div>
 
-      {/* 4. VISUAL GRID OF CATEGORIES */}
+      {/* 5. CONTENT GRID / STATES */}
       {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 animate-pulse">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1, 2, 3, 4, 5, 6].map((i) => (
-            <div key={i} className="h-44 bg-slate-200 dark:bg-slate-800 rounded-2xl" />
+            <div key={i} className="h-44 rounded-2xl bg-slate-100 dark:bg-slate-800/50 animate-pulse border border-slate-200 dark:border-slate-800" />
           ))}
         </div>
-      ) : filteredCategories.length === 0 ? (
-        <div className="bg-white dark:bg-slate-900 p-12 rounded-3xl border border-slate-200 dark:border-slate-800 text-center space-y-3">
-          <div className="w-14 h-14 bg-slate-100 dark:bg-slate-800 text-slate-400 rounded-2xl flex items-center justify-center mx-auto">
-            <FolderTree className="w-7 h-7" />
+      ) : categories.length === 0 ? (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-12 text-center max-w-md mx-auto space-y-4 shadow-sm">
+          <div className="w-16 h-16 rounded-3xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto">
+            <FolderTree className="w-8 h-8" />
           </div>
-          <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">No Categories Found</h3>
-          <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
-            {search ? 'No categories match your search criteria.' : 'Start by creating your first product category.'}
-          </p>
+          <div className="space-y-1">
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">No Categories Found</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              You haven't created any product categories yet. Create your first category to group your products cleanly.
+            </p>
+          </div>
           <button
             onClick={handleOpenAdd}
-            className="px-4 py-2 rounded-xl bg-blue-600 text-white font-bold text-xs hover:bg-blue-500 inline-flex items-center gap-2"
+            className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-lg shadow-blue-600/25 inline-flex items-center gap-2"
           >
             <Plus className="w-4 h-4" />
-            <span>Create Category</span>
+            <span>Create First Category</span>
+          </button>
+        </div>
+      ) : filteredCategories.length === 0 ? (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-12 text-center max-w-md mx-auto space-y-4 shadow-sm">
+          <div className="w-16 h-16 rounded-3xl bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mx-auto">
+            <Search className="w-8 h-8" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">No Matching Categories</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              No category matching <span className="font-semibold text-slate-900 dark:text-slate-100">"{search}"</span> was found.
+            </p>
+          </div>
+          <button
+            onClick={() => setSearch('')}
+            className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs inline-flex items-center gap-2 transition-all"
+          >
+            <X className="w-3.5 h-3.5" />
+            <span>Clear Search</span>
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredCategories.map((cat) => {
             const { productCount, totalStock, totalValue } = getCategoryMetrics(cat);
+
             return (
               <div
                 key={cat.id}
                 onClick={() => handleOpenDetails(cat)}
-                className="group bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-blue-500/50 dark:hover:border-blue-500/50 transition-all cursor-pointer flex flex-col justify-between space-y-4"
+                className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm hover:border-blue-500/50 hover:shadow-md transition-all cursor-pointer group flex flex-col justify-between space-y-4"
               >
-                <div>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
-                        <FolderTree className="w-5 h-5" />
+                <div className="space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                        <FolderTree className="w-4 h-4" />
                       </div>
-                      <div>
-                        <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                          {cat.name}
-                        </h3>
-                        <span className="inline-block mt-0.5 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-600 dark:text-slate-400">
-                          {productCount} {productCount === 1 ? 'Product' : 'Products'}
-                        </span>
-                      </div>
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                        {cat.name}
+                      </h3>
                     </div>
 
-                    <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100">
+                    <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
                       <button
                         onClick={(e) => handleOpenEdit(cat, e)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+                        className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
                         title="Edit Category"
                       >
                         <Edit2 className="w-3.5 h-3.5" />
@@ -349,7 +417,7 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNavigateTab })
                           e.stopPropagation();
                           setDeleteConfirmCat(cat);
                         }}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
                         title="Delete Category"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -357,30 +425,31 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNavigateTab })
                     </div>
                   </div>
 
-                  <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-3 min-h-[32px]">
-                    {cat.description || 'No description provided for this category.'}
+                  <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 min-h-[2rem]">
+                    {cat.description || 'No description provided.'}
                   </p>
                 </div>
 
-                <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 space-y-3">
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="bg-slate-50 dark:bg-slate-950 p-2 rounded-xl">
-                      <span className="text-[10px] font-semibold text-slate-400 block">Stock Units</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">{totalStock}</span>
-                    </div>
-                    <div className="bg-slate-50 dark:bg-slate-950 p-2 rounded-xl">
-                      <span className="text-[10px] font-semibold text-slate-400 block">Stock Value</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">{formatCurrency(totalValue)}</span>
-                    </div>
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 grid grid-cols-3 gap-2 text-center bg-slate-50/50 dark:bg-slate-800/30 p-2.5 rounded-xl">
+                  <div>
+                    <p className="text-[10px] text-slate-400 font-semibold uppercase">Products</p>
+                    <p className="text-xs font-bold text-slate-900 dark:text-slate-100">{productCount}</p>
                   </div>
+                  <div>
+                    <p className="text-[10px] text-slate-400 font-semibold uppercase">Stock Units</p>
+                    <p className="text-xs font-bold text-slate-900 dark:text-slate-100">{totalStock}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-slate-400 font-semibold uppercase">Valuation</p>
+                    <p className="text-xs font-bold text-blue-600 dark:text-blue-400">{formatCurrency(totalValue)}</p>
+                  </div>
+                </div>
 
-                  <button
-                    onClick={(e) => handleViewProductsFilter(cat, e)}
-                    className="w-full py-2 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center justify-center gap-1.5 transition-all"
-                  >
-                    <span>View Products in Category</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
+                <div className="flex items-center justify-between text-xs text-blue-600 dark:text-blue-400 font-semibold pt-1">
+                  <span className="flex items-center gap-1 group-hover:underline">
+                    <span>View Category Details</span>
+                  </span>
+                  <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
             );
@@ -388,122 +457,132 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNavigateTab })
         </div>
       )}
 
-      {/* 5. ADD / EDIT CATEGORY MODAL */}
+      {/* 6. CREATE / EDIT MODAL */}
       <Modal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
-        title={editingCategory ? 'Edit Category' : 'Create New Category'}
+        title={editingCategory ? 'Edit Category' : 'Add New Category'}
       >
-        <div className="space-y-4 pt-2">
+        <div className="space-y-4">
           <div>
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Category Name *</label>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Category Name <span className="text-rose-500">*</span>
+            </label>
             <input
               type="text"
+              placeholder="e.g. Bearings, Fasteners, Lubricants"
               value={nameInput}
               onChange={(e) => setNameInput(e.target.value)}
-              placeholder="e.g. Electronics, Hardware, Beverages"
-              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-500"
+              className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 dark:text-slate-100"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Description (Optional)</label>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Description
+            </label>
             <textarea
               rows={3}
+              placeholder="Brief description of products in this category..."
               value={descInput}
               onChange={(e) => setDescInput(e.target.value)}
-              placeholder="Describe the type of products in this category..."
-              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-500 resize-none"
+              className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 dark:text-slate-100 resize-none"
             />
           </div>
 
-          <div className="flex justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
             <button
               onClick={() => setModalOpen(false)}
-              className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-bold hover:bg-slate-200"
+              className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
             >
               Cancel
             </button>
             <button
               onClick={handleSaveCategory}
               disabled={saving}
-              className="px-5 py-2 rounded-xl bg-blue-600 text-white font-bold text-xs hover:bg-blue-500 shadow-md shadow-blue-600/25 disabled:opacity-50"
+              className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-md shadow-blue-600/20 transition-all disabled:opacity-50 flex items-center gap-1.5"
             >
-              {saving ? 'Saving...' : editingCategory ? 'Update Category' : 'Save Category'}
+              {saving && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+              <span>{editingCategory ? 'Save Changes' : 'Create Category'}</span>
             </button>
           </div>
         </div>
       </Modal>
 
-      {/* 6. DELETE CONFIRMATION MODAL */}
+      {/* 7. DELETE CONFIRMATION MODAL */}
       <Modal
         isOpen={!!deleteConfirmCat}
         onClose={() => setDeleteConfirmCat(null)}
-        title="Confirm Category Deletion"
+        title="Delete Category"
       >
-        <div className="space-y-4 pt-2">
-          <div className="p-4 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-xl flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-            <div className="text-xs space-y-1">
-              <p className="font-bold text-amber-900 dark:text-amber-200">
-                Are you sure you want to delete "{deleteConfirmCat?.name}"?
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-amber-800 dark:text-amber-300 text-xs">
+            <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">Are you sure you want to delete this category?</p>
+              <p className="mt-1 text-amber-700 dark:text-amber-400">
+                Category: <span className="font-bold">{deleteConfirmCat?.name}</span>
               </p>
-              <p className="text-amber-700 dark:text-amber-300">
-                Products currently assigned to this category will remain safe in inventory but will become uncategorized.
-              </p>
+              {deleteConfirmCat && getCategoryMetrics(deleteConfirmCat).productCount > 0 && (
+                <p className="mt-1 font-semibold text-rose-600 dark:text-rose-400">
+                  ⚠️ {getCategoryMetrics(deleteConfirmCat).productCount} products are currently assigned to this category. Deleting it will safely convert them to Uncategorized.
+                </p>
+              )}
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex items-center justify-end gap-3 pt-2">
             <button
               onClick={() => setDeleteConfirmCat(null)}
-              className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-bold hover:bg-slate-200"
+              className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
             >
               Cancel
             </button>
             <button
               onClick={handleDelete}
               disabled={deleting}
-              className="px-5 py-2 rounded-xl bg-red-600 text-white font-bold text-xs hover:bg-red-500 disabled:opacity-50"
+              className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-md shadow-rose-600/20 transition-all disabled:opacity-50 flex items-center gap-1.5"
             >
-              {deleting ? 'Deleting...' : 'Delete Category'}
+              {deleting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+              <span>Confirm Delete</span>
             </button>
           </div>
         </div>
       </Modal>
 
-      {/* 7. CATEGORY DETAILS DRAWER */}
+      {/* 8. CATEGORY DETAILS DRAWER */}
       {drawerOpen && selectedCategory && (
-        <div className="fixed inset-0 z-50 overflow-hidden bg-slate-950/60 backdrop-blur-xs flex justify-end">
-          <div className="w-full max-w-2xl bg-white dark:bg-slate-900 h-full shadow-2xl overflow-y-auto flex flex-col border-l border-slate-200 dark:border-slate-800">
+        <div className="fixed inset-0 z-50 overflow-hidden bg-slate-900/50 backdrop-blur-sm flex justify-end transition-opacity">
+          <div className="w-full max-w-xl bg-white dark:bg-slate-900 h-full shadow-2xl flex flex-col border-l border-slate-200 dark:border-slate-800">
             {/* Drawer Header */}
-            <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950">
+            <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/40">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold">
-                  <FolderTree className="w-5 h-5" />
+                <div className="p-2.5 bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 rounded-xl">
+                  <FolderTree className="w-6 h-6" />
                 </div>
                 <div>
-                  <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{selectedCategory.name}</h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Category Breakdown & Inventory Ledger</p>
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">{selectedCategory.name}</h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Category Details & Product Valuation</p>
                 </div>
               </div>
+
               <button
                 onClick={() => setDrawerOpen(false)}
-                className="p-2 rounded-xl text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-600"
+                className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Drawer Content */}
-            <div className="p-6 space-y-6 flex-1">
-              {/* Category Description */}
-              {selectedCategory.description && (
-                <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800">
-                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Description</p>
-                  <p className="text-xs text-slate-800 dark:text-slate-200">{selectedCategory.description}</p>
-                </div>
-              )}
+            {/* Drawer Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {/* Description */}
+              <div className="space-y-1 bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Description</p>
+                <p className="text-xs text-slate-700 dark:text-slate-300">
+                  {selectedCategory.description || 'No description provided.'}
+                </p>
+              </div>
 
               {/* Category Metrics Summary */}
               {(() => {
@@ -511,52 +590,57 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNavigateTab })
                 return (
                   <>
                     <div className="grid grid-cols-3 gap-3">
-                      <div className="bg-blue-50/50 dark:bg-blue-950/30 p-3.5 rounded-2xl border border-blue-100 dark:border-blue-900/40">
-                        <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 block uppercase">Products</span>
-                        <span className="text-lg font-bold text-slate-900 dark:text-slate-100">{productCount}</span>
+                      <div className="p-4 bg-blue-50/60 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/50 rounded-2xl text-center">
+                        <p className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase">Products</p>
+                        <p className="text-lg font-extrabold text-slate-900 dark:text-slate-100 mt-1">{productCount}</p>
                       </div>
-                      <div className="bg-emerald-50/50 dark:bg-emerald-950/30 p-3.5 rounded-2xl border border-emerald-100 dark:border-emerald-900/40">
-                        <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 block uppercase">Stock Units</span>
-                        <span className="text-lg font-bold text-slate-900 dark:text-slate-100">{totalStock}</span>
+
+                      <div className="p-4 bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/50 rounded-2xl text-center">
+                        <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase">Total Stock</p>
+                        <p className="text-lg font-extrabold text-slate-900 dark:text-slate-100 mt-1">{totalStock}</p>
                       </div>
-                      <div className="bg-purple-50/50 dark:bg-purple-950/30 p-3.5 rounded-2xl border border-purple-100 dark:border-purple-900/40">
-                        <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400 block uppercase">Valuation</span>
-                        <span className="text-lg font-bold text-slate-900 dark:text-slate-100">{formatCurrency(totalValue)}</span>
+
+                      <div className="p-4 bg-purple-50/60 dark:bg-purple-950/30 border border-purple-100 dark:border-purple-900/50 rounded-2xl text-center">
+                        <p className="text-[10px] font-bold text-purple-600 dark:text-purple-400 uppercase">Valuation</p>
+                        <p className="text-lg font-extrabold text-blue-600 dark:text-blue-400 mt-1">{formatCurrency(totalValue)}</p>
                       </div>
                     </div>
 
-                    {/* Products in this Category */}
-                    <div className="space-y-3">
+                    {/* Products in Category List */}
+                    <div className="space-y-3 pt-2">
                       <div className="flex items-center justify-between">
                         <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
-                          Products in {selectedCategory.name} ({catProds.length})
+                          Assigned Inventory Products ({catProds.length})
                         </h3>
-                        <button
-                          onClick={() => {
-                            setDrawerOpen(false);
-                            if (onNavigateTab) onNavigateTab('products', selectedCategory.id);
-                          }}
-                          className="text-xs text-blue-600 dark:text-blue-400 font-bold hover:underline"
-                        >
-                          View Full Product Catalog →
-                        </button>
+                        {catProds.length > 0 && (
+                          <button
+                            onClick={() => handleViewProductsFilter(selectedCategory)}
+                            className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                          >
+                            <span>View in Product List</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
 
                       {catProds.length === 0 ? (
-                        <div className="p-8 text-center bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 text-xs text-slate-500">
-                          No products belong to this category yet.
+                        <div className="p-6 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 text-center text-xs text-slate-400">
+                          No products are currently assigned to this category.
                         </div>
                       ) : (
-                        <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
-                          {catProds.map((p) => (
-                            <div key={p.id} className="p-3.5 bg-white dark:bg-slate-900 flex items-center justify-between text-xs">
-                              <div>
-                                <p className="font-bold text-slate-900 dark:text-slate-100">{p.name}</p>
-                                <p className="text-[10px] text-slate-400">SKU: {p.sku} • Brand: {p.brand || 'N/A'}</p>
+                        <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                          {catProds.map((prod) => (
+                            <div
+                              key={prod.id}
+                              className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs"
+                            >
+                              <div className="space-y-0.5">
+                                <p className="font-bold text-slate-900 dark:text-slate-100">{prod.name}</p>
+                                <p className="text-[10px] text-slate-400">SKU: {prod.sku || 'N/A'}</p>
                               </div>
                               <div className="text-right">
-                                <p className="font-bold text-slate-900 dark:text-slate-100">{formatCurrency(p.sellingPrice)}</p>
-                                <p className="text-[10px] text-emerald-600 font-semibold">{p.currentStock} {p.unit} in stock</p>
+                                <p className="font-bold text-slate-900 dark:text-slate-100">{prod.currentStock || 0} {prod.unit || 'units'}</p>
+                                <p className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold">{formatCurrency((prod.currentStock || 0) * (prod.buyPrice || 0))}</p>
                               </div>
                             </div>
                           ))}
@@ -566,6 +650,31 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNavigateTab })
                   </>
                 );
               })()}
+            </div>
+
+            {/* Drawer Footer */}
+            <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between">
+              <button
+                onClick={(e) => {
+                  setDrawerOpen(false);
+                  setDeleteConfirmCat(selectedCategory);
+                }}
+                className="px-4 py-2 rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs font-bold transition-all flex items-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Delete Category</span>
+              </button>
+
+              <button
+                onClick={(e) => {
+                  setDrawerOpen(false);
+                  handleOpenEdit(selectedCategory, e);
+                }}
+                className="px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-500 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+              >
+                <Edit2 className="w-4 h-4" />
+                <span>Edit Category</span>
+              </button>
             </div>
           </div>
         </div>
