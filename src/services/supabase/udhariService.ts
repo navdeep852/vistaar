@@ -2,8 +2,8 @@ import { supabase } from '../../lib/supabase';
 import { UdhariRecord, UdhariPaymentRecord } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError } from '../../lib/supabaseError';
-
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
 
 const LOCAL_UDHARI_KEY = 'vistaar_local_udharis_db';
 
@@ -36,13 +36,23 @@ export class UdhariService {
 
   public async createUdhari(udhari: Partial<UdhariRecord>): Promise<{ udhariId?: string; error?: string }> {
     const wsId = this.getWorkspaceId();
+    if (udhari.phoneSnapshot) {
+      const pRes = validateIndianPhoneNumber(udhari.phoneSnapshot, true);
+      if (!pRes.isValid) {
+        return { error: pRes.error || 'Customer phone number must contain exactly 10 digits.' };
+      }
+      udhari.phoneSnapshot = pRes.normalized;
+    } else {
+      return { error: 'Customer phone number is required.' };
+    }
+
     const code = udhari.id || `UD-${Date.now()}`;
     const payload = {
       workspace_id: wsId,
       customer_id: udhari.customerId || null,
       udhari_code: code,
       customer_name_snapshot: udhari.customerNameSnapshot || 'Customer',
-      phone_snapshot: udhari.phoneSnapshot || '',
+      phone_snapshot: udhari.phoneSnapshot,
       original_amount: udhari.originalAmount || 0,
       total_received: udhari.totalReceived || 0,
       outstanding_amount: udhari.outstandingAmount || udhari.originalAmount || 0,
@@ -83,6 +93,14 @@ export class UdhariService {
 
   public async recordUdhariPayment(payment: Partial<UdhariPaymentRecord>): Promise<{ paymentId?: string; error?: string }> {
     const wsId = this.getWorkspaceId();
+    if (payment.phoneNumber) {
+      const pRes = validateIndianPhoneNumber(payment.phoneNumber, false);
+      if (!pRes.isValid) {
+        return { error: pRes.error || 'Phone number must contain exactly 10 digits.' };
+      }
+      payment.phoneNumber = pRes.normalized;
+    }
+
     const payload = {
       workspace_id: wsId,
       udhari_id: payment.udhariId,

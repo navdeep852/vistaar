@@ -10,9 +10,9 @@ export interface PhoneValidationResult {
 }
 
 /**
- * Normalizes an input string to a clean 10-digit Indian mobile number string.
- * Strips all non-digit characters, leading +91, leading 91, and leading 0 if 11/12 digits.
- * Idempotent: normalizeIndianPhoneNumber("9876543210") === "9876543210"
+ * Normalizes an input string to a clean digit string.
+ * Strips non-digits, leading +91, leading 91 (if 12 digits), and leading 0 (if 11 digits).
+ * Does NOT silently truncate 11+ digit numbers like "98765432101" to 10 digits, ensuring validation fails.
  */
 export function normalizeIndianPhoneNumber(rawPhone: string | null | undefined): string {
   if (!rawPhone) return '';
@@ -29,8 +29,18 @@ export function normalizeIndianPhoneNumber(rawPhone: string | null | undefined):
     digits = digits.slice(1);
   }
 
-  // 4. Cap max length at 10 digits
-  return digits.slice(0, 10);
+  return digits;
+}
+
+/**
+ * Convenience boolean helper function.
+ * Returns true ONLY if the phone number satisfies the exactly 10-digit Indian mobile number rule.
+ */
+export function isValidIndianPhoneNumber(
+  rawPhone: string | null | undefined,
+  required: boolean = false
+): boolean {
+  return validateIndianPhoneNumber(rawPhone, required).isValid;
 }
 
 /**
@@ -38,11 +48,12 @@ export function normalizeIndianPhoneNumber(rawPhone: string | null | undefined):
  */
 export function validateIndianPhoneNumber(
   rawPhone: string | null | undefined,
-  required: boolean = true
+  required: boolean = false
 ): PhoneValidationResult {
+  const rawStr = rawPhone ? String(rawPhone).trim() : '';
   const normalized = normalizeIndianPhoneNumber(rawPhone);
 
-  if (!normalized) {
+  if (!rawStr) {
     if (required) {
       return {
         isValid: false,
@@ -52,23 +63,25 @@ export function validateIndianPhoneNumber(
     }
     return {
       isValid: true,
+      error: undefined,
       normalized: '',
     };
   }
 
-  if (normalized.length < 10) {
+  // If raw string was provided but normalized produced empty or invalid string (e.g. "abcdefghij"), it's invalid
+  if (!normalized) {
+    return {
+      isValid: false,
+      error: 'Please enter a valid 10-digit Indian mobile number.',
+      normalized: '',
+    };
+  }
+
+  if (normalized.length !== 10) {
     return {
       isValid: false,
       error: 'Phone number must contain exactly 10 digits.',
       normalized,
-    };
-  }
-
-  if (normalized.length > 10) {
-    return {
-      isValid: false,
-      error: 'Phone number must contain exactly 10 digits.',
-      normalized: normalized.slice(0, 10),
     };
   }
 
@@ -76,26 +89,32 @@ export function validateIndianPhoneNumber(
   if (!/^[6-9][0-9]{9}$/.test(normalized)) {
     return {
       isValid: false,
-      error: 'Please enter a valid 10-digit Indian mobile number.',
+      error: 'Please enter a valid 10-digit Indian mobile number (starting with 6-9).',
       normalized,
     };
   }
 
   return {
     isValid: true,
+    error: undefined,
     normalized,
   };
 }
 
 /**
  * Formats a 10-digit Indian mobile number for display (e.g., "+91 9876543210").
+ * Only prepends "+91 " if normalized value is a valid 10-digit number.
  * Idempotent: formatIndianPhoneNumber("+91 9876543210") === "+91 9876543210"
  */
 export function formatIndianPhoneNumber(rawPhone: string | null | undefined): string {
   if (!rawPhone) return '';
   const normalized = normalizeIndianPhoneNumber(rawPhone);
   if (!normalized) return '';
-  return `+91 ${normalized}`;
+  if (normalized.length === 10 && /^[6-9][0-9]{9}$/.test(normalized)) {
+    return `+91 ${normalized}`;
+  }
+  // For legacy invalid numbers already in DB (e.g., "98778"), return raw without adding misleading +91 prefix
+  return String(rawPhone);
 }
 
 /**
@@ -106,6 +125,6 @@ export function formatIndianPhoneNumber(rawPhone: string | null | undefined): st
 export function toWhatsAppNumber(rawPhone: string | null | undefined): string {
   if (!rawPhone) return '';
   const normalized = normalizeIndianPhoneNumber(rawPhone);
-  if (!normalized) return '';
+  if (!normalized || normalized.length !== 10 || !/^[6-9][0-9]{9}$/.test(normalized)) return '';
   return `91${normalized}`;
 }

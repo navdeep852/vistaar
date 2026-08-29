@@ -5,6 +5,7 @@ import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError } from '../../lib/supabaseError';
 
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
 
 const LOCAL_CUSTOMERS_KEY = 'vistaar_local_customers_db';
 
@@ -82,6 +83,29 @@ export class CustomerService {
 
   public async createCustomer(customer: Partial<Customer>): Promise<{ customer?: Customer; error?: string }> {
     const wsId = this.getWorkspaceId();
+
+    if (!customer.name || !customer.name.trim()) {
+      return { error: 'Customer name is required.' };
+    }
+
+    if (customer.phone) {
+      const pRes = validateIndianPhoneNumber(customer.phone, true);
+      if (!pRes.isValid) {
+        return { error: pRes.error || 'Customer phone number must contain exactly 10 digits.' };
+      }
+      customer.phone = pRes.normalized;
+    } else {
+      return { error: 'Customer phone number is required.' };
+    }
+
+    if (customer.whatsapp) {
+      const wRes = validateIndianPhoneNumber(customer.whatsapp, false);
+      if (!wRes.isValid) {
+        return { error: wRes.error || 'WhatsApp phone number must contain exactly 10 digits.' };
+      }
+      customer.whatsapp = wRes.normalized;
+    }
+
     const payload = toDbCustomer(customer, wsId);
 
     try {
@@ -168,6 +192,23 @@ export class CustomerService {
 
   public async updateCustomer(id: string, customer: Partial<Customer>): Promise<{ customer?: Customer; error?: string }> {
     const wsId = this.getWorkspaceId();
+
+    if (customer.phone) {
+      const pRes = validateIndianPhoneNumber(customer.phone, true);
+      if (!pRes.isValid) {
+        return { error: pRes.error || 'Customer phone number must contain exactly 10 digits.' };
+      }
+      customer.phone = pRes.normalized;
+    }
+
+    if (customer.whatsapp) {
+      const wRes = validateIndianPhoneNumber(customer.whatsapp, false);
+      if (!wRes.isValid) {
+        return { error: wRes.error || 'WhatsApp phone number must contain exactly 10 digits.' };
+      }
+      customer.whatsapp = wRes.normalized;
+    }
+
     const payload = toDbCustomer(customer, wsId);
 
     try {

@@ -21,7 +21,7 @@ import { productService } from '../services/supabase';
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { PhoneInput } from '../components/PhoneInput';
-import { validateIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
+import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 
 interface SuppliersViewProps {
   onNavigateTab?: (tab: string, supplierFilter?: string) => void;
@@ -125,7 +125,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({ onNavigateTab }) =
       showToast('Supplier/Company name is required', 'error');
       return;
     }
-    if (phone.trim() && !validateIndianPhoneNumber(phone.trim())) {
+    if (phone.trim() && !isValidIndianPhoneNumber(phone.trim(), false)) {
       showToast('Please enter a valid 10-digit Indian phone number (starting with 6-9).', 'error');
       return;
     }

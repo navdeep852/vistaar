@@ -40,7 +40,7 @@ import { UserAvatar } from '../components/UserAvatar';
 import { ImageCropModal } from '../components/ImageCropModal';
 import { getUserInitials } from '../lib/utils';
 import { PhoneInput } from '../components/PhoneInput';
-import { validateIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
+import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 
 export const SettingsView: React.FC = () => {
   const [currentUser, setCurrentUser] = useState(auth.getUser());
@@ -120,11 +120,11 @@ export const SettingsView: React.FC = () => {
 
   const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (formData.phone && !validateIndianPhoneNumber(formData.phone)) {
+    if (formData.phone && !isValidIndianPhoneNumber(formData.phone, false)) {
       showToast('Please enter a valid 10-digit Indian phone number for Business Contact.', 'error');
       return;
     }
-    if (formData.alternatePhone && !validateIndianPhoneNumber(formData.alternatePhone)) {
+    if (formData.alternatePhone && !isValidIndianPhoneNumber(formData.alternatePhone, false)) {
       showToast('Please enter a valid 10-digit Indian phone number for Alternate Contact.', 'error');
       return;
     }
@@ -230,7 +230,7 @@ export const SettingsView: React.FC = () => {
 
   const handleSavePersonalProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (profilePhone && !validateIndianPhoneNumber(profilePhone)) {
+    if (profilePhone && !isValidIndianPhoneNumber(profilePhone, false)) {
       showToast('Please enter a valid 10-digit Indian phone number.', 'error');
       return;
     }
@@ -252,7 +252,7 @@ export const SettingsView: React.FC = () => {
   // Add Employee Handler
   const handleAddEmployeeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newEmpPhone && !validateIndianPhoneNumber(newEmpPhone)) {
+    if (newEmpPhone && !isValidIndianPhoneNumber(newEmpPhone, false)) {
       showToast('Please enter a valid 10-digit Indian phone number for the employee.', 'error');
       return;
     }

@@ -27,7 +27,7 @@ import { invoiceService } from '../services/supabase/invoiceService';
 import { paymentService } from '../services/supabase/paymentService';
 import { productService } from '../services/supabase/productService';
 import { PhoneInput } from '../components/PhoneInput';
-import { validateIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
+import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 import {
   DocumentType,
   BrandingConfig,
@@ -518,12 +518,12 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         return;
       }
 
-      if (customerPhone && !validateIndianPhoneNumber(customerPhone)) {
+      if (customerPhone && !isValidIndianPhoneNumber(customerPhone, false)) {
         showToast('Please enter a valid 10-digit Indian phone number.', 'error');
         setIsFinalizing(false);
         return;
       }
-      if (customerWhatsapp && !validateIndianPhoneNumber(customerWhatsapp)) {
+      if (customerWhatsapp && !isValidIndianPhoneNumber(customerWhatsapp, false)) {
         showToast('Please enter a valid 10-digit Indian WhatsApp number.', 'error');
         setIsFinalizing(false);
         return;

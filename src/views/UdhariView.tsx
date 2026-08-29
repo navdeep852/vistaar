@@ -25,7 +25,7 @@ import { UdhariRecord, UdhariPaymentRecord, PaymentMethod, Customer } from '../t
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { PhoneInput } from '../components/PhoneInput';
-import { validateIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
+import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 
 type ViewTab = 'udharis' | 'payments' | 'customers';
 type StatusFilter = 'ALL' | 'UNPAID' | 'PARTIALLY PAID' | 'PAID' | 'OVERDUE';
@@ -237,7 +237,7 @@ export const UdhariView: React.FC = () => {
       showToast('Please enter customer name', 'error');
       return;
     }
-    if (!validateIndianPhoneNumber(addPhone)) {
+    if (!isValidIndianPhoneNumber(addPhone, true)) {
       showToast('Please enter a valid 10-digit Indian contact number (starting with 6-9).', 'error');
       return;
     }
@@ -286,7 +286,7 @@ export const UdhariView: React.FC = () => {
     e.preventDefault();
     if (!activeUdhari) return;
 
-    if (!validateIndianPhoneNumber(payPhone)) {
+    if (!isValidIndianPhoneNumber(payPhone, true)) {
       setPayError('Please enter a valid 10-digit Indian phone number.');
       return;
     }
@@ -330,7 +330,7 @@ export const UdhariView: React.FC = () => {
       showToast('Please enter customer name', 'error');
       return;
     }
-    if (!validateIndianPhoneNumber(editPhone)) {
+    if (!isValidIndianPhoneNumber(editPhone, true)) {
       showToast('Please enter a valid 10-digit Indian contact number.', 'error');
       return;
     }

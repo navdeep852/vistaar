@@ -19,7 +19,7 @@ import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
 import { PhoneInput } from '../components/PhoneInput';
-import { validateIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
+import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 
 interface CustomersViewProps {
   initialOpenCreate?: boolean;
@@ -69,12 +69,12 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
       return;
     }
 
-    if (!validateIndianPhoneNumber(phone)) {
+    if (!isValidIndianPhoneNumber(phone, true)) {
       showToast('Please enter a valid 10-digit Indian phone number (starting with 6-9).', 'error');
       return;
     }
 
-    if (whatsapp && !validateIndianPhoneNumber(whatsapp)) {
+    if (whatsapp && !isValidIndianPhoneNumber(whatsapp, false)) {
       showToast('Please enter a valid 10-digit Indian WhatsApp number.', 'error');
       return;
     }

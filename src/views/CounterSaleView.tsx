@@ -38,7 +38,7 @@ import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
 import { PhoneInput } from '../components/PhoneInput';
-import { validateIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
+import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 
 type DateFilterType = 'ALL' | 'TODAY' | 'WEEK' | 'MONTH';
 
@@ -272,7 +272,7 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
     validationErrors.push(`Discount (${formatCurrency(discountAmount)}) cannot exceed Subtotal.`);
   }
 
-  if (custPhone && !validateIndianPhoneNumber(custPhone)) {
+  if (custPhone && !isValidIndianPhoneNumber(custPhone, false)) {
     validationErrors.push('Please enter a valid 10-digit Indian phone number.');
   }
 

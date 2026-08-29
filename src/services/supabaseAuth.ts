@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { UserProfile, UserRole, UserAccount } from '../types';
 import { validatePassword, validateEmailFormat } from '../lib/passwordPolicy';
+import { validateIndianPhoneNumber } from '../lib/phoneUtils';
 import { store } from './store';
 
 const SESSION_STORAGE_KEY = 'vistaar_user_session';
@@ -735,6 +736,14 @@ export class SupabaseAuthService {
   }
 
   public async createEmployee(empData: any): Promise<{ success: boolean; error?: string; empId?: string; tempPass?: string }> {
+    if (empData.phone) {
+      const pRes = validateIndianPhoneNumber(empData.phone, false);
+      if (!pRes.isValid) {
+        return { success: false, error: pRes.error || 'Employee phone number must contain exactly 10 digits.' };
+      }
+      empData.phone = pRes.normalized;
+    }
+
     if (isSupabaseConfigured()) {
       try {
         const { data, error } = await supabase.from('profiles').insert([

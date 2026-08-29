@@ -6,6 +6,7 @@ import { handleSupabaseError } from '../../lib/supabaseError';
 import { store } from '../store';
 
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
 
 const LOCAL_PRODUCTS_KEY = 'vistaar_local_products_db';
 
@@ -860,11 +861,20 @@ export class ProductService {
       return { error: 'Supplier company name is required.' };
     }
 
+    let cleanPhone = supplier.phone?.trim() || '';
+    if (cleanPhone) {
+      const vRes = validateIndianPhoneNumber(cleanPhone, false);
+      if (!vRes.isValid) {
+        return { error: vRes.error || 'Phone number must contain exactly 10 digits.' };
+      }
+      cleanPhone = vRes.normalized;
+    }
+
     const newSup: Supplier = {
       id: `sup-${Date.now()}`,
       name: supplier.name.trim(),
       contactPerson: supplier.contactPerson?.trim() || '',
-      phone: supplier.phone?.trim() || '',
+      phone: cleanPhone,
       email: supplier.email?.trim() || '',
       address: supplier.address?.trim() || '',
     };
@@ -883,7 +893,7 @@ export class ProductService {
           workspace_id: wsId,
           name: supplier.name.trim(),
           contact_person: supplier.contactPerson?.trim() || null,
-          phone: supplier.phone?.trim() || '',
+          phone: cleanPhone || null,
           email: supplier.email?.trim() || null,
           address: supplier.address?.trim() || null,
         }])
@@ -917,13 +927,22 @@ export class ProductService {
       return { error: 'Supplier company name is required.' };
     }
 
+    let cleanPhone = supplier.phone?.trim() || '';
+    if (cleanPhone) {
+      const vRes = validateIndianPhoneNumber(cleanPhone, false);
+      if (!vRes.isValid) {
+        return { error: vRes.error || 'Phone number must contain exactly 10 digits.' };
+      }
+      cleanPhone = vRes.normalized;
+    }
+
     if (!isSupabaseConfigured()) {
       const existing = safeGetTenantStorage<Supplier>('vistaar_local_suppliers_db', store.getSuppliers());
       const updatedSup: Supplier = {
         id,
         name: supplier.name.trim(),
         contactPerson: supplier.contactPerson?.trim() || '',
-        phone: supplier.phone?.trim() || '',
+        phone: cleanPhone,
         email: supplier.email?.trim() || '',
         address: supplier.address?.trim() || '',
       };
@@ -937,7 +956,7 @@ export class ProductService {
         .update({
           name: supplier.name.trim(),
           contact_person: supplier.contactPerson?.trim() || null,
-          phone: supplier.phone?.trim() || '',
+          phone: cleanPhone || null,
           email: supplier.email?.trim() || null,
           address: supplier.address?.trim() || null,
           updated_at: new Date().toISOString(),
