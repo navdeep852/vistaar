@@ -541,7 +541,7 @@ export class SupabaseAuthService {
       console.warn('[OTP_REQUEST_ERROR] Supabase Auth is not configured or URL is invalid.');
       return {
         success: false,
-        error: 'Email OTP service is unavailable. Please verify that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are configured with a valid Supabase project.',
+        error: 'Email OTP service is unavailable. Please verify that VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY are configured with a valid Supabase project.',
       };
     }
 
@@ -691,7 +691,7 @@ export class SupabaseAuthService {
     if (!isSupabaseConfigured()) {
       return {
         success: false,
-        error: 'Authentication service is unavailable. Please verify that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are configured with a valid live Supabase project.',
+        error: 'Authentication service is unavailable. Please verify that VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY are configured with a valid live Supabase project.',
       };
     }
 
@@ -863,7 +863,7 @@ export class SupabaseAuthService {
     if (!isSupabaseConfigured()) {
       return {
         success: false,
-        error: 'Authentication service is unavailable. Please verify that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are configured with a valid live Supabase project.',
+        error: 'Authentication service is unavailable. Please verify that VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY are configured with a valid live Supabase project.',
       };
     }
 

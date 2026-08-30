@@ -41,14 +41,17 @@ const getEnvVar = (key: string): string | undefined => {
 };
 
 export const supabaseUrl = getEnvVar('VITE_SUPABASE_URL') || 'https://kluxsykmnijvkqxelba.supabase.co';
-export const supabaseAnonKey =
-  getEnvVar('VITE_SUPABASE_ANON_KEY') ||
+export const supabasePublishableKey =
   getEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY') ||
+  getEnvVar('VITE_SUPABASE_ANON_KEY') ||
   'sb_publishable_j5tuLPC3iQO4pQHU0BeyYQ_CH_7Ls6x';
+
+// Backward compatibility alias for any existing reference
+export const supabaseAnonKey = supabasePublishableKey;
 
 export const isSupabaseConfigured = (): boolean => {
   const url = getEnvVar('VITE_SUPABASE_URL') || supabaseUrl;
-  const key = getEnvVar('VITE_SUPABASE_ANON_KEY') || getEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY') || supabaseAnonKey;
+  const key = getEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY') || getEnvVar('VITE_SUPABASE_ANON_KEY') || supabasePublishableKey;
   if (!url || !key) return false;
   if (
     url === 'https://your-supabase-project-id.supabase.co' ||
@@ -85,7 +88,7 @@ if (typeof window !== 'undefined' && (import.meta as any)?.env?.DEV) {
   });
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase = createClient(supabaseUrl, supabasePublishableKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
