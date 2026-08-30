@@ -84,7 +84,48 @@ const DEMO_PROFILES: Record<string, UserProfile> = {
 export function normalizeAuthError(error: any): string {
   if (!error) return 'An unexpected authentication error occurred.';
   const msg = typeof error === 'string' ? error : error.message || error.error_description || String(error);
+  const status = Number(error?.status || error?.statusCode || 0);
+  const code = String(error?.code || error?.error || '');
 
+  // 1. Rate Limiting (429)
+  if (status === 429 || code === 'over_email_send_rate_limit' || msg.includes('rate limit') || msg.includes('too many requests')) {
+    return 'Too many verification attempts. Please wait before trying again.';
+  }
+
+  // 2. OTP Verification Failure / Invalid or Expired Token
+  if (
+    msg.includes('Token has expired') ||
+    msg.includes('otp_expired') ||
+    msg.includes('invalid_otp') ||
+    msg.includes('Invalid token') ||
+    msg.includes('Token is invalid')
+  ) {
+    return 'The verification code is incorrect or expired.';
+  }
+
+  // 3. SMTP / Email Provider Error
+  if (
+    msg.includes('Error sending confirmation mail') ||
+    msg.includes('SMTP') ||
+    msg.includes('email_provider_error') ||
+    msg.includes('Failed to send email')
+  ) {
+    return "We couldn't deliver the verification email. Please check your Supabase SMTP settings or try again.";
+  }
+
+  // 4. Server / Infrastructure Outage (500, 502, 503, 525)
+  if (
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 525 ||
+    msg.includes('Service Unavailable') ||
+    msg.includes('Internal Server Error')
+  ) {
+    return 'VISTAAR authentication is temporarily unavailable. Please try again shortly.';
+  }
+
+  // 5. Network / DNS / Transport Failure
   if (
     msg.includes('Failed to fetch') ||
     msg.includes('TypeError') ||
@@ -92,11 +133,13 @@ export function normalizeAuthError(error: any): string {
     msg.includes('NetworkError') ||
     msg.includes('fetch failed') ||
     msg.includes('Failed to connect') ||
-    msg.includes('Network Error')
+    msg.includes('Network Error') ||
+    msg.includes('AuthRetryableFetchError')
   ) {
     return 'Unable to reach Supabase Auth server. Check your internet connection and Supabase project availability.';
   }
 
+  // 6. Invalid Credentials
   if (
     msg.includes('Invalid login credentials') ||
     msg.includes('invalid_credentials') ||
@@ -105,10 +148,12 @@ export function normalizeAuthError(error: any): string {
     return 'Invalid email or password.';
   }
 
-  if (msg.includes('User already registered') || msg.includes('already registered')) {
+  // 7. Account Already Exists
+  if (msg.includes('User already registered') || msg.includes('already registered') || msg.includes('email_exists')) {
     return 'An account with this email address already exists. Please sign in instead.';
   }
 
+  // 8. Password Policy
   if (msg.includes('Password should be at least')) {
     return 'Password does not meet minimum length requirements.';
   }
@@ -640,7 +685,10 @@ export class SupabaseAuthService {
     }
 
     if (!isSupabaseConfigured()) {
-      return this.signUpFallback(companyName, ownerName, cleanEmail, pRes.normalized, password);
+      return {
+        success: false,
+        error: 'Authentication service is unavailable. Please verify that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are configured with a valid live Supabase project.',
+      };
     }
 
     try {
@@ -748,9 +796,6 @@ export class SupabaseAuthService {
       return { success: true };
     } catch (err: any) {
       const normalized = normalizeAuthError(err);
-      if (normalized.includes('Unable to reach Supabase')) {
-        return this.signUpFallback(companyName, ownerName, cleanEmail, pRes.normalized, password);
-      }
       return { success: false, error: normalized };
     }
   }
@@ -812,7 +857,10 @@ export class SupabaseAuthService {
 
     // Check if Supabase is properly configured before attempting live network requests
     if (!isSupabaseConfigured()) {
-      return this.signUpFallback(companyName, ownerName, email, phone, password);
+      return {
+        success: false,
+        error: 'Authentication service is unavailable. Please verify that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are configured with a valid live Supabase project.',
+      };
     }
 
     try {
@@ -830,9 +878,6 @@ export class SupabaseAuthService {
 
       if (error) {
         const normalized = normalizeAuthError(error);
-        if (normalized.includes('Unable to reach Supabase')) {
-          return this.signUpFallback(companyName, ownerName, email, phone, password);
-        }
         return { success: false, error: normalized };
       }
 
@@ -862,61 +907,9 @@ export class SupabaseAuthService {
       }
     } catch (err: any) {
       const normalized = normalizeAuthError(err);
-      if (normalized.includes('Unable to reach Supabase')) {
-        return this.signUpFallback(companyName, ownerName, email, phone, password);
-      }
       return { success: false, error: normalized };
     }
 
-    return { success: true };
-  }
-
-  private signUpFallback(
-    companyName: string,
-    ownerName: string,
-    email: string,
-    phone: string,
-    password: string
-  ): { success: boolean; error?: string } {
-    const cleanEmail = email.trim().toLowerCase();
-    const newProfile: UserProfile = {
-      id: 'usr-' + Math.random().toString(36).substr(2, 9),
-      companyId: 'ws-' + Math.random().toString(36).substr(2, 9),
-      employeeId: 'VST-00001',
-      name: ownerName.trim(),
-      email: cleanEmail,
-      phone: phone.trim(),
-      department: 'Executive Management',
-      designation: 'Company Owner & Founder',
-      role: 'owner',
-      status: 'Active',
-      businessName: companyName.trim(),
-      mustChangePassword: false,
-      avatarUrl: '',
-    };
-
-    // Save to local registered DB
-    try {
-      const localDbStr = safeStorageGet(REGISTERED_USERS_KEY);
-      const localDb: any[] = localDbStr ? JSON.parse(localDbStr) : [];
-      const existing = localDb.find((u) => u.email.toLowerCase() === cleanEmail);
-      if (existing) {
-        return { success: false, error: 'An account with this email address already exists. Please sign in instead.' };
-      }
-      localDb.push({
-        email: cleanEmail,
-        employeeId: 'VST-00001',
-        password,
-        profile: newProfile,
-      });
-      safeStorageSet(REGISTERED_USERS_KEY, JSON.stringify(localDb));
-    } catch (e) {
-      console.warn('Failed to save to local registered DB:', e);
-    }
-
-    this.currentProfile = newProfile;
-    this.saveSessionToStorage(newProfile);
-    this.notify();
     return { success: true };
   }
 
