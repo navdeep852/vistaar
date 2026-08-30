@@ -29,36 +29,34 @@ if (proc && proc.env && !proc.env.VITE_SUPABASE_URL) {
   }
 }
 
-const getEnvVar = (key: string): string | undefined => {
-  const proc = (globalThis as any).process;
-  if (proc?.env && proc.env[key]) {
-    return proc.env[key];
-  }
-  if (typeof import.meta !== 'undefined' && import.meta?.env) {
-    return import.meta.env[key];
-  }
-  return undefined;
-};
+// Static Vite build-time environment variable extraction with Node.js fallback
+const rawUrl =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) ||
+  (typeof proc !== 'undefined' && proc?.env?.VITE_SUPABASE_URL) ||
+  '';
 
-export const supabaseUrl = getEnvVar('VITE_SUPABASE_URL') || 'https://kluxsykmnijvkqxelba.supabase.co';
-export const supabasePublishableKey =
-  getEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY') ||
-  getEnvVar('VITE_SUPABASE_ANON_KEY') ||
-  'sb_publishable_j5tuLPC3iQO4pQHU0BeyYQ_CH_7Ls6x';
+const rawPublishableKey =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_PUBLISHABLE_KEY) ||
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) ||
+  (typeof proc !== 'undefined' && proc?.env?.VITE_SUPABASE_PUBLISHABLE_KEY) ||
+  (typeof proc !== 'undefined' && proc?.env?.VITE_SUPABASE_ANON_KEY) ||
+  '';
+
+export const supabaseUrl = rawUrl;
+export const supabasePublishableKey = rawPublishableKey;
 
 // Backward compatibility alias for any existing reference
 export const supabaseAnonKey = supabasePublishableKey;
 
 export const isSupabaseConfigured = (): boolean => {
-  const url = getEnvVar('VITE_SUPABASE_URL') || supabaseUrl;
-  const key = getEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY') || getEnvVar('VITE_SUPABASE_ANON_KEY') || supabasePublishableKey;
+  const url = supabaseUrl;
+  const key = supabasePublishableKey;
   if (!url || !key) return false;
   if (
     url === 'https://your-supabase-project-id.supabase.co' ||
     url === 'https://placeholder.supabase.co' ||
     url.includes('placeholder') ||
-    url.includes('your-supabase-project-id') ||
-    url.includes('kluxsykmnijvkqxelba')
+    url.includes('your-supabase-project-id')
   ) {
     return false;
   }
@@ -73,17 +71,16 @@ export const isSupabaseConfigured = (): boolean => {
 };
 
 if (typeof window !== 'undefined' && (import.meta as any)?.env?.DEV) {
-  const rawUrl = getEnvVar('VITE_SUPABASE_URL');
   let origin: string | null = null;
   try {
-    if (rawUrl) origin = new URL(rawUrl).origin;
+    if (supabaseUrl) origin = new URL(supabaseUrl).origin;
   } catch (e) {
     origin = 'invalid-url';
   }
   console.log('[Supabase Config Check]', {
-    supabaseUrlConfigured: Boolean(rawUrl),
+    supabaseUrlConfigured: Boolean(supabaseUrl),
     supabaseUrl: origin,
-    anonKeyConfigured: Boolean(supabaseAnonKey && supabaseAnonKey !== 'placeholder-anon-key'),
+    publishableKeyConfigured: Boolean(supabasePublishableKey),
     isConfigured: isSupabaseConfigured(),
   });
 }
