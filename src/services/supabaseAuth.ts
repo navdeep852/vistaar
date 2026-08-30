@@ -174,16 +174,20 @@ export class SupabaseAuthService {
     try {
       const stored = safeStorageGet(SESSION_STORAGE_KEY);
       if (stored) {
-        return JSON.parse(stored);
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object' && Boolean(parsed.id) && Boolean(parsed.email || parsed.name)) {
+          return parsed;
+        }
       }
     } catch (e) {
       console.warn('Failed to parse cached session:', e);
+      safeStorageRemove(SESSION_STORAGE_KEY);
     }
     return null;
   }
 
   private saveSessionToStorage(profile: UserProfile | null) {
-    if (profile) {
+    if (profile && profile.id) {
       safeStorageSet(SESSION_STORAGE_KEY, JSON.stringify(profile));
     } else {
       safeStorageRemove(SESSION_STORAGE_KEY);
@@ -219,7 +223,7 @@ export class SupabaseAuthService {
   }
 
   public isAuthenticated(): boolean {
-    return this.currentProfile !== null;
+    return this.currentProfile !== null && Boolean(this.currentProfile?.id);
   }
 
   public getCurrentCompanyId(): string {

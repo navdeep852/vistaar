@@ -18,6 +18,7 @@ export default defineConfig({
   },
   server: {
     port: 3005,
+    host: true,
     open: false,
     watch: {
       ignored: ['**/data/**', '**/.data/**', '**/data/store.json'],
