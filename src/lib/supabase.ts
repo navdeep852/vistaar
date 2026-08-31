@@ -85,13 +85,33 @@ if (typeof window !== 'undefined' && (import.meta as any)?.env?.DEV) {
   });
 }
 
-export const supabase = createClient(supabaseUrl, supabasePublishableKey, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-  },
-});
+const createThrowingUnconfiguredClient = (): any => {
+  const handler: ProxyHandler<any> = {
+    get(_target, prop) {
+      throw new Error(
+        `VISTAAR Configuration Error: Cannot access 'supabase.${String(
+          prop
+        )}' because Supabase environment variables (VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY) are missing or invalid in your deployment settings.`
+      );
+    },
+    apply() {
+      throw new Error(
+        `VISTAAR Configuration Error: Cannot invoke Supabase client because environment variables (VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY) are missing or invalid in your deployment settings.`
+      );
+    },
+  };
+  return new Proxy({}, handler);
+};
+
+export const supabase = isSupabaseConfigured()
+  ? createClient(supabaseUrl, supabasePublishableKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    })
+  : createThrowingUnconfiguredClient();
 
 export async function testSupabaseConnection(): Promise<{
   connected: boolean;

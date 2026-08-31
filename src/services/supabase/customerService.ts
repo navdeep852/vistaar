@@ -171,8 +171,8 @@ export class CustomerService {
         handleSupabaseError(error, 'getCustomerLedger');
       }
       const invList = invoices || [];
-      const totalDebit = invList.reduce((acc, inv) => acc + (inv.total_amount || 0), 0);
-      const totalCredit = invList.reduce((acc, inv) => acc + (inv.paid_amount || 0), 0);
+      const totalDebit = invList.reduce((acc: number, inv: { total_amount?: number | null }) => acc + (inv.total_amount || 0), 0);
+      const totalCredit = invList.reduce((acc: number, inv: { paid_amount?: number | null }) => acc + (inv.paid_amount || 0), 0);
       const outstanding = totalDebit - totalCredit;
 
       return {

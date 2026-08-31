@@ -165,95 +165,9 @@ const initialSeedData: AppState = {
 class StoreService {
   private state: AppState;
   private listeners: Set<() => void> = new Set();
-  private syncTimer: any = null;
 
   constructor() {
     this.state = this.loadFromStorage();
-    if (typeof window !== 'undefined') {
-      this.initServerSync();
-    }
-  }
-
-  private initServerSync() {
-    this.pushToServer().then(() => this.pullFromServer()).catch(() => {});
-    this.syncTimer = setInterval(() => {
-      this.pullFromServer().catch(() => {});
-    }, 5000);
-  }
-
-  private async pushToServer() {
-    try {
-      const res = await fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          followUps: this.state.followUps,
-          notifications: this.state.notifications,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        this.applyServerData(data);
-      }
-    } catch (e) {
-      // Ignore offline sync errors
-    }
-  }
-
-  private async pullFromServer() {
-    try {
-      const res = await fetch('/api/sync', { method: 'GET' });
-      if (res.ok) {
-        const data = await res.json();
-        this.applyServerData(data);
-      }
-    } catch (e) {
-      // Ignore offline sync errors
-    }
-  }
-
-  private applyServerData(data: any) {
-    let changed = false;
-
-    if (Array.isArray(data.followUps)) {
-      const map = new Map<string, FollowUp>();
-      this.state.followUps.forEach((f) => map.set(f.id, f));
-      data.followUps.forEach((sf: FollowUp) => {
-        const existing = map.get(sf.id);
-        if (!existing || existing.status !== sf.status || existing.errorMessage !== sf.errorMessage) {
-          map.set(sf.id, sf);
-          changed = true;
-        }
-      });
-      if (changed) {
-        this.state.followUps = Array.from(map.values()).sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-      }
-    }
-
-    if (Array.isArray(data.notifications)) {
-      const notifMap = new Map<string, AppNotification>();
-      this.state.notifications.forEach((n) => notifMap.set(n.id, n));
-      data.notifications.forEach((sn: AppNotification) => {
-        if (!notifMap.has(sn.id)) {
-          notifMap.set(sn.id, sn);
-          changed = true;
-        }
-      });
-      if (changed) {
-        this.state.notifications = Array.from(notifMap.values());
-      }
-    }
-
-    if (changed) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
-      } catch (e) {
-        console.error('Failed to save updated state to localStorage', e);
-      }
-      this.notify();
-    }
   }
 
   private loadFromStorage(): AppState {
@@ -272,9 +186,6 @@ class StoreService {
       console.error('Failed to save state to tenant storage', e);
     }
     this.notify();
-    if (typeof window !== 'undefined') {
-      this.pushToServer();
-    }
   }
 
   public reloadTenantState() {
@@ -915,24 +826,7 @@ class StoreService {
     return true;
   }
 
-  public async testFollowUpAction(id: string): Promise<any> {
-    // Sync current state to server first
-    await this.pushToServer();
-    try {
-      const response = await fetch('/api/follow-ups/test-action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ followUpId: id }),
-      });
-      const data = await response.json();
-      // Fetch latest server state after test action run
-      await this.pullFromServer();
-      return data;
-    } catch (err: any) {
-      console.error('[StoreService] Test action call failed:', err);
-      return { success: false, error: err?.message || 'Test action request failed.' };
-    }
-  }
+
 
   public getFeedbacks(): Feedback[] { return this.state.feedbacks; }
   public getOffers(): Offer[] { return this.state.offers; }

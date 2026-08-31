@@ -130,7 +130,7 @@ export class InventoryService {
           .eq('workspace_id', wsId)
           .eq('product_id', data.product_id);
         if (recs) {
-          const sum = recs.reduce((acc, r) => acc + (Number(r.quantity_remaining) || 0), 0);
+          const sum = recs.reduce((acc: number, r: { quantity_remaining?: number | string | null }) => acc + (Number(r.quantity_remaining) || 0), 0);
           await supabase.from('products').update({ current_stock: sum, updated_at: new Date().toISOString() }).eq('id', data.product_id).eq('workspace_id', wsId);
         }
       }

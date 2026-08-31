@@ -358,7 +358,7 @@ export class ProductService {
         .eq('product_id', productId);
 
       if (!recErr && receipts && receipts.length > 0) {
-        const batchSum = receipts.reduce((acc, row) => acc + (Number(row.quantity_remaining) || 0), 0);
+        const batchSum = receipts.reduce((acc: number, row: { quantity_remaining?: number | string | null }) => acc + (Number(row.quantity_remaining) || 0), 0);
         return Math.max(0, batchSum);
       }
 
@@ -538,16 +538,16 @@ export class ProductService {
       const safeReceipts = receipts || [];
       const safeMovements = movements || [];
 
-      const totalReceived = safeReceipts.reduce((acc, r: any) => acc + (Number(r.quantity_received) || 0), 0);
-      const totalRemaining = safeReceipts.reduce((acc, r: any) => acc + (Number(r.quantity_remaining) || 0), 0);
+      const totalReceived = safeReceipts.reduce((acc: number, r: { quantity_received?: number | string | null }) => acc + (Number(r.quantity_received) || 0), 0);
+      const totalRemaining = safeReceipts.reduce((acc: number, r: { quantity_remaining?: number | string | null }) => acc + (Number(r.quantity_remaining) || 0), 0);
 
       const totalSold = safeMovements
-        .filter((m: any) => m.type === 'SALE')
-        .reduce((acc, m: any) => acc + Math.abs(Number(m.quantity) || 0), 0);
+        .filter((m: { type?: string }) => m.type === 'SALE')
+        .reduce((acc: number, m: { quantity?: number | string | null }) => acc + Math.abs(Number(m.quantity) || 0), 0);
 
       const totalDamaged = safeMovements
-        .filter((m: any) => m.type === 'DAMAGE' || m.type === 'LOSS')
-        .reduce((acc, m: any) => acc + Math.abs(Number(m.quantity) || 0), 0);
+        .filter((m: { type?: string }) => m.type === 'DAMAGE' || m.type === 'LOSS')
+        .reduce((acc: number, m: { quantity?: number | string | null }) => acc + Math.abs(Number(m.quantity) || 0), 0);
 
       const availStock = safeReceipts.length > 0 ? totalRemaining : product.currentStock;
 

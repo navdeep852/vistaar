@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { UserProfile, UserRole, UserAccount } from '../types';
 import { validatePassword, validateEmailFormat } from '../lib/passwordPolicy';
 import { validateIndianPhoneNumber } from '../lib/phoneUtils';
@@ -196,7 +197,7 @@ export class SupabaseAuthService {
 
   private initSessionListener() {
     try {
-      supabase.auth.onAuthStateChange(async (event, session) => {
+      supabase.auth.onAuthStateChange(async (event: AuthChangeEvent, session: Session | null) => {
         if (session?.user) {
           await this.syncProfileFromSupabaseUser(session.user.id, session.user.email);
         } else if (!this.currentProfile) {
