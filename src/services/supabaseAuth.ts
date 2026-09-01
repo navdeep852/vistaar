@@ -6,7 +6,6 @@ import { validateIndianPhoneNumber } from '../lib/phoneUtils';
 import { store } from './store';
 
 const SESSION_STORAGE_KEY = 'vistaar_user_session';
-const REGISTERED_USERS_KEY = 'vistaar_local_users_db';
 
 const getLocalStorage = (): Storage | null => {
   if (typeof window !== 'undefined' && window.localStorage) {
@@ -18,7 +17,7 @@ const getLocalStorage = (): Storage | null => {
   return null;
 };
 
-// In-memory fallback database for server/node testing environments where localStorage is absent
+// In-memory fallback storage for server/node testing environments where localStorage is absent
 const inMemoryStorage: Record<string, string> = {};
 
 const safeStorageGet = (key: string): string | null => {
@@ -43,39 +42,6 @@ const safeStorageRemove = (key: string): void => {
     ls.removeItem(key);
   }
   delete inMemoryStorage[key];
-};
-
-const DEMO_PROFILES: Record<string, UserProfile> = {
-  'admin@vistaar.com': {
-    id: '37baecfb-88c2-476a-a4d2-62a3b2e88494',
-    companyId: '4f42a205-792d-4bdb-a9e5-be88cbed331a',
-    employeeId: 'VST-00001',
-    name: 'Rajesh Kumar',
-    email: 'admin@vistaar.com',
-    phone: '+91 98765 43210',
-    department: 'Management',
-    designation: 'Managing Director / Owner',
-    role: 'owner',
-    status: 'Active',
-    businessName: 'VISTAAR Business Solutions',
-    mustChangePassword: false,
-    avatarUrl: '',
-  },
-  'priya@vistaar.com': {
-    id: '8f11c75b-9d41-4e76-8809-7a56bf5c8d10',
-    companyId: '4f42a205-792d-4bdb-a9e5-be88cbed331a',
-    employeeId: 'VST-00002',
-    name: 'Priya Sharma',
-    email: 'priya@vistaar.com',
-    phone: '+91 98765 11223',
-    department: 'Sales & Billing',
-    designation: 'Senior Billing Specialist',
-    role: 'admin',
-    status: 'Active',
-    businessName: 'VISTAAR Business Solutions',
-    mustChangePassword: false,
-    avatarUrl: '',
-  },
 };
 
 /**
@@ -253,44 +219,23 @@ export class SupabaseAuthService {
 
     const email = this.currentProfile.email;
 
-    if (isSupabaseConfigured()) {
-      try {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-
-        if (error) {
-          return { success: false, error: 'Invalid owner password.' };
-        }
-        return { success: true };
-      } catch (err: any) {
-        console.warn('Supabase auth verify failed, attempting offline check:', err);
-      }
-    }
-
-    // Local / Offline fallback verification
-    if (email.toLowerCase() === 'admin@vistaar.com') {
-      if (password === 'Vistaar@2026Secure') {
-        return { success: true };
-      }
-      return { success: false, error: 'Invalid owner password.' };
+    if (!isSupabaseConfigured()) {
+      return { success: false, error: 'Authentication service is unavailable.' };
     }
 
     try {
-      const localDbStr = safeStorageGet(REGISTERED_USERS_KEY);
-      if (localDbStr) {
-        const localDb: any[] = JSON.parse(localDbStr);
-        const match = localDb.find((u) => u.email.toLowerCase() === email.toLowerCase());
-        if (match && match.password === password) {
-          return { success: true };
-        }
-      }
-    } catch (e) {
-      // ignore
-    }
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    return { success: false, error: 'Invalid owner password.' };
+      if (error) {
+        return { success: false, error: 'Invalid owner password.' };
+      }
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: normalizeAuthError(err) };
+    }
   }
 
   /**
@@ -301,22 +246,6 @@ export class SupabaseAuthService {
 
     if (validateEmailFormat(cleanId)) {
       return cleanId.toLowerCase();
-    }
-
-    // Check static demo mappings
-    if (cleanId.toUpperCase() === 'VST-00001') return 'admin@vistaar.com';
-    if (cleanId.toUpperCase() === 'VST-00002') return 'priya@vistaar.com';
-
-    // Check local user database
-    try {
-      const localDbStr = safeStorageGet(REGISTERED_USERS_KEY);
-      if (localDbStr) {
-        const localDb: any[] = JSON.parse(localDbStr);
-        const match = localDb.find((u) => u.employeeId?.toUpperCase() === cleanId.toUpperCase());
-        if (match) return match.email.toLowerCase();
-      }
-    } catch (e) {
-      // ignore
     }
 
     // Query public.profiles for employee_id match if Supabase configured
@@ -419,53 +348,7 @@ export class SupabaseAuthService {
     password: string,
     networkErrorMsg: string
   ): { success: boolean; error?: string; userProfile?: UserProfile; mustChangePassword?: boolean; userAccount?: any } {
-    const cleanEmail = email.toLowerCase();
-
-    // Check demo accounts
-    if (cleanEmail === 'admin@vistaar.com') {
-      if (password === 'Vistaar@2026Secure') {
-        this.currentProfile = DEMO_PROFILES['admin@vistaar.com'];
-        this.saveSessionToStorage(this.currentProfile);
-        store.reloadTenantState();
-        this.notify();
-        return { success: true, userProfile: this.currentProfile || undefined };
-      }
-      return { success: false, error: 'Invalid login credentials. Incorrect password for admin@vistaar.com.' };
-    }
-
-    if (cleanEmail === 'priya@vistaar.com') {
-      if (password === 'Staff@2026Secure') {
-        this.currentProfile = DEMO_PROFILES['priya@vistaar.com'];
-        this.saveSessionToStorage(this.currentProfile);
-        store.reloadTenantState();
-        this.notify();
-        return { success: true, userProfile: this.currentProfile || undefined };
-      }
-      return { success: false, error: 'Invalid login credentials. Incorrect password for priya@vistaar.com.' };
-    }
-
-    // Check local registered accounts DB
-    try {
-      const localDbStr = safeStorageGet(REGISTERED_USERS_KEY);
-      if (localDbStr) {
-        const localDb: any[] = JSON.parse(localDbStr);
-        const match = localDb.find((u) => u.email.toLowerCase() === cleanEmail);
-        if (match) {
-          if (match.password === password) {
-            this.currentProfile = match.profile;
-            this.saveSessionToStorage(this.currentProfile);
-            store.reloadTenantState();
-            this.notify();
-            return { success: true, userProfile: this.currentProfile || undefined };
-          }
-          return { success: false, error: 'Invalid email or password.' };
-        }
-      }
-    } catch (e) {
-      // ignore
-    }
-
-    return { success: false, error: 'Invalid email or password.' };
+    return { success: false, error: networkErrorMsg || 'Invalid email or password.' };
   }
 
   /**
@@ -510,32 +393,6 @@ export class SupabaseAuthService {
 
     if (!cleanEmail || !validateEmailFormat(cleanEmail)) {
       return { success: false, error: 'Please enter a valid email address.' };
-    }
-
-    // Demo email check
-    if (cleanEmail === 'admin@vistaar.com' || cleanEmail === 'priya@vistaar.com') {
-      return {
-        success: false,
-        error: 'An account already exists with this email address. Please sign in instead.',
-        accountExists: true,
-      };
-    }
-
-    // Check local registered DB
-    try {
-      const localDbStr = safeStorageGet(REGISTERED_USERS_KEY);
-      if (localDbStr) {
-        const localDb: any[] = JSON.parse(localDbStr);
-        if (localDb.some((u) => u.email.toLowerCase() === cleanEmail)) {
-          return {
-            success: false,
-            error: 'An account already exists with this email address. Please sign in instead.',
-            accountExists: true,
-          };
-        }
-      }
-    } catch (e) {
-      // ignore
     }
 
     if (!isSupabaseConfigured()) {
@@ -722,41 +579,40 @@ export class SupabaseAuthService {
         return { success: false, error: 'Authentication session expired. Please verify your email again.' };
       }
 
+      // Look up existing workspace_id created by handle_new_user trigger
       let workspaceId = authUser.id;
-      const { data: wsData, error: wsErr } = await supabase
-        .from('workspaces')
-        .insert([
-          {
-            company_name: companyName,
-            owner_name: ownerName,
-            owner_email: cleanEmail,
-            owner_phone: pRes.normalized,
-          },
-        ])
-        .select('id')
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('workspace_id')
+        .eq('id', authUser.id)
         .single();
 
-      if (wsData?.id) {
-        workspaceId = wsData.id;
-      } else if (wsErr && !wsErr.message?.includes('duplicate key')) {
-        console.warn('Workspace insertion warning:', wsErr);
+      if (profileData?.workspace_id) {
+        workspaceId = profileData.workspace_id;
       }
 
-      await supabase.from('profiles').upsert([
-        {
-          id: authUser.id,
-          workspace_id: workspaceId,
-          employee_id: 'VST-00001',
+      // Update existing workspace details instead of creating a second workspace row
+      const { error: wsErr } = await supabase
+        .from('workspaces')
+        .update({
+          company_name: companyName,
+          owner_name: ownerName,
+          owner_phone: pRes.normalized,
+        })
+        .eq('id', workspaceId);
+
+      if (wsErr) {
+        console.warn('Workspace update warning:', wsErr);
+      }
+
+      // Update owner profile fields
+      await supabase
+        .from('profiles')
+        .update({
           name: ownerName,
-          email: cleanEmail,
           phone: pRes.normalized,
-          department: 'Management',
-          designation: 'Managing Director / Owner',
-          role: 'owner',
-          status: 'Active',
-          must_change_password: false,
-        },
-      ]);
+        })
+        .eq('id', authUser.id);
 
       await supabase.from('business_settings').upsert(
         [
@@ -841,23 +697,6 @@ export class SupabaseAuthService {
         success: false,
         error: 'Password does not meet requirements: Minimum 12 characters, 1 uppercase, 1 lowercase, 1 digit, and 1 special symbol.',
       };
-    }
-
-    // Check duplicate in local db
-    try {
-      const localDbStr = safeStorageGet(REGISTERED_USERS_KEY);
-      if (localDbStr) {
-        const localDb: any[] = JSON.parse(localDbStr);
-        if (localDb.some((u) => u.email.toLowerCase() === email.trim().toLowerCase())) {
-          return { success: false, error: 'An account with this email address already exists.' };
-        }
-      }
-    } catch (e) {
-      // ignore
-    }
-
-    if (email.trim().toLowerCase() === 'admin@vistaar.com' || email.trim().toLowerCase() === 'priya@vistaar.com') {
-      return { success: false, error: 'An account with this email address already exists.' };
     }
 
     // Check if Supabase is properly configured before attempting live network requests
