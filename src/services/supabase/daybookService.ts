@@ -170,6 +170,7 @@ export class DaybookService {
     amount: number;
     paymentMode?: DaybookTransaction['paymentMode'];
     financialAccountId?: string;
+    transferTargetAccountId?: string;
     partyType?: 'customer' | 'supplier' | 'other';
     partyId?: string;
     partyName?: string;
@@ -177,6 +178,21 @@ export class DaybookService {
     notes?: string;
     transactionDate?: string;
     transactionTime?: string;
+    gstApplicable?: boolean;
+    gstRegistrationStatus?: string;
+    gstin?: string;
+    placeOfSupply?: string;
+    taxableAmount?: number;
+    cgstAmount?: number;
+    sgstAmount?: number;
+    igstAmount?: number;
+    utgstAmount?: number;
+    cessAmount?: number;
+    totalTaxAmount?: number;
+    hsnSacCode?: string;
+    isReverseCharge?: boolean;
+    taxCategory?: string;
+    tdsTcsAmount?: number;
   }): Promise<{ success: boolean; id?: string; error?: string }> {
     const wsId = this.getWorkspaceId();
     const txDate = txPayload.transactionDate || new Date().toISOString().split('T')[0];
@@ -193,6 +209,7 @@ export class DaybookService {
       amount: Math.abs(Number(txPayload.amount) || 0),
       payment_mode: txPayload.paymentMode || 'Cash',
       financial_account_id: txPayload.financialAccountId || null,
+      transfer_target_account_id: txPayload.transferTargetAccountId || null,
       party_type: txPayload.partyType || null,
       party_id: txPayload.partyId || null,
       party_name: txPayload.partyName || null,
@@ -202,7 +219,23 @@ export class DaybookService {
       description: txPayload.description || null,
       notes: txPayload.notes || null,
       status: 'COMPLETED',
+      gst_applicable: Boolean(txPayload.gstApplicable),
+      gst_registration_status: txPayload.gstRegistrationStatus || null,
+      gstin: txPayload.gstin || null,
+      place_of_supply: txPayload.placeOfSupply || null,
+      taxable_amount: Number(txPayload.taxableAmount) || 0,
+      cgst_amount: Number(txPayload.cgstAmount) || 0,
+      sgst_amount: Number(txPayload.sgstAmount) || 0,
+      igst_amount: Number(txPayload.igstAmount) || 0,
+      utgst_amount: Number(txPayload.utgstAmount) || 0,
+      cess_amount: Number(txPayload.cessAmount) || 0,
+      total_tax_amount: Number(txPayload.totalTaxAmount) || 0,
+      hsn_sac_code: txPayload.hsnSacCode || null,
+      is_reverse_charge: Boolean(txPayload.isReverseCharge),
+      tax_category: txPayload.taxCategory || 'TAXABLE',
+      tds_tcs_amount: Number(txPayload.tdsTcsAmount) || 0,
     };
+
 
     try {
       if (isSupabaseConfigured()) {

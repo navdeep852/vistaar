@@ -689,6 +689,7 @@ export interface DaybookTransaction {
   amount: number;
   paymentMode: PaymentMethod;
   financialAccountId?: string;
+  transferTargetAccountId?: string;
   partyType?: 'customer' | 'supplier' | 'other';
   partyId?: string;
   partyName?: string;
@@ -698,6 +699,22 @@ export interface DaybookTransaction {
   description?: string;
   notes?: string;
   status: 'COMPLETED' | 'VOID' | 'REVERSED';
+  // Indian GST & Tax Metadata
+  gstApplicable?: boolean;
+  gstRegistrationStatus?: string;
+  gstin?: string;
+  placeOfSupply?: string;
+  taxableAmount?: number;
+  cgstAmount?: number;
+  sgstAmount?: number;
+  igstAmount?: number;
+  utgstAmount?: number;
+  cessAmount?: number;
+  totalTaxAmount?: number;
+  hsnSacCode?: string;
+  isReverseCharge?: boolean;
+  taxCategory?: 'TAXABLE' | 'EXEMPT' | 'NIL_RATED' | 'NON_GST';
+  tdsTcsAmount?: number;
   createdBy?: string;
   createdAt: string;
   updatedAt?: string;
@@ -722,4 +739,57 @@ export interface DaybookSummaryMetrics {
   totalCount: number;
   modeBreakdown: Record<string, number>;
 }
+
+// Financial Account & Cashbook Interfaces
+export type FinancialAccountType = 'CASH' | 'BANK' | 'UPI' | 'CARD' | 'OTHER';
+
+export interface FinancialAccount {
+  id: string;
+  workspaceId: string;
+  name: string;
+  accountType: FinancialAccountType;
+  accountNumber?: string;
+  ifscCode?: string;
+  openingBalance: number;
+  openingBalanceDate: string;
+  isDefault: boolean;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  currentBalance?: number;
+}
+
+export interface CashbookFilterOptions {
+  financialAccountId?: string; // 'ALL' or account UUID
+  accountType?: FinancialAccountType | 'ALL';
+  financialYear?: string; // e.g. 'FY_2026_27', 'FY_2025_26', 'ALL', 'CUSTOM'
+  dateRange?: 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'fy' | 'custom' | 'all';
+  startDate?: string;
+  endDate?: string;
+  transactionType?: string;
+  paymentMode?: string;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface AccountBalanceSummary {
+  account: FinancialAccount;
+  openingBalance: number;
+  totalReceipts: number;
+  totalPayments: number;
+  totalTransfersIn: number;
+  totalTransfersOut: number;
+  closingBalance: number;
+}
+
+export interface CashbookSummaryMetrics {
+  totalOpeningBalance: number;
+  totalReceipts: number;
+  totalPayments: number;
+  totalTransfers: number;
+  totalClosingBalance: number;
+  accountSummaries: AccountBalanceSummary[];
+}
+
 

@@ -20,7 +20,9 @@ import {
   Scale,
   LogOut,
   BookOpen,
+  Wallet,
 } from 'lucide-react';
+
 
 
 import { supabaseAuthService } from '../services/supabaseAuth';
@@ -76,7 +78,9 @@ export const MobileNav: React.FC<MobileNavProps> = ({
     { id: 'counter-sale', label: 'Counter Sale', icon: ShoppingBag },
     { id: 'expenses', label: 'Expenses', icon: TrendingDown },
     { id: 'daybook', label: 'Daybook Journal', icon: BookOpen },
+    { id: 'cashbook', label: 'Cashbook', icon: Wallet },
     { id: 'profit-loss', label: 'Profit & Loss', icon: PieChart },
+
 
     { id: 'feedback', label: 'Customer Feedback', icon: Star },
     { id: 'offers', label: 'Offers', icon: Tag },

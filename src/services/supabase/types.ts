@@ -18,7 +18,11 @@ import type {
   FollowUp,
   AppNotification,
   BusinessSettings,
+  FinancialAccount,
+  FinancialAccountType,
+  DaybookTransaction,
 } from '../../types';
+
 
 export interface DbWorkspace {
   id: string;
@@ -342,6 +346,38 @@ export function toDbProduct(prod: Partial<Product>, workspaceId: string): Partia
   } as any;
 }
 
+export interface DbFinancialAccount {
+  id: string;
+  workspace_id: string;
+  name: string;
+  account_type: string;
+  account_number?: string | null;
+  ifsc_code?: string | null;
+  opening_balance: number;
+  opening_balance_date: string;
+  is_default: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export function fromDbFinancialAccount(db: DbFinancialAccount): FinancialAccount {
+  return {
+    id: db.id,
+    workspaceId: db.workspace_id,
+    name: db.name,
+    accountType: db.account_type as FinancialAccountType,
+    accountNumber: db.account_number || undefined,
+    ifscCode: db.ifsc_code || undefined,
+    openingBalance: Number(db.opening_balance) || 0,
+    openingBalanceDate: db.opening_balance_date,
+    isDefault: db.is_default,
+    isActive: db.is_active,
+    createdAt: db.created_at,
+    updatedAt: db.updated_at,
+  };
+}
+
 export interface DbDaybookTransaction {
   id: string;
   workspace_id: string;
@@ -353,6 +389,7 @@ export interface DbDaybookTransaction {
   amount: number;
   payment_mode?: string;
   financial_account_id?: string;
+  transfer_target_account_id?: string;
   party_type?: string;
   party_id?: string;
   party_name?: string;
@@ -362,35 +399,67 @@ export interface DbDaybookTransaction {
   description?: string;
   notes?: string;
   status: string;
+  gst_applicable?: boolean;
+  gst_registration_status?: string;
+  gstin?: string;
+  place_of_supply?: string;
+  taxable_amount?: number;
+  cgst_amount?: number;
+  sgst_amount?: number;
+  igst_amount?: number;
+  utgst_amount?: number;
+  cess_amount?: number;
+  total_tax_amount?: number;
+  hsn_sac_code?: string;
+  is_reverse_charge?: boolean;
+  tax_category?: string;
+  tds_tcs_amount?: number;
   created_by?: string;
   created_at: string;
   updated_at?: string;
 }
 
-export function fromDbDaybookTransaction(row: DbDaybookTransaction): any {
+export function fromDbDaybookTransaction(row: DbDaybookTransaction): DaybookTransaction {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
     transactionCode: row.transaction_code,
     transactionDate: row.transaction_date,
     transactionTime: row.transaction_time,
-    transactionType: row.transaction_type,
-    direction: row.direction,
+    transactionType: row.transaction_type as any,
+    direction: row.direction as any,
     amount: Number(row.amount) || 0,
-    paymentMode: row.payment_mode || 'Cash',
-    financialAccountId: row.financial_account_id,
-    partyType: row.party_type,
-    partyId: row.party_id,
-    partyName: row.party_name,
-    referenceType: row.reference_type,
-    referenceId: row.reference_id,
-    referenceNumber: row.reference_number,
-    description: row.description,
-    notes: row.notes,
-    status: row.status || 'COMPLETED',
-    createdBy: row.created_by,
+    paymentMode: (row.payment_mode || 'Cash') as any,
+    financialAccountId: row.financial_account_id || undefined,
+    transferTargetAccountId: row.transfer_target_account_id || undefined,
+    partyType: row.party_type as any,
+    partyId: row.party_id || undefined,
+    partyName: row.party_name || undefined,
+    referenceType: row.reference_type as any,
+    referenceId: row.reference_id || undefined,
+    referenceNumber: row.reference_number || undefined,
+    description: row.description || undefined,
+    notes: row.notes || undefined,
+    status: (row.status || 'COMPLETED') as any,
+    gstApplicable: Boolean(row.gst_applicable),
+    gstRegistrationStatus: row.gst_registration_status || undefined,
+    gstin: row.gstin || undefined,
+    placeOfSupply: row.place_of_supply || undefined,
+    taxableAmount: Number(row.taxable_amount) || 0,
+    cgstAmount: Number(row.cgst_amount) || 0,
+    sgstAmount: Number(row.sgst_amount) || 0,
+    igstAmount: Number(row.igst_amount) || 0,
+    utgstAmount: Number(row.utgst_amount) || 0,
+    cessAmount: Number(row.cess_amount) || 0,
+    totalTaxAmount: Number(row.total_tax_amount) || 0,
+    hsnSacCode: row.hsn_sac_code || undefined,
+    isReverseCharge: Boolean(row.is_reverse_charge),
+    taxCategory: (row.tax_category || 'TAXABLE') as any,
+    tdsTcsAmount: Number(row.tds_tcs_amount) || 0,
+    createdBy: row.created_by || undefined,
     createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    updatedAt: row.updated_at || undefined,
   };
 }
+
 

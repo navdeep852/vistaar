@@ -19,7 +19,9 @@ import {
   FolderTree,
   Scale,
   BookOpen,
+  Wallet,
 } from 'lucide-react';
+
 
 
 import logoDarkText from '../assets/Vistaar_Logo_With_Name.png';
@@ -100,11 +102,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       title: 'FINANCE & ANALYTICS',
       items: [
         { id: 'daybook', label: 'Daybook', icon: BookOpen },
+        { id: 'cashbook', label: 'Cashbook', icon: Wallet },
         { id: 'expenses', label: 'Expenses', icon: TrendingDown },
         { id: 'profit-loss', label: 'Profit & Loss', icon: PieChart },
         { id: 'reports', label: 'Reports', icon: BarChart3 },
       ],
     },
+
 
     {
       title: 'MARKETING & MORE',
