@@ -19,7 +19,7 @@ DECLARE
     v_owner_name TEXT;
     v_phone TEXT;
 BEGIN
-    v_workspace_id := uuid_generate_v4();
+    v_workspace_id := extensions.uuid_generate_v4();
 
     v_company_name := COALESCE(
         NULLIF(TRIM(NEW.raw_user_meta_data->>'company_name'), ''),
@@ -73,7 +73,7 @@ BEGIN
 
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions;
 
 -- Re-attach trigger if needed
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
