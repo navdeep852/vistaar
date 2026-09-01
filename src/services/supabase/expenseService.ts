@@ -64,7 +64,30 @@ export class ExpenseService {
         }
         return { error: errStr };
       }
-      return { expenseId: data.id };
+      const createdId = data ? data.id : `exp-${Date.now()}`;
+
+      // Record Daybook Financial Transaction
+      try {
+        const { daybookService } = await import('./daybookService');
+        await daybookService.recordFinancialTransaction({
+          referenceType: 'EXPENSE',
+          referenceId: createdId,
+          referenceNumber: exp.category,
+          transactionType: 'EXPENSE',
+          direction: 'OUT',
+          amount: exp.amount || 0,
+          paymentMode: 'Cash',
+
+          partyType: 'other',
+          partyName: exp.paidTo || exp.category || 'Vendor',
+          description: exp.expenseName || `${exp.category} Expense`,
+          transactionDate: exp.date || new Date().toISOString().split('T')[0],
+        });
+      } catch (dbErr) {
+        console.warn('Failed to record Daybook entry for expense:', dbErr);
+      }
+
+      return { expenseId: createdId };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'createExpense');
       const newId = `exp-${Date.now()}`;
@@ -72,6 +95,28 @@ export class ExpenseService {
       const local = safeGetTenantStorage<any>(LOCAL_EXPENSES_KEY, []);
       local.unshift(newExp);
       safeSaveTenantStorage(LOCAL_EXPENSES_KEY, local);
+
+      // Record Daybook Financial Transaction (offline)
+      try {
+        const { daybookService } = await import('./daybookService');
+        await daybookService.recordFinancialTransaction({
+          referenceType: 'EXPENSE',
+          referenceId: newId,
+          referenceNumber: exp.category,
+          transactionType: 'EXPENSE',
+          direction: 'OUT',
+          amount: exp.amount || 0,
+          paymentMode: 'Cash',
+
+          partyType: 'other',
+          partyName: exp.paidTo || exp.category || 'Vendor',
+          description: exp.expenseName || `${exp.category} Expense`,
+          transactionDate: exp.date || new Date().toISOString().split('T')[0],
+        });
+      } catch (dbErr) {
+        // ignore
+      }
+
       return { expenseId: newId };
     }
   }
@@ -89,12 +134,26 @@ export class ExpenseService {
         const errStr = handleSupabaseError(error, 'deleteExpense');
         return { success: false, error: errStr };
       }
+
+      // Void corresponding Daybook entry
+      try {
+        const { daybookService } = await import('./daybookService');
+        const { data: daybookTx } = await daybookService.getTransactions({ search: id });
+        const match = (daybookTx || []).find((t) => t.referenceId === id && t.referenceType === 'EXPENSE');
+        if (match) {
+          await daybookService.voidTransaction(match.id, 'Expense deleted');
+        }
+      } catch (e) {
+        // ignore
+      }
+
       return { success: true };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'deleteExpense');
       return { success: false, error: errStr };
     }
   }
+
 }
 
 export const expenseService = new ExpenseService();

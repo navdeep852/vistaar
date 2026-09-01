@@ -341,3 +341,56 @@ export function toDbProduct(prod: Partial<Product>, workspaceId: string): Partia
     description: prod.description || prod.notes || undefined,
   } as any;
 }
+
+export interface DbDaybookTransaction {
+  id: string;
+  workspace_id: string;
+  transaction_code: string;
+  transaction_date: string;
+  transaction_time?: string;
+  transaction_type: string;
+  direction: string;
+  amount: number;
+  payment_mode?: string;
+  financial_account_id?: string;
+  party_type?: string;
+  party_id?: string;
+  party_name?: string;
+  reference_type: string;
+  reference_id?: string;
+  reference_number?: string;
+  description?: string;
+  notes?: string;
+  status: string;
+  created_by?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export function fromDbDaybookTransaction(row: DbDaybookTransaction): any {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    transactionCode: row.transaction_code,
+    transactionDate: row.transaction_date,
+    transactionTime: row.transaction_time,
+    transactionType: row.transaction_type,
+    direction: row.direction,
+    amount: Number(row.amount) || 0,
+    paymentMode: row.payment_mode || 'Cash',
+    financialAccountId: row.financial_account_id,
+    partyType: row.party_type,
+    partyId: row.party_id,
+    partyName: row.party_name,
+    referenceType: row.reference_type,
+    referenceId: row.reference_id,
+    referenceNumber: row.reference_number,
+    description: row.description,
+    notes: row.notes,
+    status: row.status || 'COMPLETED',
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+

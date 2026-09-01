@@ -663,3 +663,63 @@ export interface BusinessSettings {
   defaultInvoiceTerms?: string;
   defaultQuotationTerms?: string;
 }
+
+// Daybook Financial Journal Interfaces
+export type DaybookTransactionType =
+  | 'SALE'
+  | 'CUSTOMER_PAYMENT'
+  | 'SUPPLIER_PAYMENT'
+  | 'EXPENSE'
+  | 'REFUND'
+  | 'OTHER_INCOME'
+  | 'OTHER_PAYMENT'
+  | 'ADJUSTMENT'
+  | 'TRANSFER';
+
+export type DaybookDirection = 'IN' | 'OUT' | 'NON_CASH';
+
+export interface DaybookTransaction {
+  id: string;
+  workspaceId: string;
+  transactionCode: string;
+  transactionDate: string;
+  transactionTime?: string;
+  transactionType: DaybookTransactionType;
+  direction: DaybookDirection;
+  amount: number;
+  paymentMode: PaymentMethod;
+  financialAccountId?: string;
+  partyType?: 'customer' | 'supplier' | 'other';
+  partyId?: string;
+  partyName?: string;
+  referenceType: 'COUNTER_SALE' | 'PAYMENT' | 'EXPENSE' | 'UDHARI_PAYMENT' | 'INVOICE' | 'MANUAL';
+  referenceId?: string;
+  referenceNumber?: string;
+  description?: string;
+  notes?: string;
+  status: 'COMPLETED' | 'VOID' | 'REVERSED';
+  createdBy?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface DaybookFilterOptions {
+  dateRange?: 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
+  startDate?: string;
+  endDate?: string;
+  transactionType?: string;
+  paymentMode?: string;
+  partyType?: string;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface DaybookSummaryMetrics {
+  totalInflow: number;
+  totalOutflow: number;
+  netMovement: number;
+  totalCount: number;
+  modeBreakdown: Record<string, number>;
+}
+

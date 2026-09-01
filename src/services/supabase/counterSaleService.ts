@@ -327,6 +327,27 @@ export class CounterSaleService {
       // Perform atomic stock deduction & log movements
       await this.deductCounterSaleStock(items, sale.invoiceNumber, sale.saleDate);
 
+      // Record Daybook Financial Transaction
+      try {
+        const { daybookService } = await import('./daybookService');
+        await daybookService.recordFinancialTransaction({
+          referenceType: 'COUNTER_SALE',
+          referenceId: saleId,
+          referenceNumber: sale.invoiceNumber || saleNumber,
+          transactionType: 'SALE',
+          direction: 'IN',
+          amount: sale.finalTotal || 0,
+          paymentMode: (sale.paymentMethod || sale.paymentMode || 'Cash') as any,
+          partyType: 'customer',
+          partyId: sale.customerId || undefined,
+          partyName: sale.customerName || 'Walk-in Customer',
+          description: `Counter Sale #${sale.invoiceNumber || saleNumber}`,
+          transactionDate: sale.saleDate || new Date().toISOString().split('T')[0],
+        });
+      } catch (dbErr) {
+        console.warn('Failed to record Daybook entry for counter sale:', dbErr);
+      }
+
       return { success: true, data: parent };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'createCounterSale');
@@ -337,6 +358,28 @@ export class CounterSaleService {
 
       // Deduct stock for offline sale
       await this.deductCounterSaleStock(items, sale.invoiceNumber, sale.saleDate);
+
+      // Record offline Daybook entry
+      try {
+        const { daybookService } = await import('./daybookService');
+        await daybookService.recordFinancialTransaction({
+          referenceType: 'COUNTER_SALE',
+          referenceId: newSale.id,
+          referenceNumber: sale.invoiceNumber || saleNumber,
+          transactionType: 'SALE',
+          direction: 'IN',
+          amount: sale.finalTotal || 0,
+          paymentMode: (sale.paymentMethod || sale.paymentMode || 'Cash') as any,
+          partyType: 'customer',
+          partyId: sale.customerId || undefined,
+          partyName: sale.customerName || 'Walk-in Customer',
+          description: `Counter Sale #${sale.invoiceNumber || saleNumber}`,
+          transactionDate: sale.saleDate || new Date().toISOString().split('T')[0],
+        });
+      } catch (dbErr) {
+        // ignore
+      }
+
       return { success: true, data: newSale };
     }
   }
@@ -367,12 +410,25 @@ export class CounterSaleService {
       // Restore stock for cancelled sale
       await this.restoreCounterSaleStock(saleId);
 
+      // Void Daybook transaction
+      try {
+        const { daybookService } = await import('./daybookService');
+        const { data: daybookTx } = await daybookService.getTransactions({ search: saleId });
+        const match = (daybookTx || []).find((t) => t.referenceId === saleId && t.referenceType === 'COUNTER_SALE');
+        if (match) {
+          await daybookService.voidTransaction(match.id, 'Counter sale cancelled');
+        }
+      } catch (e) {
+        // ignore
+      }
+
       return { success: true };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'cancelCounterSale');
       return { success: false, error: errStr };
     }
   }
+
 }
 
 export const counterSaleService = new CounterSaleService();

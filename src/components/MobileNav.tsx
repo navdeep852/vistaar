@@ -19,7 +19,9 @@ import {
   Settings,
   Scale,
   LogOut,
+  BookOpen,
 } from 'lucide-react';
+
 
 import { supabaseAuthService } from '../services/supabaseAuth';
 import logoDarkText from '../assets/Vistaar_Logo_With_Name.png';
@@ -73,8 +75,9 @@ export const MobileNav: React.FC<MobileNavProps> = ({
     { id: 'stock', label: 'Stock Movement', icon: Boxes },
     { id: 'counter-sale', label: 'Counter Sale', icon: ShoppingBag },
     { id: 'expenses', label: 'Expenses', icon: TrendingDown },
-
+    { id: 'daybook', label: 'Daybook Journal', icon: BookOpen },
     { id: 'profit-loss', label: 'Profit & Loss', icon: PieChart },
+
     { id: 'feedback', label: 'Customer Feedback', icon: Star },
     { id: 'offers', label: 'Offers', icon: Tag },
     { id: 'settings', label: 'Settings', icon: Settings },

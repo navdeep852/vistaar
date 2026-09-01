@@ -68,7 +68,31 @@ export class PaymentService {
         }
         return { error: errStr };
       }
-      return { paymentId: data.id };
+      const createdId = data ? data.id : `pay-${Date.now()}`;
+
+      // Record Daybook Financial Transaction
+      try {
+        const { daybookService } = await import('./daybookService');
+        await daybookService.recordFinancialTransaction({
+          referenceType: 'PAYMENT',
+          referenceId: createdId,
+          referenceNumber: payNum,
+          transactionType: 'CUSTOMER_PAYMENT',
+          direction: 'IN',
+          amount: payment.amount || 0,
+          paymentMode: (payment.method || 'Cash') as any,
+          partyType: 'customer',
+          partyId: payment.customerId || undefined,
+          partyName: payment.customerName || 'Customer',
+          description: `Payment Received #${payNum}`,
+          notes: payment.notes || undefined,
+          transactionDate: payment.date || new Date().toISOString().split('T')[0],
+        });
+      } catch (dbErr) {
+        console.warn('Failed to record Daybook entry for payment:', dbErr);
+      }
+
+      return { paymentId: createdId };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'createPayment');
       const newId = `pay-${Date.now()}`;
@@ -76,9 +100,33 @@ export class PaymentService {
       const local = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
       local.unshift(localPay);
       safeSaveTenantStorage(LOCAL_PAYMENTS_KEY, local);
+
+      // Record Daybook Financial Transaction (offline)
+      try {
+        const { daybookService } = await import('./daybookService');
+        await daybookService.recordFinancialTransaction({
+          referenceType: 'PAYMENT',
+          referenceId: newId,
+          referenceNumber: payNum,
+          transactionType: 'CUSTOMER_PAYMENT',
+          direction: 'IN',
+          amount: payment.amount || 0,
+          paymentMode: (payment.method || 'Cash') as any,
+          partyType: 'customer',
+          partyId: payment.customerId || undefined,
+          partyName: payment.customerName || 'Customer',
+          description: `Payment Received #${payNum}`,
+          notes: payment.notes || undefined,
+          transactionDate: payment.date || new Date().toISOString().split('T')[0],
+        });
+      } catch (dbErr) {
+        // ignore
+      }
+
       return { paymentId: newId };
     }
   }
+
 }
 
 export const paymentService = new PaymentService();

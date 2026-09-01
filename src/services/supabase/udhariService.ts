@@ -119,16 +119,61 @@ export class UdhariService {
         .select('id')
         .single();
 
-      if (error) {
-        const errStr = handleSupabaseError(error, 'recordUdhariPayment');
-        return { paymentId: `pay-${Date.now()}` };
+      const createdId = data ? data.id : `pay-${Date.now()}`;
+
+      // Record Daybook Financial Transaction
+      try {
+        const { daybookService } = await import('./daybookService');
+        await daybookService.recordFinancialTransaction({
+          referenceType: 'UDHARI_PAYMENT',
+          referenceId: createdId,
+          referenceNumber: `UD-PAY-${Date.now()}`,
+          transactionType: 'CUSTOMER_PAYMENT',
+          direction: 'IN',
+          amount: payment.amount || 0,
+          paymentMode: (payment.paymentMethod || 'Cash') as any,
+          partyType: 'customer',
+          partyId: payment.customerId || undefined,
+          partyName: 'Udhari Customer',
+          description: `Udhari Recovery`,
+          notes: payment.notes || undefined,
+          transactionDate: payment.paymentDate || new Date().toISOString().split('T')[0],
+        });
+      } catch (dbErr) {
+        console.warn('Failed to record Daybook entry for Udhari payment:', dbErr);
       }
-      return { paymentId: data.id };
+
+      return { paymentId: createdId };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'recordUdhariPayment');
-      return { paymentId: `pay-${Date.now()}` };
+      const fallbackId = `pay-${Date.now()}`;
+
+      // Record Daybook Financial Transaction (offline)
+      try {
+        const { daybookService } = await import('./daybookService');
+        await daybookService.recordFinancialTransaction({
+          referenceType: 'UDHARI_PAYMENT',
+          referenceId: fallbackId,
+          referenceNumber: `UD-PAY-${Date.now()}`,
+          transactionType: 'CUSTOMER_PAYMENT',
+          direction: 'IN',
+          amount: payment.amount || 0,
+          paymentMode: (payment.paymentMethod || 'Cash') as any,
+          partyType: 'customer',
+          partyId: payment.customerId || undefined,
+          partyName: 'Udhari Customer',
+          description: `Udhari Recovery`,
+          notes: payment.notes || undefined,
+          transactionDate: payment.paymentDate || new Date().toISOString().split('T')[0],
+        });
+      } catch (dbErr) {
+        // ignore
+      }
+
+      return { paymentId: fallbackId };
     }
   }
+
 }
 
 export const udhariService = new UdhariService();

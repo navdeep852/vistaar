@@ -17,6 +17,8 @@ import { ProductsView } from './views/ProductsView';
 import { StockView } from './views/StockView';
 import { CounterSaleView } from './views/CounterSaleView';
 import { ExpensesView } from './views/ExpensesView';
+import { DaybookView } from './views/DaybookView';
+
 
 import { CategoriesView } from './views/CategoriesView';
 import { SuppliersView } from './views/SuppliersView';
@@ -158,7 +160,10 @@ function MainAppContent() {
         return <CounterSaleView onNavigateTab={setActiveTab} activeTab={activeTab} />;
       case 'expenses':
         return <ExpensesView onNavigateTab={setActiveTab} activeTab={activeTab} />;
+      case 'daybook':
+        return <DaybookView />;
       case 'profit-loss':
+
         return <ProfitLossView />;
       case 'follow-ups':
         return <FollowUpsView />;

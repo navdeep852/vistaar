@@ -12,3 +12,5 @@ export * from './paymentService';
 export * from './udhariService';
 export * from './expenseService';
 export * from './notificationService';
+export * from './daybookService';
+
