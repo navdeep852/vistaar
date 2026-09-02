@@ -46,14 +46,82 @@ import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPho
 export const SettingsView: React.FC = () => {
   const [currentUser, setCurrentUser] = useState(auth.getUser());
   const [formData, setFormData] = useState<any>({
+    legal_name: 'VISTAAR Tech Pvt Ltd',
     businessName: 'VISTAAR Tech Pvt Ltd',
     phone: '+91 98765 43210',
+    alternate_phone: '',
+    alternatePhone: '',
     email: 'contact@vistaar.in',
     gstin: '27AAAAA0000A1Z5',
     address: 'Plot 42, Tech Park Sector 5',
     city: 'Mumbai',
     state: 'Maharashtra',
     pincode: '400001',
+    business_type: 'Private Limited',
+    businessType: 'Private Limited',
+    owner_name: '',
+    ownerName: '',
+    reg_number: '',
+    regNumber: '',
+    logo_url: '',
+    logoUrl: '',
+    logo_scale: 1,
+    logoScale: 1,
+    logo_alignment: 'left',
+    logoAlignment: 'left',
+    signature_url: '',
+    signatureUrl: '',
+    signature_scale: 1,
+    signatureScale: 1,
+    signature_alignment: 'right',
+    signatureAlignment: 'right',
+    stamp_url: '',
+    stampUrl: '',
+    stamp_scale: 1,
+    stampScale: 1,
+    stamp_alignment: 'right',
+    stampAlignment: 'right',
+    bank_details: {
+      bankName: '',
+      accountHolder: '',
+      accountNo: '',
+      ifscCode: '',
+      branch: '',
+      upiId: '',
+    },
+    bankDetails: {
+      bankName: '',
+      accountHolder: '',
+      accountNo: '',
+      ifscCode: '',
+      branch: '',
+      upiId: '',
+    },
+    show_bank_on_invoice: true,
+    showBankDetailsOnInvoice: true,
+    show_bank_on_quotation: true,
+    showBankDetailsOnQuotation: true,
+    currency: '₹',
+    default_tax_mode: 'Exclusive',
+    defaultTaxMode: 'Exclusive',
+    invoice_prefix: 'INV-',
+    invoicePrefix: 'INV-',
+    quotation_prefix: 'QT-',
+    quotationPrefix: 'QT-',
+    default_payment_terms: 'Net 15',
+    defaultPaymentTerms: 'Net 15',
+    default_quotation_validity: '15 Days',
+    defaultQuotationValidity: '15 Days',
+    default_font: 'Inter',
+    defaultFont: 'Inter',
+    default_orientation: 'portrait',
+    defaultOrientation: 'portrait',
+    default_invoice_terms: '',
+    defaultInvoiceTerms: '',
+    default_quotation_terms: '',
+    defaultQuotationTerms: '',
+    terms_and_conditions: '',
+    termsAndConditions: '',
   });
   const [activeSubTab, setActiveSubTab] = useState<
     'profile' | 'info' | 'branding' | 'bank' | 'defaults' | 'employees' | 'security' | 'terms' | 'preview'
@@ -62,7 +130,96 @@ export const SettingsView: React.FC = () => {
   useEffect(() => {
     const loadSettings = async () => {
       const { data } = await businessSettingsService.getSettings();
-      if (data) setFormData((prev: any) => ({ ...prev, ...data }));
+      if (data) {
+        const legalName = data.legal_name || data.businessName || '';
+        const altPhone = data.alternate_phone || data.alternatePhone || '';
+        const bType = data.business_type || data.businessType || 'Private Limited';
+        const oName = data.owner_name || data.ownerName || '';
+        const rNum = data.reg_number || data.regNumber || '';
+        const lUrl = data.logo_url || data.logoUrl || '';
+        const lScale = data.logo_scale ?? data.logoScale ?? 1;
+        const lAlign = data.logo_alignment || data.logoAlignment || 'left';
+        const sUrl = data.signature_url || data.signatureUrl || '';
+        const sScale = data.signature_scale ?? data.signatureScale ?? 1;
+        const stUrl = data.stamp_url || data.stampUrl || '';
+        const stScale = data.stamp_scale ?? data.stampScale ?? 1;
+        const bDetails = data.bank_details || data.bankDetails || {
+          bankName: '',
+          accountHolder: '',
+          accountNo: '',
+          ifscCode: '',
+          branch: '',
+          upiId: '',
+        };
+        const showBankInv = data.show_bank_on_invoice ?? data.showBankDetailsOnInvoice ?? true;
+        const showBankQuot = data.show_bank_on_quotation ?? data.showBankDetailsOnQuotation ?? true;
+        const taxMode = data.default_tax_mode || data.defaultTaxMode || 'Exclusive';
+        const invPrefix = data.invoice_prefix || data.invoicePrefix || 'INV-';
+        const quotPrefix = data.quotation_prefix || data.quotationPrefix || 'QT-';
+        const payTerms = data.default_payment_terms || data.defaultPaymentTerms || 'Net 15';
+        const quotValid = data.default_quotation_validity || data.defaultQuotationValidity || '15 Days';
+        const font = data.default_font || data.defaultFont || 'Inter';
+        const orient = data.default_orientation || data.defaultOrientation || 'portrait';
+        const invTerms = data.default_invoice_terms || data.defaultInvoiceTerms || data.terms_and_conditions || data.termsAndConditions || '';
+        const quotTerms = data.default_quotation_terms || data.defaultQuotationTerms || '';
+        const termsCond = data.terms_and_conditions || data.termsAndConditions || data.default_invoice_terms || data.defaultInvoiceTerms || '';
+
+        setFormData((prev: any) => ({
+          ...prev,
+          ...data,
+          legal_name: legalName,
+          businessName: legalName,
+          legalName: legalName,
+          alternate_phone: altPhone,
+          alternatePhone: altPhone,
+          business_type: bType,
+          businessType: bType,
+          owner_name: oName,
+          ownerName: oName,
+          reg_number: rNum,
+          regNumber: rNum,
+          logo_url: lUrl,
+          logoUrl: lUrl,
+          logo_scale: lScale,
+          logoScale: lScale,
+          logo_alignment: lAlign,
+          logoAlignment: lAlign,
+          signature_url: sUrl,
+          signatureUrl: sUrl,
+          signature_scale: sScale,
+          signatureScale: sScale,
+          stamp_url: stUrl,
+          stampUrl: stUrl,
+          stamp_scale: stScale,
+          stampScale: stScale,
+          bank_details: bDetails,
+          bankDetails: bDetails,
+          show_bank_on_invoice: showBankInv,
+          showBankDetailsOnInvoice: showBankInv,
+          show_bank_on_quotation: showBankQuot,
+          showBankDetailsOnQuotation: showBankQuot,
+          default_tax_mode: taxMode,
+          defaultTaxMode: taxMode,
+          invoice_prefix: invPrefix,
+          invoicePrefix: invPrefix,
+          quotation_prefix: quotPrefix,
+          quotationPrefix: quotPrefix,
+          default_payment_terms: payTerms,
+          defaultPaymentTerms: payTerms,
+          default_quotation_validity: quotValid,
+          defaultQuotationValidity: quotValid,
+          default_font: font,
+          defaultFont: font,
+          default_orientation: orient,
+          defaultOrientation: orient,
+          default_invoice_terms: invTerms,
+          defaultInvoiceTerms: invTerms,
+          default_quotation_terms: quotTerms,
+          defaultQuotationTerms: quotTerms,
+          terms_and_conditions: termsCond,
+          termsAndConditions: termsCond,
+        }));
+      }
     };
     loadSettings();
   }, []);
@@ -134,7 +291,8 @@ export const SettingsView: React.FC = () => {
       setPhoneError('');
     }
 
-    if (formData.alternatePhone && !isValidIndianPhoneNumber(formData.alternatePhone, false)) {
+    const altPhone = formData.alternate_phone || formData.alternatePhone;
+    if (altPhone && !isValidIndianPhoneNumber(altPhone, false)) {
       setAlternatePhoneError('Enter a valid 10-digit mobile number starting with 6–9.');
       hasErr = true;
     } else {
@@ -151,8 +309,9 @@ export const SettingsView: React.FC = () => {
     }
     const cleanFormData = {
       ...formData,
+      legal_name: formData.legal_name || formData.businessName || '',
       phone: formData.phone ? normalizeIndianPhoneNumber(formData.phone) : '',
-      alternatePhone: formData.alternatePhone ? normalizeIndianPhoneNumber(formData.alternatePhone) : '',
+      alternate_phone: altPhone ? normalizeIndianPhoneNumber(altPhone) : '',
     };
     const res = await businessSettingsService.updateSettings(cleanFormData);
     if (res.success) {
@@ -179,11 +338,11 @@ export const SettingsView: React.FC = () => {
     reader.onload = (event) => {
       const url = event.target?.result as string;
       if (type === 'logo') {
-        setFormData((prev: any) => ({ ...prev, logoUrl: url }));
+        setFormData((prev: any) => ({ ...prev, logo_url: url, logoUrl: url }));
       } else if (type === 'signature') {
-        setFormData((prev: any) => ({ ...prev, signatureUrl: url }));
+        setFormData((prev: any) => ({ ...prev, signature_url: url, signatureUrl: url }));
       } else if (type === 'stamp') {
-        setFormData((prev: any) => ({ ...prev, stampUrl: url }));
+        setFormData((prev: any) => ({ ...prev, stamp_url: url, stampUrl: url }));
       }
       showToast(`${type.toUpperCase()} uploaded successfully! Remember to save settings.`, 'success');
     };
@@ -191,9 +350,9 @@ export const SettingsView: React.FC = () => {
   };
 
   const handleRemoveAsset = (type: 'logo' | 'signature' | 'stamp') => {
-    if (type === 'logo') setFormData((prev: any) => ({ ...prev, logoUrl: '' }));
-    if (type === 'signature') setFormData((prev: any) => ({ ...prev, signatureUrl: '' }));
-    if (type === 'stamp') setFormData((prev: any) => ({ ...prev, stampUrl: '' }));
+    if (type === 'logo') setFormData((prev: any) => ({ ...prev, logo_url: '', logoUrl: '' }));
+    if (type === 'signature') setFormData((prev: any) => ({ ...prev, signature_url: '', signatureUrl: '' }));
+    if (type === 'stamp') setFormData((prev: any) => ({ ...prev, stamp_url: '', stampUrl: '' }));
     showToast(`Removed business ${type}.`, 'info');
   };
 
@@ -570,8 +729,8 @@ export const SettingsView: React.FC = () => {
                 <input
                   type="text"
                   required
-                  value={formData.businessName}
-                  onChange={(e) => setFormData({ ...formData, businessName: e.target.value })}
+                  value={formData.legal_name || formData.businessName || ''}
+                  onChange={(e) => setFormData({ ...formData, legal_name: e.target.value, businessName: e.target.value })}
                   placeholder="e.g. VISTAAR Business Solutions"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
                 />
@@ -583,8 +742,8 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  value={formData.legalName || ''}
-                  onChange={(e) => setFormData({ ...formData, legalName: e.target.value })}
+                  value={formData.legal_name || formData.legalName || ''}
+                  onChange={(e) => setFormData({ ...formData, legal_name: e.target.value, legalName: e.target.value })}
                   placeholder="e.g. VISTAAR Tech Pvt Ltd"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 />
@@ -595,8 +754,8 @@ export const SettingsView: React.FC = () => {
                   Business Type
                 </label>
                 <select
-                  value={formData.businessType || 'Private Limited'}
-                  onChange={(e) => setFormData({ ...formData, businessType: e.target.value })}
+                  value={formData.business_type || formData.businessType || 'Private Limited'}
+                  onChange={(e) => setFormData({ ...formData, business_type: e.target.value, businessType: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 >
                   <option value="Sole Proprietorship">Sole Proprietorship</option>
@@ -614,8 +773,8 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  value={formData.ownerName || ''}
-                  onChange={(e) => setFormData({ ...formData, ownerName: e.target.value })}
+                  value={formData.owner_name || formData.ownerName || ''}
+                  onChange={(e) => setFormData({ ...formData, owner_name: e.target.value, ownerName: e.target.value })}
                   placeholder="e.g. Rajesh Kumar"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 />
@@ -637,9 +796,9 @@ export const SettingsView: React.FC = () => {
               <PhoneInput
                 id="settings-alt-phone"
                 label="Alternate Phone / WhatsApp"
-                value={formData.alternatePhone || ''}
+                value={formData.alternate_phone || formData.alternatePhone || ''}
                 onChange={(val) => {
-                  setFormData({ ...formData, alternatePhone: val });
+                  setFormData({ ...formData, alternate_phone: val, alternatePhone: val });
                   if (alternatePhoneError) setAlternatePhoneError('');
                 }}
                 error={alternatePhoneError}
@@ -706,8 +865,8 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  value={formData.regNumber || ''}
-                  onChange={(e) => setFormData({ ...formData, regNumber: e.target.value })}
+                  value={formData.reg_number || formData.regNumber || ''}
+                  onChange={(e) => setFormData({ ...formData, reg_number: e.target.value, regNumber: e.target.value })}
                   placeholder="UDYAM-MH-01-001234"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 />
