@@ -128,6 +128,7 @@ export interface DbProduct {
   tax_percent: number;
   hsn_sac?: string;
   description?: string;
+  categories?: { name: string } | { name: string }[] | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -301,6 +302,16 @@ export function toDbCustomer(cust: Partial<Customer>, workspaceId: string): Part
 }
 
 export function fromDbProduct(row: DbProduct): Product {
+  let catName = '';
+  const rawCats = (row as any).categories;
+  if (rawCats) {
+    if (Array.isArray(rawCats)) {
+      catName = rawCats[0]?.name || '';
+    } else if (typeof rawCats === 'object') {
+      catName = rawCats.name || '';
+    }
+  }
+
   return {
     id: row.id,
     name: row.name,
@@ -309,6 +320,7 @@ export function fromDbProduct(row: DbProduct): Product {
     sku: row.sku,
     barcode: row.barcode,
     categoryId: row.category_id || '',
+    category: catName,
     unit: row.unit || 'Pcs',
     buyPrice: Number(row.buy_price) || 0,
     sellingPrice: Number(row.selling_price) || 0,

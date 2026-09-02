@@ -75,7 +75,7 @@ export class ProductService {
       return { data: items, count: items.length };
     }
 
-    const SELECT_FIELDS = 'id, workspace_id, name, sku, part_number, product_code, category_id, category, brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, gst_rate, tax_percent, active, created_at, updated_at';
+    const SELECT_FIELDS = 'id, workspace_id, name, sku, part_number, product_code, category_id, categories(name), brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, gst_rate, tax_percent, active, created_at, updated_at';
 
     let query = supabase
       .from('products')
@@ -158,7 +158,7 @@ export class ProductService {
     const pattern = `%${s}%`;
 
     try {
-      const SELECT_FIELDS = 'id, workspace_id, name, sku, part_number, product_code, category_id, category, brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, gst_rate, tax_percent, active, created_at, updated_at';
+      const SELECT_FIELDS = 'id, workspace_id, name, sku, part_number, product_code, category_id, categories(name), brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, gst_rate, tax_percent, active, created_at, updated_at';
 
       const { data, error } = await supabase
         .from('products')
@@ -266,6 +266,15 @@ export class ProductService {
           .ilike('name', product.category.trim());
         if (existingCats && existingCats.length > 0) {
           resolvedCategoryId = existingCats[0].id;
+        } else {
+          const { data: newCat } = await supabase
+            .from('categories')
+            .insert([{ workspace_id: wsId, name: product.category.trim(), description: 'Auto-created category' }])
+            .select('id')
+            .single();
+          if (newCat) {
+            resolvedCategoryId = newCat.id;
+          }
         }
       } catch (e) {
         // Ignore category lookup fallback
@@ -509,7 +518,7 @@ export class ProductService {
     try {
       const { data: pData, error: pErr } = await supabase
         .from('products')
-        .select('*')
+        .select('*, categories(name)')
         .eq('workspace_id', wsId)
         .eq('id', id)
         .single();
@@ -623,7 +632,7 @@ export class ProductService {
       try {
         const { data: prodData } = await supabase
           .from('products')
-          .select('category, category_id')
+          .select('category_id, categories(name)')
           .eq('workspace_id', wsId)
           .eq('active', true);
 
@@ -632,7 +641,8 @@ export class ProductService {
           const missingNames = new Set<string>();
 
           prodData.forEach((p: any) => {
-            const catName = p.category?.trim();
+            const rawCat = p.categories;
+            const catName = (Array.isArray(rawCat) ? rawCat[0]?.name : rawCat?.name)?.trim();
             if (catName && !existingNames.has(catName.toLowerCase())) {
               missingNames.add(catName);
             }
@@ -822,17 +832,9 @@ export class ProductService {
       try {
         await supabase
           .from('products')
-          .update({ category_id: null, category: null })
+          .update({ category_id: null })
           .eq('workspace_id', wsId)
           .eq('category_id', id);
-
-        if (catName) {
-          await supabase
-            .from('products')
-            .update({ category_id: null, category: null })
-            .eq('workspace_id', wsId)
-            .eq('category', catName);
-        }
       } catch (unassignErr) {
         console.warn('[Category Delete] Product unassign warning:', unassignErr);
       }
