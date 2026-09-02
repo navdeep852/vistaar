@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { store } from '../services/store';
 
 export type ThemeMode = 'light' | 'dark';
 
@@ -12,8 +13,11 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [theme, setThemeState] = useState<ThemeMode>(() => {
-    const saved = localStorage.getItem('vistaar_theme');
-    return (saved === 'dark' || saved === 'light') ? saved : 'light';
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('vistaar_theme');
+      if (saved === 'dark' || saved === 'light') return saved;
+    }
+    return 'light';
   });
 
   useEffect(() => {
@@ -49,10 +53,15 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const setTheme = (newTheme: ThemeMode) => {
     setThemeState(newTheme);
+    store.setTheme(newTheme);
   };
 
   const toggleTheme = () => {
-    setThemeState((prev) => (prev === 'light' ? 'dark' : 'light'));
+    setThemeState((prev) => {
+      const nextTheme = prev === 'light' ? 'dark' : 'light';
+      store.setTheme(nextTheme);
+      return nextTheme;
+    });
   };
 
   return (
@@ -69,4 +78,5 @@ export const useTheme = () => {
   }
   return context;
 };
+
 

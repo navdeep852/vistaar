@@ -237,23 +237,17 @@ class StoreService {
   }
 
   public updateSettings(newSettings: Partial<BusinessSettings>) {
-    // Preserve existing theme unless explicitly provided as dark or light
+    // Preserve existing client theme preference — business settings hydration MUST NOT reset theme
     const currentTheme = this.getTheme();
-    const themeToKeep = (newSettings.theme === 'dark' || newSettings.theme === 'light')
-      ? newSettings.theme
-      : currentTheme;
+    const { theme: _incomingTheme, ...cleanSettings } = newSettings;
 
     this.state.settings = {
       ...this.state.settings,
-      ...newSettings,
-      theme: themeToKeep,
+      ...cleanSettings,
+      theme: currentTheme,
     };
 
-    if (newSettings.theme === 'dark' || newSettings.theme === 'light') {
-      this.setTheme(newSettings.theme);
-    } else {
-      this.saveToStorage();
-    }
+    this.saveToStorage();
   }
 
   public validateAssetFile(file: File): { valid: boolean; error?: string } {

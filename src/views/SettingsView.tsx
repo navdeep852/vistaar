@@ -33,6 +33,7 @@ import { showToast } from '../components/Toast';
 import { DocumentRenderer } from '../components/DocumentRenderer';
 import { DOCUMENT_FONTS, FontFamily } from '../types/template';
 import { ThemeToggle } from '../components/ThemeToggle';
+import { useTheme } from '../context/ThemeContext';
 import { validatePassword } from '../lib/passwordPolicy';
 import { Modal } from '../components/Modal';
 import { UserAccount, UserRole, EmployeeStatus } from '../types';
@@ -45,6 +46,7 @@ import { PhoneInput } from '../components/PhoneInput';
 import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 
 export const SettingsView: React.FC = () => {
+  const { theme: activeAppTheme } = useTheme();
   const [currentUser, setCurrentUser] = useState(auth.getUser());
   const [formData, setFormData] = useState<any>({
     legal_name: '',
@@ -1378,7 +1380,7 @@ export const SettingsView: React.FC = () => {
                   </p>
                 </div>
                 <span className="px-2.5 py-1 bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-300 text-[10px] font-bold rounded-full uppercase">
-                  {(localStorage.getItem('vistaar_theme') || 'light').toUpperCase()} Mode Active
+                  {activeAppTheme.toUpperCase()} Mode Active
                 </span>
               </div>
               <div className="pt-1">
