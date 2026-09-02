@@ -21,6 +21,7 @@ import logoFullNameLight from '../assets/Vistaar_Logo_With_Name_Light.png';
 import logoFullNameDark from '../assets/Vistaar_Logo_With_Name.png';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { PhoneInput } from '../components/PhoneInput';
+import { PasswordInput } from '../components/PasswordInput';
 import { validateIndianPhoneNumber } from '../lib/phoneUtils';
 
 import { validatePassword } from '../lib/passwordPolicy';
@@ -110,8 +111,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const [signupPass, setSignupPass] = useState('');
   const [signupConfirmPass, setSignupConfirmPass] = useState('');
-  const [showSignupPass, setShowSignupPass] = useState(false);
-  const [showConfirmPass, setShowConfirmPass] = useState(false);
 
   // OTP Box Refs
   const otpRefs = [
@@ -514,24 +513,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                 </span>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2">
-                  Password *
-                </label>
-                <div className="relative rounded-xl shadow-xs">
-                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 dark:text-slate-500">
-                    <Lock className="w-5 h-5" />
-                  </div>
-                  <input
-                    type="password"
-                    required
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    className="block w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-                    placeholder="••••••••"
-                  />
-                </div>
-              </div>
+              <PasswordInput
+                label="Password"
+                required
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+              />
 
               <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
                 <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -785,54 +774,26 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                     required
                   />
 
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-                      Admin Password *
-                    </label>
-                    <div className="relative">
-                      <input
-                        type={showSignupPass ? 'text' : 'password'}
-                        required
-                        value={signupPass}
-                        onChange={(e) => setSignupPass(e.target.value)}
-                        placeholder="Create a strong password"
-                        className="w-full pl-3.5 pr-10 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowSignupPass(!showSignupPass)}
-                        className="absolute right-3 top-2.5 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"
-                      >
-                        {showSignupPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
+                  <PasswordInput
+                    label="Admin Password"
+                    required
+                    value={signupPass}
+                    onChange={(e) => setSignupPass(e.target.value)}
+                    placeholder="Create a strong password"
+                    autoComplete="new-password"
+                  />
 
                   {/* LIVE PASSWORD REQUIREMENTS INDICATOR WIDGET */}
                   <PasswordRequirementsWidget password={signupPass} />
 
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-                      Confirm Admin Password *
-                    </label>
-                    <div className="relative">
-                      <input
-                        type={showConfirmPass ? 'text' : 'password'}
-                        required
-                        value={signupConfirmPass}
-                        onChange={(e) => setSignupConfirmPass(e.target.value)}
-                        placeholder="Repeat admin password"
-                        className="w-full pl-3.5 pr-10 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowConfirmPass(!showConfirmPass)}
-                        className="absolute right-3 top-2.5 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"
-                      >
-                        {showConfirmPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
+                  <PasswordInput
+                    label="Confirm Admin Password"
+                    required
+                    value={signupConfirmPass}
+                    onChange={(e) => setSignupConfirmPass(e.target.value)}
+                    placeholder="Repeat admin password"
+                    autoComplete="new-password"
+                  />
 
                   <button
                     type="submit"
@@ -978,35 +939,25 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                   </p>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase">
-                    New Password *
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    value={resetNewPass}
-                    onChange={(e) => setResetNewPass(e.target.value)}
-                    placeholder="Enter new password"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-white"
-                  />
-                </div>
+                <PasswordInput
+                  label="New Password"
+                  required
+                  value={resetNewPass}
+                  onChange={(e) => setResetNewPass(e.target.value)}
+                  placeholder="Enter new password"
+                  autoComplete="new-password"
+                />
 
                 <PasswordRequirementsWidget password={resetNewPass} />
 
-                <div className="space-y-1">
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase">
-                    Confirm New Password *
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    value={resetConfirmPass}
-                    onChange={(e) => setResetConfirmPass(e.target.value)}
-                    placeholder="Confirm new password"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-white"
-                  />
-                </div>
+                <PasswordInput
+                  label="Confirm New Password"
+                  required
+                  value={resetConfirmPass}
+                  onChange={(e) => setResetConfirmPass(e.target.value)}
+                  placeholder="Confirm new password"
+                  autoComplete="new-password"
+                />
 
                 <button
                   type="submit"
@@ -1063,35 +1014,25 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
             </p>
           </div>
 
-          <div className="space-y-1">
-            <label className="block font-semibold text-slate-700 dark:text-slate-300 uppercase">
-              New Permanent Password *
-            </label>
-            <input
-              type="password"
-              required
-              value={forceNewPass}
-              onChange={(e) => setForceNewPass(e.target.value)}
-              placeholder="Create your new permanent password"
-              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl font-semibold"
-            />
-          </div>
+          <PasswordInput
+            label="New Permanent Password"
+            required
+            value={forceNewPass}
+            onChange={(e) => setForceNewPass(e.target.value)}
+            placeholder="Create your new permanent password"
+            autoComplete="new-password"
+          />
 
           <PasswordRequirementsWidget password={forceNewPass} />
 
-          <div className="space-y-1">
-            <label className="block font-semibold text-slate-700 dark:text-slate-300 uppercase">
-              Confirm Permanent Password *
-            </label>
-            <input
-              type="password"
-              required
-              value={forceConfirmPass}
-              onChange={(e) => setForceConfirmPass(e.target.value)}
-              placeholder="Re-type your new permanent password"
-              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl font-semibold"
-            />
-          </div>
+          <PasswordInput
+            label="Confirm Permanent Password"
+            required
+            value={forceConfirmPass}
+            onChange={(e) => setForceConfirmPass(e.target.value)}
+            placeholder="Re-type your new permanent password"
+            autoComplete="new-password"
+          />
 
           <div className="flex justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
             <button

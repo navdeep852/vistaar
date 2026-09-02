@@ -36,6 +36,7 @@ import { validatePassword } from '../lib/passwordPolicy';
 import { Modal } from '../components/Modal';
 import { UserAccount, UserRole, EmployeeStatus } from '../types';
 import { PasswordRequirementsWidget } from './LoginView';
+import { PasswordInput } from '../components/PasswordInput';
 import { UserAvatar } from '../components/UserAvatar';
 import { ImageCropModal } from '../components/ImageCropModal';
 import { getUserInitials } from '../lib/utils';
@@ -1447,49 +1448,34 @@ export const SettingsView: React.FC = () => {
               </div>
 
               <form onSubmit={handleChangePasswordSubmit} className="space-y-4 max-w-xl">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                    Current Password *
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    value={currentPass}
-                    onChange={(e) => setCurrentPass(e.target.value)}
-                    placeholder="Enter current password"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
-                  />
-                </div>
+                <PasswordInput
+                  label="Current Password"
+                  required
+                  value={currentPass}
+                  onChange={(e) => setCurrentPass(e.target.value)}
+                  placeholder="Enter current password"
+                  autoComplete="current-password"
+                />
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                    New Password *
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    value={newPass}
-                    onChange={(e) => setNewPass(e.target.value)}
-                    placeholder="Create new 12-character password"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
-                  />
-                </div>
+                <PasswordInput
+                  label="New Password"
+                  required
+                  value={newPass}
+                  onChange={(e) => setNewPass(e.target.value)}
+                  placeholder="Create new 12-character password"
+                  autoComplete="new-password"
+                />
 
                 <PasswordRequirementsWidget password={newPass} />
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                    Confirm New Password *
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    value={confirmNewPass}
-                    onChange={(e) => setConfirmNewPass(e.target.value)}
-                    placeholder="Confirm new password"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
-                  />
-                </div>
+                <PasswordInput
+                  label="Confirm New Password"
+                  required
+                  value={confirmNewPass}
+                  onChange={(e) => setConfirmNewPass(e.target.value)}
+                  placeholder="Confirm new password"
+                  autoComplete="new-password"
+                />
 
                 <button
                   type="submit"
