@@ -367,11 +367,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
     if (res.success) {
       showToast('Password reset successfully! Please log in with your new password.', 'success');
       auth.clearRecoverySession();
-      setAuthMode('signin');
-      setForgotMessage(null);
-      setResetNewPass('');
-      setResetConfirmPass('');
-      setLoginPassword('');
+      // Force a full reload to the clean root so all state (recovery flag, URL, any
+      // stale subscriptions) starts fresh, rather than trusting in-memory state alone.
+      window.location.href = window.location.origin + '/';
     } else {
       setError(res.error || 'Failed to reset password.');
     }

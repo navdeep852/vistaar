@@ -228,31 +228,14 @@ export class SupabaseAuthService {
   }
 
   public isRecoverySession(): boolean {
-    if (this.isPasswordRecoveryMode) return true;
-    if (typeof window !== 'undefined') {
-      const hash = window.location.hash || '';
-      const search = window.location.search || '';
-      const pathname = window.location.pathname || '';
-      if (
-        pathname.includes('/reset-password') ||
-        hash.includes('type=recovery') ||
-        search.includes('type=recovery') ||
-        search.includes('code=')
-      ) {
-        return true;
-      }
-    }
-    return false;
+    return this.isPasswordRecoveryMode;
   }
 
   public clearRecoverySession(): void {
     this.isPasswordRecoveryMode = false;
     if (typeof window !== 'undefined') {
       try {
-        if (window.location.hash || window.location.pathname.includes('/reset-password') || window.location.search.includes('type=recovery')) {
-          const cleanUrl = window.location.origin + window.location.pathname.replace('/reset-password', '');
-          window.history.replaceState({}, document.title, cleanUrl || '/');
-        }
+        window.history.replaceState({}, document.title, window.location.origin + '/');
       } catch (e) {
         // ignore
       }
