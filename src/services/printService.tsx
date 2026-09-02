@@ -82,3 +82,71 @@ export function printDocument(props: DocumentRendererProps) {
     }, 1000);
   }, 250);
 }
+
+/**
+ * Triggers isolated A4 Landscape printing for GST E-Way Bills.
+ */
+export function printEwayBill(ewayBill: any) {
+  // 1. Remove any existing print mount root & style tag
+  const existingRoot = document.getElementById('printable-document-root');
+  if (existingRoot) existingRoot.remove();
+  const existingStyle = document.getElementById('printable-document-style');
+  if (existingStyle) existingStyle.remove();
+
+  // 2. Inject dynamic @page CSS for strict A4 Landscape
+  const styleEl = document.createElement('style');
+  styleEl.id = 'printable-document-style';
+  styleEl.innerHTML = `
+    @media print {
+      @page {
+        size: A4 landscape;
+        margin: 8mm;
+      }
+      body > *:not(#printable-document-root) {
+        display: none !important;
+      }
+      #printable-document-root {
+        display: block !important;
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        max-width: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #ffffff !important;
+        color: #000000 !important;
+        box-shadow: none !important;
+      }
+    }
+  `;
+  document.head.appendChild(styleEl);
+
+  // 3. Create isolated container element
+  const printContainer = document.createElement('div');
+  printContainer.id = 'printable-document-root';
+  document.body.appendChild(printContainer);
+
+  // 4. Import & Mount EwayBillPrintDocument inside isolated container
+  import('../components/eway/EwayBillPrintDocument').then(({ EwayBillPrintDocument }) => {
+    const root = createRoot(printContainer);
+    root.render(
+      <React.StrictMode>
+        <EwayBillPrintDocument ewayBill={ewayBill} isPrintMode={true} />
+      </React.StrictMode>
+    );
+
+    // 5. Trigger browser print after rendering
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => {
+        try {
+          root.unmount();
+          printContainer.remove();
+          styleEl.remove();
+        } catch (e) {}
+      }, 1000);
+    }, 250);
+  });
+}
+
