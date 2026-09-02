@@ -25,6 +25,28 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     localStorage.setItem('vistaar_theme', theme);
   }, [theme]);
 
+  useEffect(() => {
+    const handleThemeEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<ThemeMode>;
+      if (customEvent.detail === 'dark' || customEvent.detail === 'light') {
+        setThemeState(customEvent.detail);
+      }
+    };
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'vistaar_theme' && (e.newValue === 'dark' || e.newValue === 'light')) {
+        setThemeState(e.newValue);
+      }
+    };
+
+    window.addEventListener('vistaar-theme-changed', handleThemeEvent);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('vistaar-theme-changed', handleThemeEvent);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
   const setTheme = (newTheme: ThemeMode) => {
     setThemeState(newTheme);
   };
@@ -47,3 +69,4 @@ export const useTheme = () => {
   }
   return context;
 };
+

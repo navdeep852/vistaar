@@ -1024,7 +1024,6 @@ export class SupabaseAuthService {
           createdAt: p.created_at || new Date().toISOString(),
           updatedAt: p.updated_at || new Date().toISOString(),
         }));
-        this.notify();
       }
     } catch (err) {
       console.error('Error fetching employees:', err);

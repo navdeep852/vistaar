@@ -169,19 +169,19 @@ export const SettingsView: React.FC = () => {
   const loadSettings = async () => {
     const { data, success } = await businessSettingsService.getSettings();
     if (success && data) {
-      const legalName = data.legal_name || data.businessName || '';
-      const altPhone = data.alternate_phone || data.alternatePhone || '';
-      const bType = data.business_type || data.businessType || 'Private Limited';
-      const oName = data.owner_name || data.ownerName || '';
-      const rNum = data.reg_number || data.regNumber || '';
-      const lUrl = data.logo_url || data.logoUrl || '';
+      const legalName = data.legal_name ?? data.businessName ?? '';
+      const altPhone = data.alternate_phone ?? data.alternatePhone ?? '';
+      const bType = data.business_type ?? data.businessType ?? 'Private Limited';
+      const oName = data.owner_name ?? data.ownerName ?? '';
+      const rNum = data.reg_number ?? data.regNumber ?? '';
+      const lUrl = data.logo_url ?? data.logoUrl ?? '';
       const lScale = data.logo_scale ?? data.logoScale ?? 1;
-      const lAlign = data.logo_alignment || data.logoAlignment || 'left';
-      const sUrl = data.signature_url || data.signatureUrl || '';
+      const lAlign = data.logo_alignment ?? data.logoAlignment ?? 'left';
+      const sUrl = data.signature_url ?? data.signatureUrl ?? '';
       const sScale = data.signature_scale ?? data.signatureScale ?? 1;
-      const stUrl = data.stamp_url || data.stampUrl || '';
+      const stUrl = data.stamp_url ?? data.stampUrl ?? '';
       const stScale = data.stamp_scale ?? data.stampScale ?? 1;
-      const bDetails = data.bank_details || data.bankDetails || {
+      const bDetails = data.bank_details ?? data.bankDetails ?? {
         bankName: '',
         accountHolder: '',
         accountNo: '',
@@ -191,31 +191,31 @@ export const SettingsView: React.FC = () => {
       };
       const showBankInv = data.show_bank_on_invoice ?? data.showBankDetailsOnInvoice ?? true;
       const showBankQuot = data.show_bank_on_quotation ?? data.showBankDetailsOnQuotation ?? true;
-      const taxMode = data.default_tax_mode || data.defaultTaxMode || 'Exclusive';
-      const invPrefix = data.invoice_prefix || data.invoicePrefix || 'INV-';
-      const quotPrefix = data.quotation_prefix || data.quotationPrefix || 'QT-';
-      const payTerms = data.default_payment_terms || data.defaultPaymentTerms || 'Net 15';
-      const quotValid = data.default_quotation_validity || data.defaultQuotationValidity || '15 Days';
-      const font = data.default_font || data.defaultFont || 'Inter';
-      const orient = data.default_orientation || data.defaultOrientation || 'portrait';
-      const invTerms = data.default_invoice_terms || data.defaultInvoiceTerms || data.terms_and_conditions || data.termsAndConditions || '';
-      const quotTerms = data.default_quotation_terms || data.defaultQuotationTerms || '';
-      const termsCond = data.terms_and_conditions || data.termsAndConditions || data.default_invoice_terms || data.defaultInvoiceTerms || '';
+      const taxMode = data.default_tax_mode ?? data.defaultTaxMode ?? 'Exclusive';
+      const invPrefix = data.invoice_prefix ?? data.invoicePrefix ?? 'INV-';
+      const quotPrefix = data.quotation_prefix ?? data.quotationPrefix ?? 'QT-';
+      const payTerms = data.default_payment_terms ?? data.defaultPaymentTerms ?? 'Net 15';
+      const quotValid = data.default_quotation_validity ?? data.defaultQuotationValidity ?? '15 Days';
+      const font = data.default_font ?? data.defaultFont ?? 'Inter';
+      const orient = data.default_orientation ?? data.defaultOrientation ?? 'portrait';
+      const invTerms = data.default_invoice_terms ?? data.defaultInvoiceTerms ?? data.terms_and_conditions ?? data.termsAndConditions ?? '';
+      const quotTerms = data.default_quotation_terms ?? data.defaultQuotationTerms ?? '';
+      const termsCond = data.terms_and_conditions ?? data.termsAndConditions ?? data.default_invoice_terms ?? data.defaultInvoiceTerms ?? '';
 
       const normalized = {
         ...data,
         legal_name: legalName,
         businessName: legalName,
         legalName: legalName,
-        phone: data.phone || '',
-        email: data.email || '',
-        address: data.address || '',
-        city: data.city || '',
-        state: data.state || '',
-        pincode: data.pincode || '',
-        gstin: data.gstin || '',
-        pan: data.pan || '',
-        website: data.website || '',
+        phone: data.phone ?? '',
+        email: data.email ?? '',
+        address: data.address ?? '',
+        city: data.city ?? '',
+        state: data.state ?? '',
+        pincode: data.pincode ?? '',
+        gstin: data.gstin ?? '',
+        pan: data.pan ?? '',
+        website: data.website ?? '',
         alternate_phone: altPhone,
         alternatePhone: altPhone,
         business_type: bType,
@@ -272,7 +272,9 @@ export const SettingsView: React.FC = () => {
   };
 
   useEffect(() => {
-    const updateData = async () => {
+    let isMounted = true;
+
+    const initData = async () => {
       const usr = auth.getUser();
       setCurrentUser(usr);
       if (usr) {
@@ -282,14 +284,29 @@ export const SettingsView: React.FC = () => {
         setProfileDesig(usr.designation || '');
       }
       const emps = await auth.loadEmployees();
-      setEmployees(emps);
-      setActiveSessions(auth.getActiveSessions());
-      setLoginLogs(auth.getLoginActivity());
+      if (isMounted) {
+        setEmployees(emps);
+        setActiveSessions(auth.getActiveSessions());
+        setLoginLogs(auth.getLoginActivity());
+      }
       await loadSettings();
     };
 
-    updateData();
-    return auth.subscribe(updateData);
+    initData();
+
+    // Subscribe ONLY to auth user/session changes (do NOT re-run loadSettings during editing)
+    const unsubscribe = auth.subscribe(() => {
+      if (!isMounted) return;
+      const usr = auth.getUser();
+      setCurrentUser(usr);
+      setActiveSessions(auth.getActiveSessions());
+      setLoginLogs(auth.getLoginActivity());
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, []);
 
   const handleSave = async (e?: React.FormEvent) => {
@@ -303,7 +320,7 @@ export const SettingsView: React.FC = () => {
       setPhoneError('');
     }
 
-    const altPhone = formData.alternate_phone || formData.alternatePhone;
+    const altPhone = formData.alternate_phone ?? formData.alternatePhone ?? '';
     if (altPhone && !isValidIndianPhoneNumber(altPhone, false)) {
       setAlternatePhoneError('Enter a valid 10-digit mobile number starting with 6–9.');
       hasErr = true;
@@ -321,14 +338,13 @@ export const SettingsView: React.FC = () => {
     }
     const cleanFormData = {
       ...formData,
-      legal_name: formData.legal_name || formData.businessName || '',
+      legal_name: formData.legal_name ?? formData.businessName ?? '',
       phone: formData.phone ? normalizeIndianPhoneNumber(formData.phone) : '',
       alternate_phone: altPhone ? normalizeIndianPhoneNumber(altPhone) : '',
     };
 
     const res = await businessSettingsService.updateSettings(cleanFormData);
     if (res.success) {
-      // Reload authoritative database state directly from Supabase (Requirement #8)
       await loadSettings();
       store.updateSettings(cleanFormData);
       showToast('Business Profile & Document Branding saved successfully!', 'success');
@@ -744,8 +760,8 @@ export const SettingsView: React.FC = () => {
                 <input
                   type="text"
                   required
-                  value={formData.legal_name || formData.businessName || ''}
-                  onChange={(e) => setFormData({ ...formData, legal_name: e.target.value, businessName: e.target.value })}
+                  value={formData.legal_name ?? ''}
+                  onChange={(e) => setFormData({ ...formData, legal_name: e.target.value, businessName: e.target.value, legalName: e.target.value })}
                   placeholder="e.g. VISTAAR Business Solutions"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
                 />
@@ -757,8 +773,8 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  value={formData.legal_name || formData.legalName || ''}
-                  onChange={(e) => setFormData({ ...formData, legal_name: e.target.value, legalName: e.target.value })}
+                  value={formData.legal_name ?? ''}
+                  onChange={(e) => setFormData({ ...formData, legal_name: e.target.value, businessName: e.target.value, legalName: e.target.value })}
                   placeholder="e.g. VISTAAR Tech Pvt Ltd"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 />
@@ -769,7 +785,7 @@ export const SettingsView: React.FC = () => {
                   Business Type
                 </label>
                 <select
-                  value={formData.business_type || formData.businessType || 'Private Limited'}
+                  value={formData.business_type ?? 'Private Limited'}
                   onChange={(e) => setFormData({ ...formData, business_type: e.target.value, businessType: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 >
@@ -788,7 +804,7 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  value={formData.owner_name || formData.ownerName || ''}
+                  value={formData.owner_name ?? ''}
                   onChange={(e) => setFormData({ ...formData, owner_name: e.target.value, ownerName: e.target.value })}
                   placeholder="e.g. Rajesh Kumar"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
@@ -799,7 +815,7 @@ export const SettingsView: React.FC = () => {
                 id="settings-phone"
                 label="Phone Number *"
                 required
-                value={formData.phone || ''}
+                value={formData.phone ?? ''}
                 onChange={(val) => {
                   setFormData({ ...formData, phone: val });
                   if (phoneError) setPhoneError('');
@@ -811,7 +827,7 @@ export const SettingsView: React.FC = () => {
               <PhoneInput
                 id="settings-alt-phone"
                 label="Alternate Phone / WhatsApp"
-                value={formData.alternate_phone || formData.alternatePhone || ''}
+                value={formData.alternate_phone ?? ''}
                 onChange={(val) => {
                   setFormData({ ...formData, alternate_phone: val, alternatePhone: val });
                   if (alternatePhoneError) setAlternatePhoneError('');
@@ -827,7 +843,7 @@ export const SettingsView: React.FC = () => {
                 <input
                   type="email"
                   required
-                  value={formData.email}
+                  value={formData.email ?? ''}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   placeholder="contact@vistaar.in"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
@@ -840,7 +856,7 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  value={formData.website || ''}
+                  value={formData.website ?? ''}
                   onChange={(e) => setFormData({ ...formData, website: e.target.value })}
                   placeholder="https://vistaar.app"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
@@ -854,7 +870,7 @@ export const SettingsView: React.FC = () => {
                 <input
                   type="text"
                   required
-                  value={formData.gstin}
+                  value={formData.gstin ?? ''}
                   onChange={(e) => setFormData({ ...formData, gstin: e.target.value })}
                   placeholder="27AAAAA0000A1Z5"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
@@ -867,7 +883,7 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  value={formData.pan || ''}
+                  value={formData.pan ?? ''}
                   onChange={(e) => setFormData({ ...formData, pan: e.target.value })}
                   placeholder="ABCDE1234F"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
@@ -880,7 +896,7 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  value={formData.reg_number || formData.regNumber || ''}
+                  value={formData.reg_number ?? ''}
                   onChange={(e) => setFormData({ ...formData, reg_number: e.target.value, regNumber: e.target.value })}
                   placeholder="UDYAM-MH-01-001234"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
@@ -894,7 +910,7 @@ export const SettingsView: React.FC = () => {
                 <input
                   type="text"
                   required
-                  value={formData.address}
+                  value={formData.address ?? ''}
                   onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                   placeholder="Plot 42, Tech Park Sector 5"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
@@ -906,7 +922,7 @@ export const SettingsView: React.FC = () => {
                 <input
                   type="text"
                   required
-                  value={formData.city}
+                  value={formData.city ?? ''}
                   onChange={(e) => setFormData({ ...formData, city: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 />
@@ -917,7 +933,7 @@ export const SettingsView: React.FC = () => {
                 <input
                   type="text"
                   required
-                  value={formData.state}
+                  value={formData.state ?? ''}
                   onChange={(e) => setFormData({ ...formData, state: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 />
@@ -928,7 +944,7 @@ export const SettingsView: React.FC = () => {
                 <input
                   type="text"
                   required
-                  value={formData.pincode}
+                  value={formData.pincode ?? ''}
                   onChange={(e) => setFormData({ ...formData, pincode: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 />
@@ -1382,7 +1398,7 @@ export const SettingsView: React.FC = () => {
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Currency Symbol</label>
                 <select
-                  value={formData.currency}
+                  value={formData.currency ?? '₹'}
                   onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
                 >
@@ -1397,8 +1413,8 @@ export const SettingsView: React.FC = () => {
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Tax Mode</label>
                 <select
-                  value={formData.defaultTaxMode || 'Exclusive'}
-                  onChange={(e) => setFormData({ ...formData, defaultTaxMode: e.target.value as any })}
+                  value={formData.default_tax_mode ?? formData.defaultTaxMode ?? 'Exclusive'}
+                  onChange={(e) => setFormData({ ...formData, default_tax_mode: e.target.value, defaultTaxMode: e.target.value as any })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 >
                   <option value="Exclusive">Tax Exclusive (Subtotal + GST)</option>
@@ -1411,8 +1427,8 @@ export const SettingsView: React.FC = () => {
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Invoice Prefix</label>
                 <input
                   type="text"
-                  value={formData.invoicePrefix || 'INV-'}
-                  onChange={(e) => setFormData({ ...formData, invoicePrefix: e.target.value })}
+                  value={formData.invoice_prefix ?? formData.invoicePrefix ?? ''}
+                  onChange={(e) => setFormData({ ...formData, invoice_prefix: e.target.value, invoicePrefix: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
                 />
               </div>
@@ -1421,8 +1437,8 @@ export const SettingsView: React.FC = () => {
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Quotation Prefix</label>
                 <input
                   type="text"
-                  value={formData.quotationPrefix || 'QT-'}
-                  onChange={(e) => setFormData({ ...formData, quotationPrefix: e.target.value })}
+                  value={formData.quotation_prefix ?? formData.quotationPrefix ?? ''}
+                  onChange={(e) => setFormData({ ...formData, quotation_prefix: e.target.value, quotationPrefix: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
                 />
               </div>
@@ -1430,8 +1446,8 @@ export const SettingsView: React.FC = () => {
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Payment Terms</label>
                 <select
-                  value={formData.defaultPaymentTerms || 'Net 15'}
-                  onChange={(e) => setFormData({ ...formData, defaultPaymentTerms: e.target.value })}
+                  value={formData.default_payment_terms ?? formData.defaultPaymentTerms ?? 'Net 15'}
+                  onChange={(e) => setFormData({ ...formData, default_payment_terms: e.target.value, defaultPaymentTerms: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 >
                   <option value="Immediate">Immediate / Due on Receipt</option>
@@ -1445,8 +1461,8 @@ export const SettingsView: React.FC = () => {
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Quotation Validity</label>
                 <select
-                  value={formData.defaultQuotationValidity || '15 Days'}
-                  onChange={(e) => setFormData({ ...formData, defaultQuotationValidity: e.target.value })}
+                  value={formData.default_quotation_validity ?? formData.defaultQuotationValidity ?? '15 Days'}
+                  onChange={(e) => setFormData({ ...formData, default_quotation_validity: e.target.value, defaultQuotationValidity: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 >
                   <option value="7 Days">7 Days</option>
@@ -1459,8 +1475,8 @@ export const SettingsView: React.FC = () => {
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Document Font</label>
                 <select
-                  value={formData.defaultFont || 'Inter'}
-                  onChange={(e) => setFormData({ ...formData, defaultFont: e.target.value })}
+                  value={formData.default_font ?? formData.defaultFont ?? 'Inter'}
+                  onChange={(e) => setFormData({ ...formData, default_font: e.target.value, defaultFont: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
                 >
                   {DOCUMENT_FONTS.map((font) => (
@@ -1474,8 +1490,8 @@ export const SettingsView: React.FC = () => {
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Page Orientation</label>
                 <select
-                  value={formData.defaultOrientation || 'portrait'}
-                  onChange={(e) => setFormData({ ...formData, defaultOrientation: e.target.value as any })}
+                  value={formData.default_orientation ?? formData.defaultOrientation ?? 'portrait'}
+                  onChange={(e) => setFormData({ ...formData, default_orientation: e.target.value, defaultOrientation: e.target.value as any })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
                 >
                   <option value="portrait">Portrait (210 × 297 mm)</option>
@@ -1774,11 +1790,13 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <textarea
                   rows={4}
-                  value={formData.defaultInvoiceTerms || formData.termsAndConditions}
+                  value={formData.default_invoice_terms ?? formData.defaultInvoiceTerms ?? ''}
                   onChange={(e) =>
                     setFormData({
                       ...formData,
+                      default_invoice_terms: e.target.value,
                       defaultInvoiceTerms: e.target.value,
+                      terms_and_conditions: e.target.value,
                       termsAndConditions: e.target.value,
                     })
                   }
@@ -1792,8 +1810,14 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <textarea
                   rows={4}
-                  value={formData.defaultQuotationTerms || '1. Quotation valid for 15 days from date of issue.\n2. Prices subject to applicable taxes.\n3. Delivery within 3 business days of PO approval.'}
-                  onChange={(e) => setFormData({ ...formData, defaultQuotationTerms: e.target.value })}
+                  value={formData.default_quotation_terms ?? formData.defaultQuotationTerms ?? ''}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      default_quotation_terms: e.target.value,
+                      defaultQuotationTerms: e.target.value,
+                    })
+                  }
                   className="w-full p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-mono text-slate-800 dark:text-slate-100 leading-relaxed"
                 />
               </div>

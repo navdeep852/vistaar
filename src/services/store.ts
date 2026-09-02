@@ -217,7 +217,9 @@ class StoreService {
         return stored;
       }
     }
-    return this.state.settings?.theme || 'light';
+    return (this.state.settings?.theme === 'dark' || this.state.settings?.theme === 'light')
+      ? this.state.settings.theme
+      : 'light';
   }
 
   public setTheme(theme: 'light' | 'dark') {
@@ -229,13 +231,25 @@ class StoreService {
       } else {
         document.documentElement.classList.remove('dark');
       }
+      window.dispatchEvent(new CustomEvent('vistaar-theme-changed', { detail: theme }));
     }
     this.saveToStorage();
   }
 
   public updateSettings(newSettings: Partial<BusinessSettings>) {
-    this.state.settings = { ...this.state.settings, ...newSettings };
-    if (newSettings.theme) {
+    // Preserve existing theme unless explicitly provided as dark or light
+    const currentTheme = this.getTheme();
+    const themeToKeep = (newSettings.theme === 'dark' || newSettings.theme === 'light')
+      ? newSettings.theme
+      : currentTheme;
+
+    this.state.settings = {
+      ...this.state.settings,
+      ...newSettings,
+      theme: themeToKeep,
+    };
+
+    if (newSettings.theme === 'dark' || newSettings.theme === 'light') {
       this.setTheme(newSettings.theme);
     } else {
       this.saveToStorage();
