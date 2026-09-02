@@ -90,7 +90,7 @@ interface LoginViewProps {
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
-  const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
+  const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'forgot' | 'reset'>('signin');
 
   // Sign In State
   const [identifier, setIdentifier] = useState('admin@vistaar.com');
@@ -123,12 +123,23 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
     useRef<HTMLInputElement>(null),
   ];
 
-  // Forgot Password State
+  // Forgot Password & Reset State
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotMessage, setForgotMessage] = useState<string | null>(null);
-  const [activeResetToken, setActiveResetToken] = useState<string | null>(null);
   const [resetNewPass, setResetNewPass] = useState('');
   const [resetConfirmPass, setResetConfirmPass] = useState('');
+
+  // Password Recovery Listener
+  useEffect(() => {
+    const checkRecovery = () => {
+      if (auth.isRecoverySession()) {
+        setAuthMode('reset');
+      }
+    };
+    checkRecovery();
+    const unsubscribe = auth.subscribe(checkRecovery);
+    return unsubscribe;
+  }, []);
 
   // First Login Force Password Change Modal State
   const [forceChangeModalOpen, setForceChangeModalOpen] = useState(false);
@@ -341,27 +352,25 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
     setLoading(false);
 
     setForgotMessage(res.message);
-    if (res.testToken) {
-      setActiveResetToken(res.testToken);
-    }
   };
 
-  // Execute Password Reset with Token
+  // Execute Password Reset with Token/Session
   const handleExecuteReset = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeResetToken) return;
 
     setError(null);
     setLoading(true);
 
-    const res = await auth.resetPasswordWithToken(activeResetToken, resetNewPass, resetConfirmPass);
+    const res = await auth.completePasswordReset(resetNewPass, resetConfirmPass);
     setLoading(false);
 
     if (res.success) {
       showToast('Password reset successfully! Please log in with your new password.', 'success');
+      auth.clearRecoverySession();
       setAuthMode('signin');
-      setActiveResetToken(null);
       setForgotMessage(null);
+      setResetNewPass('');
+      setResetConfirmPass('');
       setLoginPassword('');
     } else {
       setError(res.error || 'Failed to reset password.');
@@ -910,90 +919,105 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                 </div>
               )}
 
-              {!activeResetToken ? (
-                <form onSubmit={handleRequestForgot} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
-                      Registered Email Address *
-                    </label>
-                    <input
-                      type="email"
-                      required
-                      value={forgotEmail}
-                      onChange={(e) => setForgotEmail(e.target.value)}
-                      placeholder="admin@company.com"
-                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-white"
-                    />
-                  </div>
+              <form onSubmit={handleRequestForgot} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                    Registered Email Address *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    placeholder="admin@company.com"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-white"
+                  />
+                </div>
 
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full py-3 px-4 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 shadow-md shadow-blue-600/20"
-                  >
-                    Send Password Reset Instructions
-                  </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3 px-4 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 shadow-md shadow-blue-600/20"
+                >
+                  Send Password Reset Instructions
+                </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAuthMode('signin');
-                      setError(null);
-                    }}
-                    className="w-full text-center text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white block mt-2"
-                  >
-                    ← Back to Sign In
-                  </button>
-                </form>
-              ) : (
-                /* RESET NEW PASSWORD FORM (TRIGGERED BY TOKEN) */
-                <form onSubmit={handleExecuteReset} className="space-y-4 pt-2">
-                  <div className="p-3 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900/60 rounded-xl text-xs text-blue-900 dark:text-blue-200">
-                    <span className="font-bold block">Secure Reset Token Verified</span>
-                    <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-0.5">
-                      Create your new permanent password below.
-                    </p>
-                  </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('signin');
+                    setError(null);
+                  }}
+                  className="w-full text-center text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white block mt-2"
+                >
+                  ← Back to Sign In
+                </button>
+              </form>
+            </div>
+          )}
 
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase">
-                      New Password *
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      value={resetNewPass}
-                      onChange={(e) => setResetNewPass(e.target.value)}
-                      placeholder="Enter new password"
-                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-xs font-semibold"
-                    />
-                  </div>
+          {/* ==================== 4. RESET PASSWORD FORM (ONLY RECOVERY SESSION) ==================== */}
+          {authMode === 'reset' && (
+            <div className="space-y-5">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <KeyRound className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                  <span>Create New Permanent Password</span>
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Your identity has been verified via the recovery link. Set your new account password below.
+                </p>
+              </div>
 
-                  <PasswordRequirementsWidget password={resetNewPass} />
+              <form onSubmit={handleExecuteReset} className="space-y-4 pt-2">
+                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-900/60 rounded-xl text-xs text-emerald-900 dark:text-emerald-200">
+                  <span className="font-bold block flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Verified Recovery Session Active</span>
+                  </span>
+                  <p className="text-[11px] text-emerald-700 dark:text-emerald-300 mt-0.5">
+                    Your session is verified by Supabase Auth recovery token.
+                  </p>
+                </div>
 
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase">
-                      Confirm New Password *
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      value={resetConfirmPass}
-                      onChange={(e) => setResetConfirmPass(e.target.value)}
-                      placeholder="Confirm new password"
-                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-xs font-semibold"
-                    />
-                  </div>
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase">
+                    New Password *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={resetNewPass}
+                    onChange={(e) => setResetNewPass(e.target.value)}
+                    placeholder="Enter new password"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-white"
+                  />
+                </div>
 
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full py-3 px-4 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-md shadow-emerald-600/20"
-                  >
-                    Confirm & Update Password
-                  </button>
-                </form>
-              )}
+                <PasswordRequirementsWidget password={resetNewPass} />
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase">
+                    Confirm New Password *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={resetConfirmPass}
+                    onChange={(e) => setResetConfirmPass(e.target.value)}
+                    placeholder="Confirm new password"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3 px-4 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-md shadow-emerald-600/20"
+                >
+                  Confirm & Update Password
+                </button>
+              </form>
             </div>
           )}
 

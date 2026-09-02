@@ -76,7 +76,7 @@ function MainAppContent() {
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated || supabaseAuthService.isRecoverySession()) {
     return <LoginView onSuccess={() => setIsAuthenticated(true)} />;
   }
 

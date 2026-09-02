@@ -131,6 +131,7 @@ export function normalizeAuthError(error: any): string {
 export class SupabaseAuthService {
   private currentProfile: UserProfile | null = null;
   private listeners: Set<() => void> = new Set();
+  private isPasswordRecoveryMode: boolean = false;
 
   constructor() {
     this.currentProfile = this.loadCachedSession();
@@ -164,6 +165,9 @@ export class SupabaseAuthService {
   private initSessionListener() {
     try {
       supabase.auth.onAuthStateChange(async (event: AuthChangeEvent, session: Session | null) => {
+        if (event === 'PASSWORD_RECOVERY') {
+          this.isPasswordRecoveryMode = true;
+        }
         if (session?.user) {
           await this.syncProfileFromSupabaseUser(session.user.id, session.user.email);
         } else if (!this.currentProfile) {
@@ -174,6 +178,38 @@ export class SupabaseAuthService {
     } catch (e) {
       console.warn('Supabase auth listener initialization warning:', e);
     }
+  }
+
+  public isRecoverySession(): boolean {
+    if (this.isPasswordRecoveryMode) return true;
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash || '';
+      const search = window.location.search || '';
+      const pathname = window.location.pathname || '';
+      if (
+        pathname.includes('/reset-password') ||
+        hash.includes('type=recovery') ||
+        search.includes('type=recovery')
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public clearRecoverySession(): void {
+    this.isPasswordRecoveryMode = false;
+    if (typeof window !== 'undefined') {
+      try {
+        if (window.location.hash || window.location.pathname.includes('/reset-password')) {
+          const cleanUrl = window.location.origin + window.location.pathname.replace('/reset-password', '');
+          window.history.replaceState({}, document.title, cleanUrl || '/');
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+    this.notify();
   }
 
   public subscribe(listener: () => void): () => void {
@@ -760,7 +796,7 @@ export class SupabaseAuthService {
   /**
    * Forgot Password Flow
    */
-  public async requestPasswordReset(email: string): Promise<{ success: boolean; message: string; testToken?: string }> {
+  public async requestPasswordReset(email: string): Promise<{ success: boolean; message: string }> {
     const genericMessage = 'If an account exists for this email, password-reset instructions will be sent.';
 
     if (!email || !validateEmailFormat(email)) {
@@ -768,18 +804,44 @@ export class SupabaseAuthService {
     }
 
     try {
+      const targetOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
       await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: `${targetOrigin}/reset-password`,
       });
     } catch (e) {
       // Intentionally log silently and return generic message
     }
 
-    return { success: true, message: genericMessage, testToken: 'test-reset-token-2026' };
+    return { success: true, message: genericMessage };
   }
 
-  public async resetPasswordWithToken(token: string, newPass: string, confirmPass: string): Promise<{ success: boolean; error?: string }> {
-    return this.changePassword(newPass, confirmPass);
+  public async completePasswordReset(
+    newPass: string,
+    confirmPass: string
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!this.isRecoverySession() && !this.isAuthenticated()) {
+      return {
+        success: false,
+        error: 'Password reset link is invalid or expired. Please request a new password reset link.',
+      };
+    }
+
+    const res = await this.changePassword(newPass, confirmPass);
+    if (res.success) {
+      this.clearRecoverySession();
+    }
+    return res;
+  }
+
+  public async resetPasswordWithToken(
+    arg1: string,
+    arg2?: string,
+    arg3?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    // Backwards compatibility overload handling
+    const newPass = arg2 !== undefined ? arg2 : arg1;
+    const confirmPass = arg3 !== undefined ? arg3 : arg2 || arg1;
+    return this.completePasswordReset(newPass, confirmPass);
   }
 
   public async completeFirstLoginPasswordChange(userId: string, newPass: string, confirmPass: string): Promise<{ success: boolean; error?: string }> {
