@@ -9,6 +9,7 @@ import {
   DollarSign,
   Sparkles,
   Edit,
+  Truck,
 } from 'lucide-react';
 import { store } from '../services/store';
 import { Invoice, InvoiceStatus, PaymentMethod } from '../types';
@@ -20,6 +21,8 @@ import { printDocument } from '../services/printService';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { showToast } from '../components/Toast';
 import { toWhatsAppNumber } from '../lib/phoneUtils';
+import { CreateEwayBillModal } from '../components/eway/CreateEwayBillModal';
+
 
 interface InvoicesViewProps {
   initialOpenCreate?: boolean;
@@ -47,6 +50,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [ewayBillModalOpen, setEwayBillModalOpen] = useState(false);
 
   // Record Payment Form
   const [payAmount, setPayAmount] = useState<number>(0);
@@ -54,6 +58,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   const [payRef, setPayRef] = useState('');
 
   const settings = store.getSettings();
+
 
   useEffect(() => {
     const updateData = () => setInvoices(store.getInvoices());
@@ -295,12 +300,23 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                         <Eye className="w-4 h-4" />
                       </button>
                       <button
+                        onClick={() => {
+                          setSelectedInvoice(inv);
+                          setEwayBillModalOpen(true);
+                        }}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800"
+                        title="Generate E-Way Bill"
+                      >
+                        <Truck className="w-4 h-4" />
+                      </button>
+                      <button
                         onClick={() => handleSendWhatsApp(inv)}
                         className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-emerald-50"
                         title="Send via WhatsApp"
                       >
                         <Share2 className="w-4 h-4" />
                       </button>
+
                       {inv.balanceAmount > 0 && (
                         <button
                           onClick={() => handleOpenPaymentModal(inv)}
@@ -479,6 +495,18 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
           </div>
         </Modal>
       )}
+
+      {/* CREATE E-WAY BILL MODAL */}
+      <CreateEwayBillModal
+        isOpen={ewayBillModalOpen}
+        onClose={() => setEwayBillModalOpen(false)}
+        invoice={selectedInvoice}
+        onSuccess={() => {
+          showToast('E-Way Bill generated successfully!', 'success');
+          if (onNavigateTab) onNavigateTab('eway');
+        }}
+      />
     </div>
   );
 };
+

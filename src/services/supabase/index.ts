@@ -15,5 +15,10 @@ export * from './notificationService';
 export * from './daybookService';
 export * from './financialAccountService';
 export * from './cashbookService';
+export * from './transporterService';
+export * from './vehicleService';
+export * from './locationService';
+export * from './ewayBillService';
+
 
 

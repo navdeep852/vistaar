@@ -19,6 +19,8 @@ import { CounterSaleView } from './views/CounterSaleView';
 import { ExpensesView } from './views/ExpensesView';
 import { DaybookView } from './views/DaybookView';
 import { CashbookView } from './views/CashbookView';
+import { EwayBillsView } from './views/EwayBillsView';
+
 
 
 
@@ -119,6 +121,9 @@ function MainAppContent() {
             activeTab={activeTab}
           />
         );
+      case 'eway':
+        return <EwayBillsView />;
+
       case 'customers':
         return (
           <CustomersView

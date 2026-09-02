@@ -792,4 +792,207 @@ export interface CashbookSummaryMetrics {
   accountSummaries: AccountBalanceSummary[];
 }
 
+// =============================================================================
+// E-WAY BILL COMPLIANCE MODULE INTERFACES
+// =============================================================================
+export type EwayBillDocumentType = 'INV' | 'BIL' | 'BOE' | 'OTH';
+export type SupplyType = 'OUTWARD' | 'INWARD';
+export type SubSupplyType = 'SUPPLY' | 'IMPORT' | 'EXPORT' | 'JOB_WORK' | 'FOR_OWN_USE' | 'OTHERS';
+export type TransactionType = 'REGULAR' | 'BILL_TO_SHIP_TO' | 'BILL_FROM_DISPATCH_FROM' | 'BOTH';
+export type TransportMode = 'ROAD' | 'RAIL' | 'AIR' | 'SHIP';
+export type VehicleType = 'REGULAR' | 'OVER_DIMENSIONAL_CARGO';
+export type EwayBillStatus =
+  | 'DRAFT'
+  | 'READY'
+  | 'GENERATION_PENDING'
+  | 'ACTIVE'
+  | 'EXPIRING_SOON'
+  | 'EXPIRED'
+  | 'CANCELLED'
+  | 'GENERATION_FAILED';
+
+export interface Transporter {
+  id: string;
+  workspaceId: string;
+  name: string;
+  gstinTransporterId: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  state?: string;
+  pincode?: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Vehicle {
+  id: string;
+  workspaceId: string;
+  vehicleNumber: string;
+  vehicleType: VehicleType;
+  transporterId?: string;
+  transporterName?: string;
+  ownerName?: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type BusinessLocationType = 'REGISTERED' | 'BRANCH' | 'WAREHOUSE' | 'GODOWN' | 'FACTORY' | 'OTHER';
+
+export interface BusinessLocation {
+  id: string;
+  workspaceId: string;
+  locationType: BusinessLocationType;
+  locationName: string;
+  gstin?: string;
+  tradeName?: string;
+  address: string;
+  city?: string;
+  state: string;
+  pincode: string;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EwayBillItem {
+  id: string;
+  workspaceId: string;
+  ewayBillId: string;
+  invoiceItemId?: string;
+  productId?: string;
+  productName: string;
+  hsnCode: string;
+  quantity: number;
+  unit: string;
+  taxableValue: number;
+  cgstRate?: number;
+  cgstAmount?: number;
+  sgstRate?: number;
+  sgstAmount?: number;
+  igstRate?: number;
+  igstAmount?: number;
+  cessRate?: number;
+  cessAmount?: number;
+  createdAt?: string;
+}
+
+export interface EwayBillEvent {
+  id: string;
+  workspaceId: string;
+  ewayBillId: string;
+  eventType:
+    | 'CREATED'
+    | 'VALIDATED'
+    | 'GENERATION_REQUESTED'
+    | 'GENERATED'
+    | 'GENERATION_FAILED'
+    | 'VEHICLE_UPDATED'
+    | 'VALIDITY_EXTENDED'
+    | 'CANCEL_REQUESTED'
+    | 'CANCELLED'
+    | 'EXPIRED';
+  oldStatus?: string;
+  newStatus: string;
+  performedBy?: string;
+  eventTime: string;
+  remarks?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface EwayBill {
+  id: string;
+  workspaceId: string;
+  invoiceId?: string;
+  ewayBillNumber?: string;
+  documentType: EwayBillDocumentType;
+  documentNumber: string;
+  documentDate: string;
+  supplyType: SupplyType;
+  subSupplyType: SubSupplyType;
+  transactionType: TransactionType;
+
+  // Origin / Dispatch From
+  fromGstin?: string;
+  fromTradeName: string;
+  fromAddress: string;
+  fromPlace?: string;
+  fromState: string;
+  fromPincode: string;
+
+  // Destination / Bill To & Ship To
+  toGstin?: string;
+  toTradeName: string;
+  toAddress: string;
+  toPlace?: string;
+  toState: string;
+  toPincode: string;
+  billToGstin?: string;
+  shipToGstin?: string;
+
+  // Values
+  totalTaxableValue: number;
+  cgstAmount: number;
+  sgstAmount: number;
+  igstAmount: number;
+  cessAmount: number;
+  totalInvoiceValue: number;
+
+  // Transportation
+  transportMode: TransportMode;
+  transporterId?: string;
+  transporterName?: string;
+  transporterGstin?: string;
+  vehicleNumber?: string;
+  vehicleType?: VehicleType;
+  transportDocumentNumber?: string;
+  transportDocumentDate?: string;
+  approxDistanceKm: number;
+
+  // Timestamps & Status
+  generatedAt?: string;
+  validFrom?: string;
+  validUntil?: string;
+  status: EwayBillStatus;
+
+  cancelledAt?: string;
+  cancellationReason?: string;
+  cancellationRemarks?: string;
+
+  governmentReference?: string;
+  lastApiStatus?: string;
+  lastApiErrorCode?: string;
+  lastApiErrorMessage?: string;
+
+  items?: EwayBillItem[];
+  events?: EwayBillEvent[];
+
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EwayBillEligibilityResult {
+  required: boolean;
+  reason: string;
+  warnings: string[];
+  blockingErrors: string[];
+  approxDistanceKm?: number;
+  suggestedValidityHours?: number;
+}
+
+export interface EwayBillFilterOptions {
+  search?: string;
+  status?: string;
+  startDate?: string;
+  endDate?: string;
+  transportMode?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+
 

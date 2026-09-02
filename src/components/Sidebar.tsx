@@ -83,11 +83,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       items: [
         { id: 'quotations', label: 'Quotations', icon: FileText },
         { id: 'invoices', label: 'Invoices', icon: Receipt },
+        { id: 'eway', label: 'E-Way Bills', icon: Truck },
         { id: 'customers', label: 'Customers', icon: Users },
         { id: 'udhari', label: 'Udhari Ledger', icon: Scale },
         { id: 'payments', label: 'Payments', icon: CreditCard },
       ],
     },
+
     {
       title: 'INVENTORY',
       items: [

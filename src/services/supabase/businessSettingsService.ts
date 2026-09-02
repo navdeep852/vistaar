@@ -87,6 +87,11 @@ export class SupabaseBusinessSettingsService {
     }
   }
 
+  public async getBusinessSettings(): Promise<{ success: boolean; data?: any; error?: string }> {
+    return this.getSettings();
+  }
+
+
   public async updateSettings(settings: any): Promise<{ success: boolean; data?: any; error?: string }> {
     const workspaceId = supabaseAuthService.getCurrentCompanyId();
     if (!workspaceId) {
