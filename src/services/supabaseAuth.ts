@@ -136,6 +136,53 @@ export class SupabaseAuthService {
   constructor() {
     this.currentProfile = this.loadCachedSession();
     this.initSessionListener();
+    this.handleAuthRedirect();
+  }
+
+  /**
+   * Explicit PKCE Code Exchange Handling for Redirects (Password Reset, Email Confirmation)
+   */
+  public async handleAuthRedirect(): Promise<void> {
+    if (typeof window === 'undefined' || !isSupabaseConfigured()) return;
+
+    try {
+      const url = new URL(window.location.href);
+      const code = url.searchParams.get('code');
+      const type = url.searchParams.get('type');
+      const isRecoveryUrl =
+        url.pathname.includes('/reset-password') ||
+        type === 'recovery' ||
+        url.hash.includes('type=recovery');
+
+      if (isRecoveryUrl) {
+        this.isPasswordRecoveryMode = true;
+      }
+
+      if (code) {
+        console.log('[AUTH_CODE_EXCHANGE] Exchanging PKCE authorization code for session...');
+        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) {
+          console.error('[AUTH_CODE_EXCHANGE_ERROR]', error.message);
+        } else {
+          console.log('[AUTH_CODE_EXCHANGE_SUCCESS] Auth session established successfully.');
+          if (data?.session?.user) {
+            await this.syncProfileFromSupabaseUser(data.session.user.id, data.session.user.email);
+          }
+          if (isRecoveryUrl || type === 'recovery') {
+            this.isPasswordRecoveryMode = true;
+          }
+        }
+
+        // Clean the code parameter (and type parameter if present) out of the URL so it isn't reprocessed or left visible
+        url.searchParams.delete('code');
+        if (type) url.searchParams.delete('type');
+        window.history.replaceState({}, document.title, url.toString());
+      }
+
+      this.notify();
+    } catch (e) {
+      console.warn('[AUTH_REDIRECT_WARNING] Exception during auth redirect handling:', e);
+    }
   }
 
   private loadCachedSession(): UserProfile | null {
@@ -189,7 +236,8 @@ export class SupabaseAuthService {
       if (
         pathname.includes('/reset-password') ||
         hash.includes('type=recovery') ||
-        search.includes('type=recovery')
+        search.includes('type=recovery') ||
+        search.includes('code=')
       ) {
         return true;
       }
@@ -201,7 +249,7 @@ export class SupabaseAuthService {
     this.isPasswordRecoveryMode = false;
     if (typeof window !== 'undefined') {
       try {
-        if (window.location.hash || window.location.pathname.includes('/reset-password')) {
+        if (window.location.hash || window.location.pathname.includes('/reset-password') || window.location.search.includes('type=recovery')) {
           const cleanUrl = window.location.origin + window.location.pathname.replace('/reset-password', '');
           window.history.replaceState({}, document.title, cleanUrl || '/');
         }

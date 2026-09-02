@@ -109,6 +109,7 @@ export const supabase = isSupabaseConfigured()
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
+        flowType: 'pkce',
       },
     })
   : createThrowingUnconfiguredClient();

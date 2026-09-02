@@ -47,6 +47,7 @@ function MainAppContent() {
   const { isWorkspaceActive } = useWorkspace();
 
   useEffect(() => {
+    supabaseAuthService.handleAuthRedirect();
     const unsubscribeAuth = supabaseAuthService.subscribe(() => {
       setIsAuthenticated(supabaseAuthService.isAuthenticated());
     });
