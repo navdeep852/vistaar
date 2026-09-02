@@ -87,8 +87,11 @@ export class SupabaseBusinessSettingsService {
     }
   }
 
-  public async updateSettings(settings: any): Promise<{ success: boolean; error?: string }> {
+  public async updateSettings(settings: any): Promise<{ success: boolean; data?: any; error?: string }> {
     const workspaceId = supabaseAuthService.getCurrentCompanyId();
+    if (!workspaceId) {
+      return { success: false, error: 'No active workspace found.' };
+    }
 
     if (settings.phone) {
       const pRes = validateIndianPhoneNumber(settings.phone, false);
@@ -109,22 +112,23 @@ export class SupabaseBusinessSettingsService {
     }
 
     try {
-      const { error } = await supabase
+      const payload = {
+        workspace_id: workspaceId,
+        ...sanitizeSettingsPayload(settings),
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data, error } = await supabase
         .from('business_settings')
-        .upsert(
-          {
-            workspace_id: workspaceId,
-            ...sanitizeSettingsPayload(settings),
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'workspace_id' }
-        );
+        .upsert(payload, { onConflict: 'workspace_id' })
+        .select()
+        .single();
 
       if (error) {
         const errStr = handleSupabaseError(error, 'updateSettings');
         return { success: false, error: errStr };
       }
-      return { success: true };
+      return { success: true, data };
     } catch (err: any) {
       const errStr = handleSupabaseError(err, 'updateSettings');
       return { success: false, error: errStr };

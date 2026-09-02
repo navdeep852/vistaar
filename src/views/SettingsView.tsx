@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { businessSettingsService } from '../services/supabase';
 import { supabaseAuthService as auth } from '../services/supabaseAuth';
+import { store } from '../services/store';
 import { showToast } from '../components/Toast';
 import { DocumentRenderer } from '../components/DocumentRenderer';
 import { DOCUMENT_FONTS, FontFamily } from '../types/template';
@@ -46,17 +47,17 @@ import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPho
 export const SettingsView: React.FC = () => {
   const [currentUser, setCurrentUser] = useState(auth.getUser());
   const [formData, setFormData] = useState<any>({
-    legal_name: 'VISTAAR Tech Pvt Ltd',
-    businessName: 'VISTAAR Tech Pvt Ltd',
-    phone: '+91 98765 43210',
+    legal_name: '',
+    businessName: '',
+    phone: '',
     alternate_phone: '',
     alternatePhone: '',
-    email: 'contact@vistaar.in',
-    gstin: '27AAAAA0000A1Z5',
-    address: 'Plot 42, Tech Park Sector 5',
-    city: 'Mumbai',
-    state: 'Maharashtra',
-    pincode: '400001',
+    email: '',
+    gstin: '',
+    address: '',
+    city: '',
+    state: '',
+    pincode: '',
     business_type: 'Private Limited',
     businessType: 'Private Limited',
     owner_name: '',
@@ -127,103 +128,6 @@ export const SettingsView: React.FC = () => {
     'profile' | 'info' | 'branding' | 'bank' | 'defaults' | 'employees' | 'security' | 'terms' | 'preview'
   >('profile');
 
-  useEffect(() => {
-    const loadSettings = async () => {
-      const { data } = await businessSettingsService.getSettings();
-      if (data) {
-        const legalName = data.legal_name || data.businessName || '';
-        const altPhone = data.alternate_phone || data.alternatePhone || '';
-        const bType = data.business_type || data.businessType || 'Private Limited';
-        const oName = data.owner_name || data.ownerName || '';
-        const rNum = data.reg_number || data.regNumber || '';
-        const lUrl = data.logo_url || data.logoUrl || '';
-        const lScale = data.logo_scale ?? data.logoScale ?? 1;
-        const lAlign = data.logo_alignment || data.logoAlignment || 'left';
-        const sUrl = data.signature_url || data.signatureUrl || '';
-        const sScale = data.signature_scale ?? data.signatureScale ?? 1;
-        const stUrl = data.stamp_url || data.stampUrl || '';
-        const stScale = data.stamp_scale ?? data.stampScale ?? 1;
-        const bDetails = data.bank_details || data.bankDetails || {
-          bankName: '',
-          accountHolder: '',
-          accountNo: '',
-          ifscCode: '',
-          branch: '',
-          upiId: '',
-        };
-        const showBankInv = data.show_bank_on_invoice ?? data.showBankDetailsOnInvoice ?? true;
-        const showBankQuot = data.show_bank_on_quotation ?? data.showBankDetailsOnQuotation ?? true;
-        const taxMode = data.default_tax_mode || data.defaultTaxMode || 'Exclusive';
-        const invPrefix = data.invoice_prefix || data.invoicePrefix || 'INV-';
-        const quotPrefix = data.quotation_prefix || data.quotationPrefix || 'QT-';
-        const payTerms = data.default_payment_terms || data.defaultPaymentTerms || 'Net 15';
-        const quotValid = data.default_quotation_validity || data.defaultQuotationValidity || '15 Days';
-        const font = data.default_font || data.defaultFont || 'Inter';
-        const orient = data.default_orientation || data.defaultOrientation || 'portrait';
-        const invTerms = data.default_invoice_terms || data.defaultInvoiceTerms || data.terms_and_conditions || data.termsAndConditions || '';
-        const quotTerms = data.default_quotation_terms || data.defaultQuotationTerms || '';
-        const termsCond = data.terms_and_conditions || data.termsAndConditions || data.default_invoice_terms || data.defaultInvoiceTerms || '';
-
-        setFormData((prev: any) => ({
-          ...prev,
-          ...data,
-          legal_name: legalName,
-          businessName: legalName,
-          legalName: legalName,
-          alternate_phone: altPhone,
-          alternatePhone: altPhone,
-          business_type: bType,
-          businessType: bType,
-          owner_name: oName,
-          ownerName: oName,
-          reg_number: rNum,
-          regNumber: rNum,
-          logo_url: lUrl,
-          logoUrl: lUrl,
-          logo_scale: lScale,
-          logoScale: lScale,
-          logo_alignment: lAlign,
-          logoAlignment: lAlign,
-          signature_url: sUrl,
-          signatureUrl: sUrl,
-          signature_scale: sScale,
-          signatureScale: sScale,
-          stamp_url: stUrl,
-          stampUrl: stUrl,
-          stamp_scale: stScale,
-          stampScale: stScale,
-          bank_details: bDetails,
-          bankDetails: bDetails,
-          show_bank_on_invoice: showBankInv,
-          showBankDetailsOnInvoice: showBankInv,
-          show_bank_on_quotation: showBankQuot,
-          showBankDetailsOnQuotation: showBankQuot,
-          default_tax_mode: taxMode,
-          defaultTaxMode: taxMode,
-          invoice_prefix: invPrefix,
-          invoicePrefix: invPrefix,
-          quotation_prefix: quotPrefix,
-          quotationPrefix: quotPrefix,
-          default_payment_terms: payTerms,
-          defaultPaymentTerms: payTerms,
-          default_quotation_validity: quotValid,
-          defaultQuotationValidity: quotValid,
-          default_font: font,
-          defaultFont: font,
-          default_orientation: orient,
-          defaultOrientation: orient,
-          default_invoice_terms: invTerms,
-          defaultInvoiceTerms: invTerms,
-          default_quotation_terms: quotTerms,
-          defaultQuotationTerms: quotTerms,
-          terms_and_conditions: termsCond,
-          termsAndConditions: termsCond,
-        }));
-      }
-    };
-    loadSettings();
-  }, []);
-
   // Personal Profile State
   const [profileName, setProfileName] = useState('');
   const [profilePhone, setProfilePhone] = useState('');
@@ -262,8 +166,113 @@ export const SettingsView: React.FC = () => {
   const [activeSessions, setActiveSessions] = useState(auth.getActiveSessions());
   const [loginLogs, setLoginLogs] = useState(auth.getLoginActivity());
 
+  const loadSettings = async () => {
+    const { data, success } = await businessSettingsService.getSettings();
+    if (success && data) {
+      const legalName = data.legal_name || data.businessName || '';
+      const altPhone = data.alternate_phone || data.alternatePhone || '';
+      const bType = data.business_type || data.businessType || 'Private Limited';
+      const oName = data.owner_name || data.ownerName || '';
+      const rNum = data.reg_number || data.regNumber || '';
+      const lUrl = data.logo_url || data.logoUrl || '';
+      const lScale = data.logo_scale ?? data.logoScale ?? 1;
+      const lAlign = data.logo_alignment || data.logoAlignment || 'left';
+      const sUrl = data.signature_url || data.signatureUrl || '';
+      const sScale = data.signature_scale ?? data.signatureScale ?? 1;
+      const stUrl = data.stamp_url || data.stampUrl || '';
+      const stScale = data.stamp_scale ?? data.stampScale ?? 1;
+      const bDetails = data.bank_details || data.bankDetails || {
+        bankName: '',
+        accountHolder: '',
+        accountNo: '',
+        ifscCode: '',
+        branch: '',
+        upiId: '',
+      };
+      const showBankInv = data.show_bank_on_invoice ?? data.showBankDetailsOnInvoice ?? true;
+      const showBankQuot = data.show_bank_on_quotation ?? data.showBankDetailsOnQuotation ?? true;
+      const taxMode = data.default_tax_mode || data.defaultTaxMode || 'Exclusive';
+      const invPrefix = data.invoice_prefix || data.invoicePrefix || 'INV-';
+      const quotPrefix = data.quotation_prefix || data.quotationPrefix || 'QT-';
+      const payTerms = data.default_payment_terms || data.defaultPaymentTerms || 'Net 15';
+      const quotValid = data.default_quotation_validity || data.defaultQuotationValidity || '15 Days';
+      const font = data.default_font || data.defaultFont || 'Inter';
+      const orient = data.default_orientation || data.defaultOrientation || 'portrait';
+      const invTerms = data.default_invoice_terms || data.defaultInvoiceTerms || data.terms_and_conditions || data.termsAndConditions || '';
+      const quotTerms = data.default_quotation_terms || data.defaultQuotationTerms || '';
+      const termsCond = data.terms_and_conditions || data.termsAndConditions || data.default_invoice_terms || data.defaultInvoiceTerms || '';
+
+      const normalized = {
+        ...data,
+        legal_name: legalName,
+        businessName: legalName,
+        legalName: legalName,
+        phone: data.phone || '',
+        email: data.email || '',
+        address: data.address || '',
+        city: data.city || '',
+        state: data.state || '',
+        pincode: data.pincode || '',
+        gstin: data.gstin || '',
+        pan: data.pan || '',
+        website: data.website || '',
+        alternate_phone: altPhone,
+        alternatePhone: altPhone,
+        business_type: bType,
+        businessType: bType,
+        owner_name: oName,
+        ownerName: oName,
+        reg_number: rNum,
+        regNumber: rNum,
+        logo_url: lUrl,
+        logoUrl: lUrl,
+        logo_scale: lScale,
+        logoScale: lScale,
+        logo_alignment: lAlign,
+        logoAlignment: lAlign,
+        signature_url: sUrl,
+        signatureUrl: sUrl,
+        signature_scale: sScale,
+        signatureScale: sScale,
+        stamp_url: stUrl,
+        stampUrl: stUrl,
+        stamp_scale: stScale,
+        stampScale: stScale,
+        bank_details: bDetails,
+        bankDetails: bDetails,
+        show_bank_on_invoice: showBankInv,
+        showBankDetailsOnInvoice: showBankInv,
+        show_bank_on_quotation: showBankQuot,
+        showBankDetailsOnQuotation: showBankQuot,
+        default_tax_mode: taxMode,
+        defaultTaxMode: taxMode,
+        invoice_prefix: invPrefix,
+        invoicePrefix: invPrefix,
+        quotation_prefix: quotPrefix,
+        quotationPrefix: quotPrefix,
+        default_payment_terms: payTerms,
+        defaultPaymentTerms: payTerms,
+        default_quotation_validity: quotValid,
+        defaultQuotationValidity: quotValid,
+        default_font: font,
+        defaultFont: font,
+        default_orientation: orient,
+        defaultOrientation: orient,
+        default_invoice_terms: invTerms,
+        defaultInvoiceTerms: invTerms,
+        default_quotation_terms: quotTerms,
+        defaultQuotationTerms: quotTerms,
+        terms_and_conditions: termsCond,
+        termsAndConditions: termsCond,
+      };
+
+      setFormData(normalized);
+      store.updateSettings(normalized);
+    }
+  };
+
   useEffect(() => {
-    const updateData = () => {
+    const updateData = async () => {
       const usr = auth.getUser();
       setCurrentUser(usr);
       if (usr) {
@@ -272,10 +281,13 @@ export const SettingsView: React.FC = () => {
         setProfileDept(usr.department || '');
         setProfileDesig(usr.designation || '');
       }
-      setEmployees(auth.getEmployees());
+      const emps = await auth.loadEmployees();
+      setEmployees(emps);
       setActiveSessions(auth.getActiveSessions());
       setLoginLogs(auth.getLoginActivity());
+      await loadSettings();
     };
+
     updateData();
     return auth.subscribe(updateData);
   }, []);
@@ -313,8 +325,12 @@ export const SettingsView: React.FC = () => {
       phone: formData.phone ? normalizeIndianPhoneNumber(formData.phone) : '',
       alternate_phone: altPhone ? normalizeIndianPhoneNumber(altPhone) : '',
     };
+
     const res = await businessSettingsService.updateSettings(cleanFormData);
     if (res.success) {
+      // Reload authoritative database state directly from Supabase (Requirement #8)
+      await loadSettings();
+      store.updateSettings(cleanFormData);
       showToast('Business Profile & Document Branding saved successfully!', 'success');
     } else {
       showToast(res.error || 'Failed to save settings.', 'error');
@@ -632,81 +648,80 @@ export const SettingsView: React.FC = () => {
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">Your personal user account identity details</p>
               </div>
 
-              <form onSubmit={handleSavePersonalProfile} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                      Full Name *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={profileName}
-                      onChange={(e) => setProfileName(e.target.value)}
-                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                      Email Address (Account ID)
-                    </label>
-                    <input
-                      type="email"
-                      disabled
-                      value={currentUser?.email || ''}
-                      className="w-full px-3.5 py-2.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-500 dark:text-slate-400 cursor-not-allowed"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <PhoneInput
-                    id="profile-phone"
-                    label="Phone Number"
-                    value={profilePhone}
-                    onChange={(val) => {
-                      setProfilePhone(val);
-                      if (profilePhoneError) setProfilePhoneError('');
-                    }}
-                    error={profilePhoneError}
-                    placeholder="9876543210"
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={profileName}
+                    onChange={(e) => setProfileName(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold"
                   />
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                      Department
-                    </label>
-                    <input
-                      type="text"
-                      value={profileDept}
-                      onChange={(e) => setProfileDept(e.target.value)}
-                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                      Designation
-                    </label>
-                    <input
-                      type="text"
-                      value={profileDesig}
-                      onChange={(e) => setProfileDesig(e.target.value)}
-                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold"
-                    />
-                  </div>
                 </div>
 
-                <div className="flex justify-end pt-2">
-                  <button
-                    type="submit"
-                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer"
-                  >
-                    Save Personal Profile
-                  </button>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Email Address (Account ID)
+                  </label>
+                  <input
+                    type="email"
+                    disabled
+                    value={currentUser?.email || ''}
+                    className="w-full px-3.5 py-2.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-500 dark:text-slate-400 cursor-not-allowed"
+                  />
                 </div>
-              </form>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <PhoneInput
+                  id="profile-phone"
+                  label="Phone Number"
+                  value={profilePhone}
+                  onChange={(val) => {
+                    setProfilePhone(val);
+                    if (profilePhoneError) setProfilePhoneError('');
+                  }}
+                  error={profilePhoneError}
+                  placeholder="9876543210"
+                />
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Department
+                  </label>
+                  <input
+                    type="text"
+                    value={profileDept}
+                    onChange={(e) => setProfileDept(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Designation
+                  </label>
+                  <input
+                    type="text"
+                    value={profileDesig}
+                    onChange={(e) => setProfileDesig(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={handleSavePersonalProfile}
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer"
+                >
+                  Save Personal Profile
+                </button>
+              </div>
             </div>
           </div>
         )}

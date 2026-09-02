@@ -930,18 +930,48 @@ export class SupabaseAuthService {
 
     if (isSupabaseConfigured()) {
       try {
-        await supabase
+        const updatePayload: Record<string, any> = {};
+        if (updates.name !== undefined) updatePayload.name = updates.name;
+        if (updates.phone !== undefined) updatePayload.phone = updates.phone;
+        if (updates.department !== undefined) updatePayload.department = updates.department;
+        if (updates.designation !== undefined) updatePayload.designation = updates.designation;
+        if (updates.avatarUrl !== undefined) updatePayload.avatar_url = updates.avatarUrl;
+
+        const { data, error } = await supabase
           .from('profiles')
-          .update({
-            name: updates.name,
-            phone: updates.phone,
-            department: updates.department,
-            designation: updates.designation,
-            avatar_url: updates.avatarUrl,
-          })
-          .eq('id', uid);
+          .update(updatePayload)
+          .eq('id', uid)
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Failed to update profile in Supabase:', error);
+          return { success: false, error: normalizeAuthError(error) };
+        }
+
+        if (data && (this.currentProfile?.id === uid || !targetUserId)) {
+          this.currentProfile = {
+            ...this.currentProfile,
+            id: data.id,
+            name: data.name || this.currentProfile?.name || '',
+            email: data.email || this.currentProfile?.email || '',
+            businessName: this.currentProfile?.businessName || 'VISTAAR Business Solutions',
+            companyId: data.workspace_id || this.currentProfile?.companyId || '',
+            role: data.role || this.currentProfile?.role || 'owner',
+            phone: data.phone || '',
+            department: data.department || '',
+            designation: data.designation || '',
+            employeeId: data.employee_id || this.currentProfile?.employeeId || 'VST-00001',
+            status: data.status || 'Active',
+            avatarUrl: data.avatar_url !== undefined ? data.avatar_url : (this.currentProfile?.avatarUrl || ''),
+          };
+          this.saveSessionToStorage(this.currentProfile);
+          this.notify();
+        }
+        return { success: true };
       } catch (err: any) {
-        console.warn('Failed to update profile in Supabase:', err);
+        console.error('Failed to update profile in Supabase:', err);
+        return { success: false, error: normalizeAuthError(err) };
       }
     }
 
@@ -964,8 +994,46 @@ export class SupabaseAuthService {
   /**
    * Employee Management Methods
    */
+  private employees: UserAccount[] = [];
+
+  public async loadEmployees(): Promise<UserAccount[]> {
+    const workspaceId = this.getCurrentCompanyId();
+    if (!workspaceId || !isSupabaseConfigured()) {
+      return this.employees;
+    }
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('workspace_id', workspaceId);
+
+      if (!error && data) {
+        this.employees = data.map((p: any) => ({
+          id: p.id,
+          email: p.email || '',
+          name: p.name || '',
+          companyId: p.workspace_id || workspaceId,
+          role: p.role || 'employee',
+          phone: p.phone || '',
+          department: p.department || '',
+          designation: p.designation || '',
+          employeeId: p.employee_id || `VST-${p.id.slice(0, 5)}`,
+          status: p.status || 'Active',
+          avatarUrl: p.avatar_url || '',
+          passwordHash: '',
+          createdAt: p.created_at || new Date().toISOString(),
+          updatedAt: p.updated_at || new Date().toISOString(),
+        }));
+        this.notify();
+      }
+    } catch (err) {
+      console.error('Error fetching employees:', err);
+    }
+    return this.employees;
+  }
+
   public getEmployees(): UserAccount[] {
-    return [];
+    return this.employees;
   }
 
   public async createEmployee(empData: any): Promise<{ success: boolean; error?: string; empId?: string; tempPass?: string }> {
@@ -995,6 +1063,8 @@ export class SupabaseAuthService {
         ]).select().single();
 
         if (error) return { success: false, error: normalizeAuthError(error) };
+        
+        await this.loadEmployees();
         return {
           success: true,
           empId: data.employee_id,
@@ -1017,6 +1087,7 @@ export class SupabaseAuthService {
       try {
         const { error } = await supabase.from('profiles').update({ status }).eq('id', empId);
         if (error) return { success: false, error: normalizeAuthError(error) };
+        await this.loadEmployees();
         return { success: true };
       } catch (err: any) {
         return { success: false, error: normalizeAuthError(err) };
