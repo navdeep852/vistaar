@@ -351,6 +351,11 @@ class StoreService {
     return this.state.customers;
   }
 
+  public setCustomers(customers: Customer[]) {
+    this.state.customers = customers;
+    this.saveToStorage();
+  }
+
   public addCustomer(customer: Omit<Customer, 'id' | 'createdAt' | 'updatedAt'>): Customer {
     const newCustomer: Customer = {
       ...customer,

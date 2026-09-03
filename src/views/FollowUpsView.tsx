@@ -27,6 +27,8 @@ import {
   Invoice,
 } from '../types';
 import { Modal } from '../components/Modal';
+import { CustomerSelect } from '../components/CustomerSelect';
+import { customerService } from '../services/supabase/customerService';
 import { showToast } from '../components/Toast';
 import { generateHumanFollowUpMessage, MessageTone } from '../services/messageGenerator';
 import { normalizeIndianPhoneNumber, formatIndianPhoneNumber, toWhatsAppNumber } from '../lib/phoneUtils';
@@ -81,6 +83,15 @@ export const FollowUpsView: React.FC = () => {
       setInvoices(store.getInvoices());
     };
     updateData();
+
+    // Async hydration check for customer list
+    customerService.getCustomers().then((res) => {
+      if (res.data && res.data.length > 0) {
+        store.setCustomers(res.data);
+        setCustomers(res.data);
+      }
+    });
+
     return store.subscribe(updateData);
   }, []);
 
@@ -106,6 +117,7 @@ export const FollowUpsView: React.FC = () => {
     setGeneratedMessage(msg);
   }, [
     selectedCustomerId,
+    customers,
     topic,
     tone,
     variationIndex,
@@ -115,8 +127,16 @@ export const FollowUpsView: React.FC = () => {
   ]);
 
   const handleOpenCreateModal = () => {
-    if (customers.length > 0 && !selectedCustomerId) {
-      setSelectedCustomerId(customers[0].id);
+    let currentCustomers = customers;
+    if (currentCustomers.length === 0) {
+      currentCustomers = store.getCustomers();
+      if (currentCustomers.length > 0) {
+        setCustomers(currentCustomers);
+      }
+    }
+
+    if (currentCustomers.length > 0 && !selectedCustomerId) {
+      setSelectedCustomerId(currentCustomers[0].id);
     }
     setVariationIndex(0);
     setCreateModalOpen(true);
@@ -404,18 +424,12 @@ export const FollowUpsView: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">Customer *</label>
-              <select
+              <CustomerSelect
                 required
-                value={selectedCustomerId}
-                onChange={(e) => setSelectedCustomerId(e.target.value)}
-                className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
-              >
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({renderMaskedPhone(c.phone)})
-                  </option>
-                ))}
-              </select>
+                selectedCustomerId={selectedCustomerId}
+                onSelectCustomer={(cust) => setSelectedCustomerId(cust ? cust.id : '')}
+                customers={customers}
+              />
             </div>
 
             <div>
