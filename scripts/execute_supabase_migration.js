@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://kluxsykmnijvkqxelba.supabase.co';
+const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://kluxsykimnjivkqxelba.supabase.co';
 const supabaseKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_j5tuLPC3iQO4pQHU0BeyYQ_CH_7Ls6x';
 
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -23,7 +23,7 @@ async function executeMigration() {
   console.log('✅ Seed file loaded successfully.');
   console.log('2. Live database seeding instructions:');
   console.log('   - Copy the SQL contents of supabase/migrations/003_seed_initial_data.sql');
-  console.log('   - Paste and run it in your Supabase SQL Editor (https://supabase.com/dashboard/project/kluxsykmnijvkqxelba)');
+  console.log('   - Paste and run it in your Supabase SQL Editor (https://supabase.com/dashboard/project/kluxsykimnjivkqxelba)');
   console.log('\n=============================================================================');
   console.log('PHASE 3B SEED FILE GENERATED AND READY FOR EXECUTING IN SUPABASE SQL EDITOR.');
   console.log('=============================================================================\n');

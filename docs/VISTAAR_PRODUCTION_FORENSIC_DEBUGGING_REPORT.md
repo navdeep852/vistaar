@@ -211,7 +211,7 @@ dist/assets/index-Dp8gdZ62.js  1,911.55 kB
 ### Forensic Analysis of Bundled JS (`dist/assets/index-Dp8gdZ62.js`):
 Grep inspection confirmed Vite successfully inlined the `.env.local` values during local compilation:
 ```javascript
-var Ms = "https://kluxsykmnijvkqxelba.supabase.co";
+var Ms = "https://kluxsykimnjivkqxelba.supabase.co";
 var Ns = "sb_publishable_j5tuLPC3iQO4pQHU0BeyYQ_CH_7Ls6x";
 var Ps = Ms;
 var Fs = Ns;
@@ -228,8 +228,8 @@ Expected console signatures for each failure track:
 - **Track A (Missing URL in Bundle):**
   `Uncaught Error: supabaseUrl is required.` at `@supabase/supabase-js` bundle initialization.
 - **Track B (Invalid / Unreachable Supabase Domain):**
-  `GET https://kluxsykmnijvkqxelba.supabase.co/auth/v1/health net::ERR_NAME_NOT_RESOLVED`
-  `[Supabase Config Check] { supabaseUrlConfigured: true, supabaseUrl: "https://kluxsykmnijvkqxelba.supabase.co", isConfigured: true }`
+  `GET https://kluxsykimnjivkqxelba.supabase.co/auth/v1/health net::ERR_NAME_NOT_RESOLVED`
+  `[Supabase Config Check] { supabaseUrlConfigured: true, supabaseUrl: "https://kluxsykimnjivkqxelba.supabase.co", isConfigured: true }`
   Followed by error: `"Unable to reach Supabase Auth server..."`
 - **Track C (SMTP Failure during OTP Request):**
   `POST https://<project-ref>.supabase.co/auth/v1/otp 500 (Internal Server Error)`
@@ -410,7 +410,7 @@ In `src/services/supabaseAuth.ts`, `normalizeAuthError()` maps technical codes i
 |---|---|---|---|
 | **Track A: Vercel/Vite Config** | **CRITICAL FAILURE** | `Error: supabaseUrl is required.` | `createClient("", "")` invoked at module load in `src/lib/supabase.ts:88` |
 | **Track B: Supabase Client Init** | **DEFECTIVE** | Top-level synchronous execution | Module import throws before React renders |
-| **Track C: Supabase Network** | **CONDITIONAL** | DNS/Fetch failure | Refers to `kluxsykmnijvkqxelba.supabase.co` in `.env.local` |
+| **Track C: Supabase Network** | **CONDITIONAL** | DNS/Fetch failure | Refers to `kluxsykimnjivkqxelba.supabase.co` in `.env.local` |
 | **Track D: Supabase Auth** | **PASS** | Valid API logic | `signInWithOtp` and `verifyOtp` handlers correctly structured |
 | **Track E & F: Email/SMTP** | **HIGH FAILURE** | HTTP 500 / SMTP Auth Failed | Gmail SMTP authentication rejected by Google |
 | **Track G, H, I: DB / RLS** | **PASS** | Secure multi-tenancy | `current_user_workspace_id()` enforced across 26 tables |

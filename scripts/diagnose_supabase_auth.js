@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import dns from 'dns/promises';
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://kluxsykmnijvkqxelba.supabase.co';
+const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://kluxsykimnjivkqxelba.supabase.co';
 const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_j5tuLPC3iQO4pQHU0BeyYQ_CH_7Ls6x';
 
 console.log('=== VISTAAR SUPABASE AUTH DIAGNOSTIC ===');

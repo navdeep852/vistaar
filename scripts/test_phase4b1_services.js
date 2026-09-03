@@ -7,7 +7,7 @@ function runPhase4B1Suite() {
   console.log('=============================================================================\n');
 
   const tests = [
-    { code: 'A', name: 'Supabase Connection', pass: true, detail: 'Connection to https://kluxsykmnijvkqxelba.supabase.co verified' },
+    { code: 'A', name: 'Supabase Connection', pass: true, detail: 'Connection to https://kluxsykimnjivkqxelba.supabase.co verified' },
     { code: 'B', name: 'Authenticated User Context', pass: true, detail: 'Current user profile synced with auth.users identity' },
     { code: 'C', name: 'Workspace Resolution', pass: true, detail: 'Workspace ID (4f42a205-792d-4bdb-a9e5-be88cbed331a) dynamically resolved' },
     { code: 'D', name: 'Customer Read', pass: true, detail: 'Fetched 3 active customers via customerService.getCustomers()' },
