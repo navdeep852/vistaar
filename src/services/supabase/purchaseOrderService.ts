@@ -355,13 +355,33 @@ export class PurchaseOrderService {
     }
 
     try {
-      const { data: poRecord, error: poErr } = await supabase
+      let poErr: any = null;
+      let poRecord: any = null;
+
+      const res1 = await supabase
         .from('purchase_orders')
         .insert([poPayload])
         .select()
         .single();
 
-      if (poErr) {
+      poRecord = res1.data;
+      poErr = res1.error;
+
+      // Handle rare concurrent 23505 collision by regenerating po_number once
+      if (poErr && (poErr.code === '23505' || String(poErr.message).includes('duplicate key'))) {
+        console.warn(`[PO_CONCURRENCY_RETRY] Collision detected on ${poNumber}. Regenerating PO number and retrying insert...`);
+        const retryPoNo = await this.generatePoNumber();
+        poPayload.po_number = retryPoNo;
+        const res2 = await supabase
+          .from('purchase_orders')
+          .insert([poPayload])
+          .select()
+          .single();
+        poRecord = res2.data;
+        poErr = res2.error;
+      }
+
+      if (poErr || !poRecord) {
         return { error: handleSupabaseError(poErr, 'createPurchaseOrder') };
       }
 
@@ -403,7 +423,7 @@ export class PurchaseOrderService {
 
     const existingPo = existingPoRes.data;
 
-    // APPROVED PO LOCK: Direct rate/item edits forbidden on locked POs
+    // APPROVED/LOCKED PO LOCK: Direct rate/item edits forbidden on locked POs
     const lockedStatuses: PurchaseOrderStatus[] = [
       'SENT',
       'CONFIRMED',
@@ -415,19 +435,183 @@ export class PurchaseOrderService {
 
     if (lockedStatuses.includes(existingPo.status)) {
       return {
-        error: `Purchase Order ${existingPo.poNumber} is locked (${existingPo.status}). Direct modifications are forbidden.`,
+        error: `This Purchase Order is locked (${existingPo.status}) and cannot be edited.`,
       };
     }
 
-    if (isSupabaseConfigured()) {
+    if (!items || items.length === 0) {
+      return { error: 'Purchase Order must contain at least one line item.' };
+    }
+
+    // SERVER-SIDE PROCUREMENT RATE GOVERNANCE & CATALOGUE VERIFICATION
+    const catIds = items.map((i) => i.supplierCatalogueItemId).filter(Boolean) as string[];
+    let cataloguePricesMap = new Map<string, number>();
+
+    if (catIds.length > 0 && isSupabaseConfigured()) {
       try {
-        await supabase.from('purchase_order_items').delete().eq('purchase_order_id', poId);
+        const { data: catRecords } = await supabase
+          .from('supplier_catalogue_items')
+          .select('id, purchase_price')
+          .in('id', catIds)
+          .eq('workspace_id', wsId);
+
+        if (catRecords) {
+          catRecords.forEach((cr: any) => {
+            cataloguePricesMap.set(cr.id, Number(cr.purchase_price) || 0);
+          });
+        }
       } catch (err) {
-        console.warn('Failed to clear old items before updating PO:', err);
+        console.warn('Failed to verify supplier catalogue prices from database:', err);
       }
     }
 
-    return this.createPurchaseOrder({ ...poData, poNumber: existingPo.poNumber }, items);
+    // Recalculate totals decimal-safely
+    let subtotal = 0;
+    let totalDiscount = 0;
+    let totalTaxable = 0;
+    let totalTax = 0;
+    let grandTotal = 0;
+
+    const mappedItemsPayload = items.map((it) => {
+      const qty = Math.max(0.001, Number(it.quantity) || 1);
+      let rate = Math.max(0, Number(it.unitPrice) || 0);
+      const catItemId = it.supplierCatalogueItemId || null;
+
+      // Rate Verification against Supplier Catalogue Source of Truth:
+      if (catItemId && cataloguePricesMap.has(catItemId)) {
+        rate = cataloguePricesMap.get(catItemId)!;
+      }
+
+      const grossAmount = qty * rate;
+
+      let discPercent = 0;
+      let discAmt = 0;
+
+      if (it.discountType === 'PERCENTAGE') {
+        discPercent = Number(it.discountValue || 0);
+        discAmt = (grossAmount * discPercent) / 100;
+      } else {
+        discAmt = Math.min(grossAmount, Number(it.discountValue || (it as any).discountAmount || 0));
+        discPercent = grossAmount > 0 ? (discAmt / grossAmount) * 100 : 0;
+      }
+
+      const taxable = Math.max(0, grossAmount - discAmt);
+      const taxRate = Number(it.taxRate || (it as any).gstRate || 0);
+      const taxAmt = (taxable * taxRate) / 100;
+      const cgst = Math.round((taxAmt / 2) * 100) / 100;
+      const sgst = Math.round((taxAmt / 2) * 100) / 100;
+      const lineTotal = taxable + taxAmt;
+
+      subtotal += grossAmount;
+      totalDiscount += discAmt;
+      totalTaxable += taxable;
+      totalTax += taxAmt;
+      grandTotal += lineTotal;
+
+      const customName = it.productName || it.itemName || it.description || 'Custom Item';
+
+      return {
+        workspace_id: wsId,
+        purchase_order_id: poId,
+        supplier_catalogue_item_id: catItemId,
+        product_id: it.productId || null,
+        product_name: customName,
+        part_number: it.productSku || (it as any).partNumber || null,
+        supplier_product_code: (it as any).supplierProductCode || null,
+        description: it.description || customName,
+        quantity: qty,
+        received_quantity: Number((it as any).received_quantity || (it as any).receivedQuantity || 0),
+        pending_quantity: Math.max(0, qty - Number((it as any).received_quantity || (it as any).receivedQuantity || 0)),
+        uom: it.unit || (it as any).uom || 'Pcs',
+        unit_price: rate,
+        discount_percent: Math.round(discPercent * 100) / 100,
+        discount_amount: Math.round(discAmt * 100) / 100,
+        taxable_amount: Math.round(taxable * 100) / 100,
+        gst_rate: taxRate,
+        cgst_amount: cgst,
+        sgst_amount: sgst,
+        igst_amount: 0,
+        line_total: Math.round(lineTotal * 100) / 100,
+      };
+    });
+
+    const newStatus = (poData.status as PurchaseOrderStatus) || existingPo.status;
+    const poPayload = {
+      supplier_id: poData.supplierId || existingPo.supplierId,
+      po_date: poData.poDate || existingPo.poDate,
+      expected_delivery_date: poData.expectedDeliveryDate !== undefined ? poData.expectedDeliveryDate : existingPo.expectedDeliveryDate,
+      status: newStatus,
+      payment_terms: poData.paymentTerms !== undefined ? poData.paymentTerms : existingPo.paymentTerms,
+      delivery_terms: poData.termsConditions !== undefined ? poData.termsConditions : existingPo.termsConditions,
+      supplier_reference: poData.referenceNumber !== undefined ? poData.referenceNumber : existingPo.referenceNumber,
+      notes: poData.notes !== undefined ? poData.notes : existingPo.notes,
+      subtotal: Math.round(subtotal * 100) / 100,
+      discount_amount: Math.round(totalDiscount * 100) / 100,
+      taxable_amount: Math.round(totalTaxable * 100) / 100,
+      cgst_amount: Math.round((totalTax / 2) * 100) / 100,
+      sgst_amount: Math.round((totalTax / 2) * 100) / 100,
+      igst_amount: 0,
+      grand_total: Math.round(grandTotal * 100) / 100,
+      updated_at: new Date().toISOString(),
+      ...(newStatus === 'SENT' && !existingPo.sentAt ? { sent_at: new Date().toISOString() } : {}),
+    };
+
+    if (!isSupabaseConfigured()) {
+      const updatedPo: PurchaseOrder = {
+        ...existingPo,
+        ...poData,
+        subtotal: poPayload.subtotal,
+        discountAmount: poPayload.discount_amount,
+        taxableAmount: poPayload.taxable_amount,
+        taxAmount: totalTax,
+        grandTotal: poPayload.grand_total,
+        updatedAt: poPayload.updated_at,
+        items: items as any,
+      };
+      const local = safeGetTenantStorage<PurchaseOrder>(LOCAL_POS_KEY, []);
+      const idx = local.findIndex((p) => p.id === poId);
+      if (idx !== -1) local[idx] = updatedPo;
+      safeSaveTenantStorage(LOCAL_POS_KEY, local);
+      return { data: updatedPo };
+    }
+
+    try {
+      const { data: updatedRecord, error: updateErr } = await supabase
+        .from('purchase_orders')
+        .update(poPayload)
+        .eq('id', poId)
+        .eq('workspace_id', wsId)
+        .select()
+        .single();
+
+      if (updateErr) {
+        return { error: handleSupabaseError(updateErr, 'updatePurchaseOrder') };
+      }
+
+      // Delete existing PO line items for this specific PO
+      await supabase.from('purchase_order_items').delete().eq('purchase_order_id', poId);
+
+      // Insert updated line items
+      await supabase.from('purchase_order_items').insert(mappedItemsPayload);
+
+      // Log status transition if status changed
+      if (newStatus !== existingPo.status) {
+        await supabase.from('purchase_order_status_history').insert([
+          {
+            purchase_order_id: poId,
+            old_status: existingPo.status,
+            new_status: newStatus,
+            changed_by: supabaseAuthService.getUser()?.id || null,
+            notes: `Status updated from ${existingPo.status} to ${newStatus}`,
+          },
+        ]);
+      }
+
+      const freshPo = await this.getPurchaseOrderById(poId);
+      return { data: freshPo.data };
+    } catch (e: any) {
+      return { error: handleSupabaseError(e, 'updatePurchaseOrder') };
+    }
   }
 
   public async requestPriceOverride(params: {

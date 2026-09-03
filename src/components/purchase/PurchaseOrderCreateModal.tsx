@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   FileText,
@@ -442,7 +442,11 @@ export const PurchaseOrderCreateModal: React.FC<PurchaseOrderCreateModalProps> =
 
   const totals = calculateTotals();
 
+  const isSubmittingRef = useRef(false);
+
   const handleSave = async (statusToSave: 'DRAFT' | 'SENT') => {
+    if (isSubmittingRef.current) return;
+
     if (!supplierId) {
       showToast('Please select a supplier from the list.', 'error');
       return;
@@ -453,6 +457,7 @@ export const PurchaseOrderCreateModal: React.FC<PurchaseOrderCreateModalProps> =
       return;
     }
 
+    isSubmittingRef.current = true;
     setLoading(true);
     try {
       const poPayload: Partial<PurchaseOrder> = {
@@ -490,6 +495,7 @@ export const PurchaseOrderCreateModal: React.FC<PurchaseOrderCreateModalProps> =
     } catch (err: any) {
       showToast(err?.message || 'An unexpected error occurred.', 'error');
     } finally {
+      isSubmittingRef.current = false;
       setLoading(false);
     }
   };
@@ -1071,20 +1077,20 @@ export const PurchaseOrderCreateModal: React.FC<PurchaseOrderCreateModalProps> =
                   type="button"
                   disabled={loading}
                   onClick={() => handleSave('DRAFT')}
-                  className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold shadow-md transition-all cursor-pointer flex items-center gap-2"
+                  className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-2 cursor-pointer"
                 >
                   <Save className="w-4 h-4" />
-                  <span>Save Draft</span>
+                  <span>{loading ? 'Saving...' : 'Save Draft'}</span>
                 </button>
 
                 <button
                   type="button"
                   disabled={loading}
                   onClick={() => handleSave('SENT')}
-                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-600/30 transition-all cursor-pointer flex items-center gap-2"
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-600/30 transition-all flex items-center gap-2 cursor-pointer"
                 >
                   <FileText className="w-4 h-4" />
-                  <span>Save & Issue PO</span>
+                  <span>{loading ? 'Issuing...' : 'Save & Issue PO'}</span>
                 </button>
               </div>
             </div>
