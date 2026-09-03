@@ -250,62 +250,34 @@ export class PurchaseOrderService {
       const qty = Math.max(0.001, Number(it.quantity) || 1);
       let rate = Math.max(0, Number(it.unitPrice) || 0);
       const catItemId = it.supplierCatalogueItemId || null;
-      let catRate: number | null = null;
-      let isOverridden = false;
-      let overrideStatus = it.overrideStatus || 'NONE';
-      let overrideReason = it.overrideReason || null;
 
-      // Rate Verification against Supplier Catalogue Source of Truth
+      // Rate Verification against Supplier Catalogue Source of Truth:
+      // For catalogue items, unit_price is strictly locked to supplier_catalogue_items purchase_price
       if (catItemId && cataloguePricesMap.has(catItemId)) {
-        catRate = cataloguePricesMap.get(catItemId)!;
-        if (Math.abs(rate - catRate) > 0.001) {
-          if (isAuthorizedRole || overrideStatus === 'APPROVED') {
-            isOverridden = true;
-            overrideStatus = 'APPROVED';
-            overrideReason = overrideReason || 'Authorized negotiated rate override';
-          } else {
-            console.warn(
-              `[PROCUREMENT_CONTROL_BLOCKED] User (${currentUser?.email || 'Buyer'}) attempted unauthorized purchase rate modification for catalogue item ${catItemId}. Requested: ₹${rate}, Forced: ₹${catRate}`
-            );
-            rate = catRate;
-            isOverridden = false;
-            overrideStatus = 'NONE';
-            overrideReason = null;
-          }
-        } else {
-          isOverridden = false;
-          overrideStatus = 'NONE';
-        }
-      } else if (catItemId && it.catalogueUnitPrice !== undefined && it.catalogueUnitPrice !== null) {
-        catRate = Number(it.catalogueUnitPrice);
-        if (Math.abs(rate - catRate) > 0.001) {
-          if (isAuthorizedRole || overrideStatus === 'APPROVED') {
-            isOverridden = true;
-            overrideStatus = 'APPROVED';
-          } else {
-            rate = catRate;
-            isOverridden = false;
-            overrideStatus = 'NONE';
-          }
-        }
+        rate = cataloguePricesMap.get(catItemId)!;
       }
 
-      const lineSubtotal = qty * rate;
+      const grossAmount = qty * rate;
 
+      let discPercent = 0;
       let discAmt = 0;
-      if (it.discountType === 'PERCENTAGE') {
-        discAmt = (lineSubtotal * (Number(it.discountValue) || 0)) / 100;
-      } else {
-        discAmt = Number(it.discountValue) || 0;
-      }
-      discAmt = Math.min(lineSubtotal, discAmt);
 
-      const taxable = Math.max(0, lineSubtotal - discAmt);
-      const taxRate = Number(it.taxRate) || 0;
+      if (it.discountType === 'PERCENTAGE') {
+        discPercent = Number(it.discountValue || 0);
+        discAmt = (grossAmount * discPercent) / 100;
+      } else {
+        discAmt = Math.min(grossAmount, Number(it.discountValue || (it as any).discountAmount || 0));
+        discPercent = grossAmount > 0 ? (discAmt / grossAmount) * 100 : 0;
+      }
+
+      const taxable = Math.max(0, grossAmount - discAmt);
+      const taxRate = Number(it.taxRate || (it as any).gstRate || 0);
       const taxAmt = (taxable * taxRate) / 100;
+      const cgst = Math.round((taxAmt / 2) * 100) / 100;
+      const sgst = Math.round((taxAmt / 2) * 100) / 100;
       const lineTotal = taxable + taxAmt;
 
-      subtotal += lineSubtotal;
+      subtotal += grossAmount;
       totalDiscount += discAmt;
       totalTaxable += taxable;
       totalTax += taxAmt;
@@ -314,30 +286,26 @@ export class PurchaseOrderService {
       const customName = it.productName || it.itemName || it.description || 'Custom Item';
 
       return {
-        product_id: it.productId || null,
+        workspace_id: wsId,
         supplier_catalogue_item_id: catItemId,
-        catalogue_unit_price: catRate,
-        is_price_overridden: isOverridden,
-        override_reason: overrideReason,
-        override_requested_by: isOverridden ? (it.overrideRequestedBy || currentUser?.id || null) : null,
-        override_approved_by: isOverridden ? (it.overrideApprovedBy || (isAuthorizedRole ? currentUser?.id : null)) : null,
-        override_status: overrideStatus,
-        item_name: customName,
+        product_id: it.productId || null,
+        product_name: customName,
+        part_number: it.productSku || (it as any).partNumber || null,
+        supplier_product_code: (it as any).supplierProductCode || null,
         description: it.description || customName,
         quantity: qty,
-        unit: it.unit || 'Pcs',
-        unit_price: rate,
-        discount_type: it.discountType || 'FIXED',
-        discount_value: it.discountValue || 0,
-        discount_amount: discAmt,
-        tax_rate: taxRate,
-        tax_amount: taxAmt,
-        cgst_amount: taxAmt / 2,
-        sgst_amount: taxAmt / 2,
-        igst_amount: 0,
-        line_subtotal: lineSubtotal,
-        line_total: lineTotal,
         received_quantity: 0,
+        pending_quantity: qty,
+        uom: it.unit || (it as any).uom || 'Pcs',
+        unit_price: rate,
+        discount_percent: Math.round(discPercent * 100) / 100,
+        discount_amount: Math.round(discAmt * 100) / 100,
+        taxable_amount: Math.round(taxable * 100) / 100,
+        gst_rate: taxRate,
+        cgst_amount: cgst,
+        sgst_amount: sgst,
+        igst_amount: 0,
+        line_total: Math.round(lineTotal * 100) / 100,
       };
     });
 
@@ -347,18 +315,18 @@ export class PurchaseOrderService {
       po_number: poNumber,
       po_date: poData.poDate || new Date().toISOString().split('T')[0],
       expected_delivery_date: poData.expectedDeliveryDate || null,
-      reference_number: poData.referenceNumber || null,
       status: initialStatus,
       payment_terms: poData.paymentTerms || null,
-      delivery_location_id: poData.deliveryLocationId || null,
+      delivery_terms: poData.termsConditions || (poData as any).deliveryTerms || null,
+      supplier_reference: poData.referenceNumber || (poData as any).supplierReference || null,
+      notes: poData.notes || null,
       subtotal: Math.round(subtotal * 100) / 100,
       discount_amount: Math.round(totalDiscount * 100) / 100,
       taxable_amount: Math.round(totalTaxable * 100) / 100,
-      tax_amount: Math.round(totalTax * 100) / 100,
+      cgst_amount: Math.round((totalTax / 2) * 100) / 100,
+      sgst_amount: Math.round((totalTax / 2) * 100) / 100,
+      igst_amount: 0,
       grand_total: Math.round(grandTotal * 100) / 100,
-      notes: poData.notes || null,
-      terms_conditions: poData.termsConditions || null,
-      internal_notes: poData.internalNotes || null,
       created_by: supabaseAuthService.getUser()?.id || null,
     };
 
@@ -373,7 +341,7 @@ export class PurchaseOrderService {
         subtotal: poPayload.subtotal,
         discountAmount: poPayload.discount_amount,
         taxableAmount: poPayload.taxable_amount,
-        taxAmount: poPayload.tax_amount,
+        taxAmount: totalTax,
         grandTotal: poPayload.grand_total,
         notes: poData.notes,
         createdAt: new Date().toISOString(),
@@ -621,39 +589,37 @@ export class PurchaseOrderService {
       const prod = it.products || {};
       const qty = Number(it.quantity) || 0;
       const rec = Number(it.received_quantity) || 0;
-      const isCustom = !it.product_id;
-      const name = prod.name || it.item_name || it.description || 'Custom Item';
+      const name = it.product_name || prod.name || it.description || 'Custom Item';
+      const cgst = Number(it.cgst_amount) || 0;
+      const sgst = Number(it.sgst_amount) || 0;
+      const igst = Number(it.igst_amount) || 0;
+      const totalTax = cgst + sgst + igst;
+
       return {
         id: it.id,
         purchaseOrderId: it.purchase_order_id,
         productId: it.product_id || null,
         supplierCatalogueItemId: it.supplier_catalogue_item_id || null,
         productName: name,
-        itemName: it.item_name || name,
+        itemName: name,
         isCustomItem: !it.product_id && !it.supplier_catalogue_item_id,
-        productSku: prod.sku || '',
-        description: it.description,
+        productSku: it.part_number || prod.sku || '',
+        description: it.description || name,
         quantity: qty,
-        unit: it.unit || 'Pcs',
+        unit: it.uom || 'Pcs',
         unitPrice: Number(it.unit_price) || 0,
-        catalogueUnitPrice: it.catalogue_unit_price !== null && it.catalogue_unit_price !== undefined ? Number(it.catalogue_unit_price) : null,
-        isPriceOverridden: Boolean(it.is_price_overridden),
-        overrideReason: it.override_reason || null,
-        overrideRequestedBy: it.override_requested_by || null,
-        overrideApprovedBy: it.override_approved_by || null,
-        overrideStatus: it.override_status || 'NONE',
-        discountType: it.discount_type || 'FIXED',
-        discountValue: Number(it.discount_value) || 0,
+        discountType: it.discount_percent ? 'PERCENTAGE' : 'FIXED',
+        discountValue: Number(it.discount_percent) || Number(it.discount_amount) || 0,
         discountAmount: Number(it.discount_amount) || 0,
-        taxRate: Number(it.tax_rate) || 0,
-        taxAmount: Number(it.tax_amount) || 0,
-        cgstAmount: Number(it.cgst_amount) || 0,
-        sgstAmount: Number(it.sgst_amount) || 0,
-        igstAmount: Number(it.igst_amount) || 0,
-        lineSubtotal: Number(it.line_subtotal) || 0,
+        taxRate: Number(it.gst_rate) || 0,
+        taxAmount: totalTax,
+        cgstAmount: cgst,
+        sgstAmount: sgst,
+        igstAmount: igst,
+        lineSubtotal: Number(it.taxable_amount) || 0,
         lineTotal: Number(it.line_total) || 0,
         receivedQuantity: rec,
-        pendingQuantity: Math.max(0, qty - rec),
+        pendingQuantity: Number(it.pending_quantity) || Math.max(0, qty - rec),
         createdAt: it.created_at,
       };
     });
@@ -668,6 +634,11 @@ export class PurchaseOrderService {
       createdAt: h.created_at,
     }));
 
+    const poCgst = Number(row.cgst_amount) || 0;
+    const poSgst = Number(row.sgst_amount) || 0;
+    const poIgst = Number(row.igst_amount) || 0;
+    const poTotalTax = poCgst + poSgst + poIgst;
+
     return {
       id: row.id,
       workspaceId: row.workspace_id,
@@ -679,18 +650,16 @@ export class PurchaseOrderService {
       poNumber: row.po_number,
       poDate: row.po_date,
       expectedDeliveryDate: row.expected_delivery_date,
-      referenceNumber: row.reference_number,
+      referenceNumber: row.supplier_reference || '',
       status: row.status as PurchaseOrderStatus,
-      paymentTerms: row.payment_terms,
-      deliveryLocationId: row.delivery_location_id,
+      paymentTerms: row.payment_terms || '',
       subtotal: Number(row.subtotal) || 0,
       discountAmount: Number(row.discount_amount) || 0,
       taxableAmount: Number(row.taxable_amount) || 0,
-      taxAmount: Number(row.tax_amount) || 0,
+      taxAmount: poTotalTax,
       grandTotal: Number(row.grand_total) || 0,
-      notes: row.notes,
-      termsConditions: row.terms_conditions,
-      internalNotes: row.internal_notes,
+      notes: row.notes || '',
+      termsConditions: row.delivery_terms || '',
       createdBy: row.created_by,
       sentAt: row.sent_at,
       confirmedAt: row.confirmed_at,
