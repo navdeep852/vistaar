@@ -478,6 +478,15 @@ export const PurchaseOrderCreateModal: React.FC<PurchaseOrderCreateModalProps> =
         : await purchaseOrderService.createPurchaseOrder(poPayload, items);
 
       if (result.error || !result.data) {
+        console.error('[VISTAAR PO SAVE ERROR]', {
+          operation: initialPo?.id ? 'updatePurchaseOrder' : 'createPurchaseOrder',
+          error: result.error,
+          poId: initialPo?.id || null,
+          poNumber,
+          supplierId,
+          statusToSave,
+          itemsCount: items.length,
+        });
         showToast(result.error || 'Failed to save Purchase Order.', 'error');
         return;
       }

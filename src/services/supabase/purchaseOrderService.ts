@@ -98,7 +98,7 @@ export class PurchaseOrderService {
     try {
       let query = supabase
         .from('purchase_orders')
-        .select('*, suppliers(id, name, phone, gstin, address), purchase_order_items(*)', { count: 'exact' })
+        .select('*, suppliers(id, name, phone, address), purchase_order_items(*)', { count: 'exact' })
         .eq('workspace_id', wsId);
 
       if (options?.status && options.status !== 'ALL') {
@@ -154,10 +154,8 @@ export class PurchaseOrderService {
         .from('purchase_orders')
         .select(`
           *,
-          suppliers(id, name, phone, gstin, address),
-          purchase_order_items(*, products(name, sku)),
-          purchase_order_status_history(*),
-          purchase_order_receipts(*, purchase_order_receipt_items(*))
+          suppliers(id, name, phone, address),
+          purchase_order_items(*, products(name, sku))
         `)
         .eq('workspace_id', wsId)
         .eq('id', id)
@@ -165,6 +163,29 @@ export class PurchaseOrderService {
 
       if (error) {
         return { error: handleSupabaseError(error, 'getPurchaseOrderById') };
+      }
+
+      if (data) {
+        try {
+          const { data: history } = await supabase
+            .from('purchase_order_status_history')
+            .select('*')
+            .eq('purchase_order_id', id)
+            .order('created_at', { ascending: true });
+          data.purchase_order_status_history = history || [];
+        } catch (hErr) {
+          data.purchase_order_status_history = [];
+        }
+
+        try {
+          const { data: receipts } = await supabase
+            .from('purchase_order_receipts')
+            .select('*, purchase_order_receipt_items(*)')
+            .eq('purchase_order_id', id);
+          data.purchase_order_receipts = receipts || [];
+        } catch (rErr) {
+          data.purchase_order_receipts = [];
+        }
       }
 
       return { data: this.mapRowToPo(data) };
@@ -391,21 +412,40 @@ export class PurchaseOrderService {
         purchase_order_id: poRecord.id,
       }));
 
-      await supabase.from('purchase_order_items').insert(itemsToInsert);
+      const { error: itemsErr } = await supabase.from('purchase_order_items').insert(itemsToInsert);
+      if (itemsErr) {
+        console.error('[PO_ITEMS_INSERT_ERROR]', itemsErr);
+        return { error: handleSupabaseError(itemsErr, 'createPurchaseOrder') };
+      }
 
-      // Log initial status history
-      await supabase.from('purchase_order_status_history').insert([
-        {
-          purchase_order_id: poRecord.id,
-          old_status: null,
-          new_status: initialStatus,
-          changed_by: supabaseAuthService.getUser()?.id || null,
-          notes: 'Purchase Order created',
-        },
-      ]);
+      // Log initial status history (safely)
+      try {
+        await supabase.from('purchase_order_status_history').insert([
+          {
+            purchase_order_id: poRecord.id,
+            old_status: null,
+            new_status: initialStatus,
+            changed_by: supabaseAuthService.getUser()?.id || null,
+            notes: 'Purchase Order created',
+          },
+        ]);
+      } catch (hErr) {
+        console.warn('[PO_STATUS_HISTORY_INSERT_WARNING]', hErr);
+      }
 
       const freshPo = await this.getPurchaseOrderById(poRecord.id);
-      return { data: freshPo.data };
+      if (freshPo.data) {
+        return { data: freshPo.data };
+      }
+
+      // Fallback if getPurchaseOrderById failed after successful insert
+      return {
+        data: this.mapRowToPo({
+          ...poRecord,
+          suppliers: { id: poData.supplierId, name: poData.supplierName || 'Supplier' },
+          purchase_order_items: itemsToInsert,
+        }),
+      };
     } catch (e: any) {
       return { error: handleSupabaseError(e, 'createPurchaseOrder') };
     }
@@ -589,26 +629,48 @@ export class PurchaseOrderService {
       }
 
       // Delete existing PO line items for this specific PO
-      await supabase.from('purchase_order_items').delete().eq('purchase_order_id', poId);
+      const { error: delErr } = await supabase.from('purchase_order_items').delete().eq('purchase_order_id', poId);
+      if (delErr) {
+        console.warn('[PO_ITEMS_DELETE_WARNING]', delErr);
+      }
 
       // Insert updated line items
-      await supabase.from('purchase_order_items').insert(mappedItemsPayload);
+      const { error: itemsErr } = await supabase.from('purchase_order_items').insert(mappedItemsPayload);
+      if (itemsErr) {
+        console.error('[PO_ITEMS_UPDATE_INSERT_ERROR]', itemsErr);
+        return { error: handleSupabaseError(itemsErr, 'updatePurchaseOrder') };
+      }
 
-      // Log status transition if status changed
+      // Log status transition if status changed (safely)
       if (newStatus !== existingPo.status) {
-        await supabase.from('purchase_order_status_history').insert([
-          {
-            purchase_order_id: poId,
-            old_status: existingPo.status,
-            new_status: newStatus,
-            changed_by: supabaseAuthService.getUser()?.id || null,
-            notes: `Status updated from ${existingPo.status} to ${newStatus}`,
-          },
-        ]);
+        try {
+          await supabase.from('purchase_order_status_history').insert([
+            {
+              purchase_order_id: poId,
+              old_status: existingPo.status,
+              new_status: newStatus,
+              changed_by: supabaseAuthService.getUser()?.id || null,
+              notes: `Status updated from ${existingPo.status} to ${newStatus}`,
+            },
+          ]);
+        } catch (hErr) {
+          console.warn('[PO_STATUS_HISTORY_UPDATE_WARNING]', hErr);
+        }
       }
 
       const freshPo = await this.getPurchaseOrderById(poId);
-      return { data: freshPo.data };
+      if (freshPo.data) {
+        return { data: freshPo.data };
+      }
+
+      // Fallback if getPurchaseOrderById failed after successful update
+      return {
+        data: this.mapRowToPo({
+          ...updatedRecord,
+          suppliers: { id: existingPo.supplierId, name: existingPo.supplierName },
+          purchase_order_items: mappedItemsPayload,
+        }),
+      };
     } catch (e: any) {
       return { error: handleSupabaseError(e, 'updatePurchaseOrder') };
     }
