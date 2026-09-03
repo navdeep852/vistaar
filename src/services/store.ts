@@ -172,11 +172,40 @@ class StoreService {
 
   private loadFromStorage(): AppState {
     try {
-      return safeGetTenantItem<AppState>(STORAGE_KEY, initialSeedData);
+      const loaded = safeGetTenantItem<AppState>(STORAGE_KEY, initialSeedData);
+      if (loaded) {
+        return {
+          ...initialSeedData,
+          ...loaded,
+          customers: Array.isArray(loaded.customers) ? loaded.customers : [],
+          categories: Array.isArray(loaded.categories) ? loaded.categories : [],
+          suppliers: Array.isArray(loaded.suppliers) ? loaded.suppliers : [],
+          products: Array.isArray(loaded.products) ? loaded.products : [],
+          inventoryTransactions: Array.isArray(loaded.inventoryTransactions) ? loaded.inventoryTransactions : [],
+          quotations: Array.isArray(loaded.quotations) ? loaded.quotations : [],
+          invoices: Array.isArray(loaded.invoices) ? loaded.invoices : [],
+          payments: Array.isArray(loaded.payments) ? loaded.payments : [],
+          expenses: Array.isArray(loaded.expenses) ? loaded.expenses : [],
+          followUps: Array.isArray(loaded.followUps) ? loaded.followUps : [],
+          feedbacks: Array.isArray(loaded.feedbacks) ? loaded.feedbacks : [],
+          offers: Array.isArray(loaded.offers) ? loaded.offers : [],
+          notifications: Array.isArray(loaded.notifications) ? loaded.notifications : [],
+          udharis: Array.isArray(loaded.udharis) ? loaded.udharis : [],
+          udhariPayments: Array.isArray(loaded.udhariPayments) ? loaded.udhariPayments : [],
+          stockReceipts: Array.isArray(loaded.stockReceipts) ? loaded.stockReceipts : [],
+          stockMovements: Array.isArray(loaded.stockMovements) ? loaded.stockMovements : [],
+          importSessions: Array.isArray(loaded.importSessions) ? loaded.importSessions : [],
+          counterSales: Array.isArray(loaded.counterSales) ? loaded.counterSales : [],
+          settings: {
+            ...initialSeedData.settings,
+            ...(loaded.settings || {}),
+          },
+        };
+      }
     } catch (e) {
       console.error('Failed to load state from tenant storage', e);
     }
-    return initialSeedData;
+    return { ...initialSeedData };
   }
 
   private saveToStorage() {
@@ -348,11 +377,11 @@ class StoreService {
 
   // Customers
   public getCustomers(): Customer[] {
-    return this.state.customers;
+    return Array.isArray(this.state.customers) ? this.state.customers : [];
   }
 
   public setCustomers(customers: Customer[]) {
-    this.state.customers = customers;
+    this.state.customers = Array.isArray(customers) ? customers : [];
     this.saveToStorage();
   }
 
@@ -363,17 +392,18 @@ class StoreService {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+    if (!Array.isArray(this.state.customers)) this.state.customers = [];
     this.state.customers.unshift(newCustomer);
     this.saveToStorage();
     return newCustomer;
   }
 
   public getCategories(): Category[] {
-    return this.state.categories;
+    return Array.isArray(this.state.categories) ? this.state.categories : [];
   }
 
   public getSuppliers(): Supplier[] {
-    return this.state.suppliers;
+    return Array.isArray(this.state.suppliers) ? this.state.suppliers : [];
   }
 
 
@@ -445,7 +475,7 @@ class StoreService {
 
   // Quotations
   public getQuotations(): Quotation[] {
-    return this.state.quotations;
+    return Array.isArray(this.state.quotations) ? this.state.quotations : [];
   }
 
   public addQuotation(quotationData: Omit<Quotation, 'id' | 'quotationNumber' | 'createdAt' | 'updatedAt'>): Quotation {
@@ -527,7 +557,7 @@ class StoreService {
 
   // Invoices
   public getInvoices(): Invoice[] {
-    return this.state.invoices;
+    return Array.isArray(this.state.invoices) ? this.state.invoices : [];
   }
 
   public addInvoice(invoiceData: Omit<Invoice, 'id' | 'invoiceNumber' | 'createdAt' | 'updatedAt'>): Invoice {
@@ -692,7 +722,7 @@ class StoreService {
 
   // Payments
   public getPayments(): Payment[] {
-    return this.state.payments;
+    return Array.isArray(this.state.payments) ? this.state.payments : [];
   }
 
   public recordPayment(paymentData: Omit<Payment, 'id' | 'paymentNumber' | 'createdAt'>): Payment {
@@ -728,7 +758,7 @@ class StoreService {
   }
 
   // Expenses, Follow-ups, Feedbacks, Offers, Notifications
-  public getExpenses(): Expense[] { return this.state.expenses; }
+  public getExpenses(): Expense[] { return Array.isArray(this.state.expenses) ? this.state.expenses : []; }
   public addExpense(expense: Omit<Expense, 'id' | 'createdAt'>): Expense {
     const newExp: Expense = { ...expense, id: `exp-${Date.now()}`, createdAt: new Date().toISOString() };
     this.state.expenses.unshift(newExp);
@@ -752,7 +782,7 @@ class StoreService {
     return false;
   }
 
-  public getFollowUps(): FollowUp[] { return this.state.followUps; }
+  public getFollowUps(): FollowUp[] { return Array.isArray(this.state.followUps) ? this.state.followUps : []; }
   public addFollowUp(followUp: Omit<FollowUp, 'id' | 'createdAt'>): FollowUp {
     const now = new Date().toISOString();
     const newFol: FollowUp = {
@@ -841,9 +871,9 @@ class StoreService {
 
 
 
-  public getFeedbacks(): Feedback[] { return this.state.feedbacks; }
-  public getOffers(): Offer[] { return this.state.offers; }
-  public getNotifications(): AppNotification[] { return this.state.notifications; }
+  public getFeedbacks(): Feedback[] { return Array.isArray(this.state.feedbacks) ? this.state.feedbacks : []; }
+  public getOffers(): Offer[] { return Array.isArray(this.state.offers) ? this.state.offers : []; }
+  public getNotifications(): AppNotification[] { return Array.isArray(this.state.notifications) ? this.state.notifications : []; }
 
   public markNotificationRead(id: string) {
     const n = this.state.notifications.find((notif) => notif.id === id);
@@ -860,12 +890,12 @@ class StoreService {
 
   // Ledger calculation
   public getCustomerLedger(customerId: string) {
-    const customer = this.state.customers.find((c) => c.id === customerId);
-    const invoices = this.state.invoices.filter((i) => (i.customerId === customerId || i.customerName === customer?.name) && i.status !== 'Cancelled');
-    const payments = this.state.payments.filter((p) => p.customerId === customerId || p.customerName === customer?.name);
+    const customer = (this.state.customers || []).find((c) => c.id === customerId);
+    const invoices = (this.state.invoices || []).filter((i) => (i.customerId === customerId || i.customerName === customer?.name) && i.status !== 'Cancelled');
+    const payments = (this.state.payments || []).filter((p) => p.customerId === customerId || p.customerName === customer?.name);
 
-    const totalDebit = invoices.reduce((acc, inv) => acc + inv.grandTotal, 0);
-    const totalCredit = payments.reduce((acc, pay) => acc + pay.amount, 0);
+    const totalDebit = invoices.reduce((acc, inv) => acc + (inv.grandTotal || 0), 0);
+    const totalCredit = payments.reduce((acc, pay) => acc + (pay.amount || 0), 0);
     const outstanding = Math.max(0, totalDebit - totalCredit);
 
     return { invoices, payments, totalDebit, totalCredit, outstanding };
@@ -873,14 +903,14 @@ class StoreService {
 
   // P&L calculation
   public calculatePL() {
-    const issuedInvoices = this.state.invoices.filter((i) => i.status !== 'Cancelled' && i.status !== 'Draft');
-    const revenue = issuedInvoices.reduce((acc, inv) => acc + inv.grandTotal, 0);
+    const issuedInvoices = (this.state.invoices || []).filter((i) => i.status !== 'Cancelled' && i.status !== 'Draft');
+    const revenue = issuedInvoices.reduce((acc, inv) => acc + (inv.grandTotal || 0), 0);
     const cogs = issuedInvoices.reduce((acc, inv) => {
-      const invoiceCogs = inv.items.reduce((itemAcc, item) => itemAcc + (item.quantity * (item.buyPrice || 0)), 0);
+      const invoiceCogs = (inv.items || []).reduce((itemAcc, item) => itemAcc + (item.quantity * (item.buyPrice || 0)), 0);
       return acc + invoiceCogs;
     }, 0);
     const grossProfit = revenue - cogs;
-    const totalExpenses = this.state.expenses.reduce((acc, exp) => acc + exp.amount, 0);
+    const totalExpenses = (this.state.expenses || []).reduce((acc, exp) => acc + (exp.amount || 0), 0);
     const netProfit = grossProfit - totalExpenses;
 
     return { revenue, cogs, grossProfit, expenses: totalExpenses, netProfit };
