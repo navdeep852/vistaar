@@ -11,8 +11,8 @@ import {
   AlertCircle,
   Tag,
 } from 'lucide-react';
-import { PurchaseOrder, PurchaseOrderItem, Supplier, Product } from '../../types';
-import { purchaseOrderService, productService } from '../../services/supabase';
+import { Supplier, Product, PurchaseOrder, PurchaseOrderItem, SupplierCatalogueItem } from '../../types';
+import { purchaseOrderService, customerService, productService, supplierCatalogueService } from '../../services/supabase';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { showToast } from '../Toast';
 import { QuickAddProductModal } from './QuickAddProductModal';
@@ -60,6 +60,32 @@ export const PurchaseOrderCreateModal: React.FC<PurchaseOrderCreateModalProps> =
 
   // Line Items
   const [items, setItems] = useState<Partial<PurchaseOrderItem>[]>([]);
+  const [supplierCatalogueItems, setSupplierCatalogueItems] = useState<SupplierCatalogueItem[]>([]);
+
+  // Fetch supplier catalogue items when supplier is selected
+  useEffect(() => {
+    if (!supplierId) {
+      setSupplierCatalogueItems([]);
+      return;
+    }
+
+    let isMounted = true;
+    supplierCatalogueService
+      .getCatalogueItems({
+        supplierId,
+        search: productSearch.trim() || undefined,
+        limit: 15,
+      })
+      .then((res) => {
+        if (isMounted) {
+          setSupplierCatalogueItems(res.items || []);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [supplierId, productSearch]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -191,6 +217,29 @@ export const PurchaseOrderCreateModal: React.FC<PurchaseOrderCreateModalProps> =
         },
       ]);
     }
+    setProductSearch('');
+    setShowProductDropdown(false);
+  };
+
+  const handleAddCatalogueItemLine = (catItem: SupplierCatalogueItem) => {
+    setItems((prev) => [
+      ...prev,
+      {
+        productId: catItem.productId || null,
+        supplierCatalogueItemId: catItem.id,
+        productName: catItem.productName,
+        itemName: catItem.productName,
+        isCustomItem: !catItem.productId,
+        productSku: catItem.partNumber || catItem.supplierProductCode || '',
+        description: catItem.description || catItem.productName,
+        quantity: 1,
+        unit: catItem.uom || 'Pcs',
+        unitPrice: catItem.purchasePrice || 0,
+        discountType: 'FIXED',
+        discountValue: 0,
+        taxRate: catItem.gstRate || 18,
+      },
+    ]);
     setProductSearch('');
     setShowProductDropdown(false);
   };
@@ -492,11 +541,55 @@ export const PurchaseOrderCreateModal: React.FC<PurchaseOrderCreateModalProps> =
 
                   {/* Autocomplete & Custom Actions Dropdown */}
                   {showProductDropdown && (
-                    <div className="absolute right-0 top-full mt-1 w-96 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl z-30 max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                    <div className="absolute right-0 top-full mt-1 w-96 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl z-30 max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                      {/* Supplier Specific Catalogue Items */}
+                      {supplierCatalogueItems.length > 0 && (
+                        <div>
+                          <div className="px-3 py-1.5 bg-blue-50 dark:bg-blue-950 text-[10px] font-bold text-blue-700 dark:text-blue-300 uppercase tracking-wider flex items-center justify-between">
+                            <span>Supplier Catalogue ({selectedSupplier?.name || 'Supplier'})</span>
+                            <span className="text-[9px] bg-blue-200 dark:bg-blue-800 px-1 py-0.2 rounded font-bold">
+                              Supplier Prices
+                            </span>
+                          </div>
+                          {supplierCatalogueItems.map((cat) => (
+                            <button
+                              key={cat.id}
+                              type="button"
+                              onClick={() => handleAddCatalogueItemLine(cat)}
+                              className="w-full text-left p-2.5 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors flex items-center justify-between cursor-pointer border-b border-slate-100 dark:border-slate-800/60"
+                            >
+                              <div>
+                                <p className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                                  <span>{cat.productName}</span>
+                                  {!cat.productId && (
+                                    <span className="text-[9px] bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-bold px-1 rounded">
+                                      Unlinked
+                                    </span>
+                                  )}
+                                </p>
+                                <p className="text-[10px] text-slate-500 font-mono">
+                                  Part No: {cat.partNumber || cat.supplierProductCode || 'N/A'}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                  {cat.purchasePrice !== null && cat.purchasePrice !== undefined
+                                    ? `₹${cat.purchasePrice.toFixed(2)}`
+                                    : 'Rate N/A'}
+                                </p>
+                                <p className="text-[10px] font-mono text-slate-500">
+                                  GST: {cat.gstRate || 18}% | {cat.uom || 'Pcs'}
+                                </p>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
                       {filteredProducts.length > 0 && (
                         <div>
                           <div className="px-3 py-1.5 bg-slate-50 dark:bg-slate-950 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                            Catalogue Products ({filteredProducts.length})
+                            VISTAAR Inventory Products ({filteredProducts.length})
                           </div>
                           {filteredProducts.map((p) => {
                             const stock = p.currentStock ?? 0;

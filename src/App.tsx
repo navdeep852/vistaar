@@ -21,6 +21,7 @@ import { DaybookView } from './views/DaybookView';
 import { CashbookView } from './views/CashbookView';
 import { EwayBillsView } from './views/EwayBillsView';
 import { PurchaseOrdersView } from './views/PurchaseOrdersView';
+import { SupplierCatalogueView } from './views/SupplierCatalogueView';
 
 
 
@@ -127,6 +128,8 @@ function MainAppContent() {
         return <EwayBillsView />;
       case 'purchase-orders':
         return <PurchaseOrdersView />;
+      case 'supplier-catalogue':
+        return <SupplierCatalogueView />;
 
 
       case 'customers':

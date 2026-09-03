@@ -104,6 +104,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       title: 'PURCHASES & LOGISTICS',
       items: [
         { id: 'purchase-orders', label: 'Purchase Orders', icon: ShoppingCart },
+        { id: 'supplier-catalogue', label: 'Supplier Catalogue', icon: BookOpen },
         { id: 'suppliers', label: 'Suppliers', icon: Truck },
       ],
     },

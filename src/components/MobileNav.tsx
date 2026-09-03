@@ -79,6 +79,8 @@ export const MobileNav: React.FC<MobileNavProps> = ({
     { id: 'udhari', label: 'Udhari Ledger', icon: Scale },
     { id: 'payments', label: 'Payments', icon: CreditCard },
     { id: 'purchase-orders', label: 'Purchase Orders', icon: ShoppingCart },
+    { id: 'supplier-catalogue', label: 'Supplier Catalogue', icon: BookOpen },
+    { id: 'suppliers', label: 'Suppliers', icon: Truck },
     { id: 'products', label: 'Products', icon: Package },
     { id: 'stock', label: 'Stock Movement', icon: Boxes },
     { id: 'counter-sale', label: 'Counter Sale', icon: ShoppingBag },

@@ -21,6 +21,8 @@ export * from './locationService';
 export * from './ewayBillService';
 export * from './purchaseOrderService';
 export * from './purchaseOrderReceiptService';
+export * from './supplierCatalogueService';
+
 
 
 

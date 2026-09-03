@@ -1019,6 +1019,7 @@ export interface PurchaseOrderItem {
   id?: string;
   purchaseOrderId?: string;
   productId?: string | null;
+  supplierCatalogueItemId?: string | null;
   productName?: string;
   itemName?: string;
   isCustomItem?: boolean;
@@ -1128,6 +1129,105 @@ export interface PurchaseOrderFilterOptions {
   page?: number;
   pageSize?: number;
 }
+
+export type CatalogueImportStatus =
+  | 'UPLOADED'
+  | 'PROCESSING'
+  | 'PREVIEW_READY'
+  | 'IMPORTED'
+  | 'PARTIALLY_IMPORTED'
+  | 'FAILED';
+
+export interface SupplierCatalogueFile {
+  id: string;
+  workspaceId: string;
+  supplierId: string;
+  supplierName?: string;
+  fileName: string;
+  storagePath: string;
+  fileType: string;
+  fileSize?: number;
+  importStatus: CatalogueImportStatus;
+  totalRows: number;
+  successfulRows: number;
+  failedRows: number;
+  uploadedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupplierCatalogueMapping {
+  id?: string;
+  workspaceId?: string;
+  supplierId: string;
+  mappingConfig: Record<string, string>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SupplierCatalogueItem {
+  id: string;
+  workspaceId: string;
+  supplierId: string;
+  supplierName?: string;
+  catalogueFileId?: string | null;
+  productId?: string | null;
+  productName: string;
+  supplierProductCode?: string | null;
+  partNumber?: string | null;
+  description?: string | null;
+  brand?: string | null;
+  category?: string | null;
+  purchasePrice?: number | null;
+  currency?: string;
+  uom?: string;
+  gstRate?: number;
+  hsnSac?: string | null;
+  mrp?: number | null;
+  minimumOrderQuantity?: number;
+  packSize?: string | null;
+  barcode?: string | null;
+  leadTimeDays?: number | null;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  priceHistory?: SupplierCataloguePriceHistory[];
+}
+
+export interface SupplierCataloguePriceHistory {
+  id: string;
+  workspaceId: string;
+  supplierCatalogueItemId: string;
+  supplierId: string;
+  purchasePrice: number;
+  effectiveDate: string;
+  sourceFileId?: string | null;
+  createdAt?: string;
+}
+
+export interface ImportPreviewRow {
+  rowNumber: number;
+  productName: string;
+  supplierProductCode?: string;
+  partNumber?: string;
+  purchasePrice?: number;
+  uom?: string;
+  gstRate?: number;
+  hsnSac?: string;
+  brand?: string;
+  category?: string;
+  description?: string;
+  mrp?: number;
+  barcode?: string;
+  status: 'VALID' | 'WARNING' | 'ERROR';
+  errorMessage?: string;
+  matchedCatalogueItemId?: string;
+  matchedProductId?: string;
+  matchedProductName?: string;
+  action: 'NEW' | 'UPDATE' | 'MATCH' | 'ERROR';
+  rawData: Record<string, any>;
+}
+
 
 
 
