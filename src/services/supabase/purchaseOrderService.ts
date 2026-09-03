@@ -246,6 +246,7 @@ export class PurchaseOrderService {
 
       return {
         product_id: it.productId || null,
+        supplier_catalogue_item_id: it.supplierCatalogueItemId || null,
         item_name: customName,
         description: it.description || customName,
         quantity: qty,
@@ -465,9 +466,10 @@ export class PurchaseOrderService {
         id: it.id,
         purchaseOrderId: it.purchase_order_id,
         productId: it.product_id || null,
+        supplierCatalogueItemId: it.supplier_catalogue_item_id || null,
         productName: name,
         itemName: it.item_name || name,
-        isCustomItem: isCustom,
+        isCustomItem: !it.product_id && !it.supplier_catalogue_item_id,
         productSku: prod.sku || '',
         description: it.description,
         quantity: qty,
