@@ -21,11 +21,16 @@ import {
   DollarSign,
   CreditCard,
   AlertCircle,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import { store } from '../services/store';
 import { invoiceService } from '../services/supabase/invoiceService';
 import { paymentService } from '../services/supabase/paymentService';
 import { productService } from '../services/supabase/productService';
+import { customerService } from '../services/supabase/customerService';
+import { supabaseAuthService } from '../services/supabaseAuth';
+import { CustomerSelect } from '../components/CustomerSelect';
 import { PhoneInput } from '../components/PhoneInput';
 import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 import {
@@ -69,8 +74,12 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
   activeTab,
 }) => {
   const settings = store.getSettings();
-  const customers = store.getCustomers();
   const products = store.getProducts();
+
+  // Async customer state
+  const [customersList, setCustomersList] = useState<Customer[]>(() => store.getCustomers() || []);
+  const [isLoadingCustomers, setIsLoadingCustomers] = useState<boolean>(false);
+  const [customerError, setCustomerError] = useState<string | null>(null);
 
   const allTemplates = [...INVOICE_TEMPLATES, ...QUOTATION_TEMPLATES];
 
@@ -92,7 +101,9 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
     (documentType === 'invoice' ? INVOICE_TEMPLATES[0] : QUOTATION_TEMPLATES[0]);
 
   // 2. Customer State
-  const [customerMode, setCustomerMode] = useState<'existing' | 'manual'>('manual');
+  const [customerMode, setCustomerMode] = useState<'existing' | 'manual'>(
+    initialDraftData?.customerId ? 'existing' : 'manual'
+  );
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>(
     initialDraftData?.customerId || ''
   );
@@ -120,6 +131,47 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
   const [customerNameError, setCustomerNameError] = useState('');
   const [customerPhoneError, setCustomerPhoneError] = useState('');
   const [customerWhatsappError, setCustomerWhatsappError] = useState('');
+
+  // Fetch customers from Supabase (matching CustomersView architecture & multi-tenant context)
+  const fetchCustomers = async () => {
+    setIsLoadingCustomers(true);
+    setCustomerError(null);
+    try {
+      const res = await customerService.getCustomers();
+      const authUser = supabaseAuthService.getUser()?.id;
+      const businessId = supabaseAuthService.getCurrentCompanyId();
+      console.log('[Invoice Customer Load]', {
+        authUser,
+        businessId,
+        customerCount: res.data?.length || 0,
+        error: res.error,
+        firstCustomer: res.data?.[0],
+      });
+
+      if (res.data) {
+        setCustomersList(res.data);
+        store.setCustomers(res.data);
+      } else if (res.error) {
+        setCustomerError(res.error);
+      }
+    } catch (err: any) {
+      console.error('[Invoice Customer Load Failure]', err);
+      setCustomerError(err?.message || 'Failed to retrieve customer list.');
+    } finally {
+      setIsLoadingCustomers(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchCustomers();
+    const unsub = store.subscribe(() => {
+      const updated = store.getCustomers();
+      if (updated) {
+        setCustomersList(updated);
+      }
+    });
+    return unsub;
+  }, []);
 
   // Dates
   const [date, setDate] = useState(
@@ -258,13 +310,23 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
   // Handle Existing Customer Change
   const handleSelectExistingCustomer = (id: string) => {
     setSelectedCustomerId(id);
-    const cust = customers.find((c) => c.id === id);
+    if (!id) {
+      setCustomerName('');
+      setCustomerPhone('');
+      setCustomerWhatsapp('');
+      setCustomerEmail('');
+      setCustomerAddress('');
+      setCustomerGstin('');
+      return;
+    }
+    const cust = customersList.find((c) => c.id === id);
     if (cust) {
-      setCustomerName(cust.name);
-      setCustomerPhone(cust.phone);
-      setCustomerWhatsapp(cust.whatsapp || cust.phone);
-      setCustomerEmail(cust.email);
-      setCustomerAddress(`${cust.address}, ${cust.city}`);
+      setCustomerName(cust.name || '');
+      setCustomerPhone(cust.phone || '');
+      setCustomerWhatsapp(cust.whatsapp || cust.phone || '');
+      setCustomerEmail(cust.email || '');
+      const addrParts = [cust.address, cust.city, cust.state, cust.pincode].filter(Boolean);
+      setCustomerAddress(addrParts.join(', '));
       setCustomerGstin(cust.gstin || '');
     }
   };
@@ -918,22 +980,110 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
               </div>
 
               {customerMode === 'existing' ? (
-                <div>
-                  <label className="block text-[11px] font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">
-                    Select Customer Record
-                  </label>
-                  <select
-                    value={selectedCustomerId}
-                    onChange={(e) => handleSelectExistingCustomer(e.target.value)}
-                    className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 rounded-xl text-xs font-semibold"
-                  >
-                    <option value="">-- Choose Existing Customer --</option>
-                    {customers.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} ({c.phone})
-                      </option>
-                    ))}
-                  </select>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">
+                      Choose Existing Customer
+                    </label>
+
+                    {isLoadingCustomers ? (
+                      <div className="flex items-center gap-2 p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-500">
+                        <Loader2 className="w-4 h-4 animate-spin text-blue-600 shrink-0" />
+                        <span>Loading customers...</span>
+                      </div>
+                    ) : customerError ? (
+                      <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 rounded-xl text-xs space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="font-bold text-rose-700 dark:text-rose-400 flex items-center gap-1.5">
+                            <AlertCircle className="w-4 h-4 shrink-0" />
+                            <span>Error loading customers</span>
+                          </p>
+                          <button
+                            type="button"
+                            onClick={fetchCustomers}
+                            className="flex items-center gap-1 text-[11px] font-bold text-rose-700 dark:text-rose-400 hover:underline"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            <span>Retry</span>
+                          </button>
+                        </div>
+                        <p className="text-slate-600 dark:text-slate-300 text-[11px]">{customerError}</p>
+                      </div>
+                    ) : customersList.length === 0 ? (
+                      <div className="space-y-2">
+                        <select
+                          disabled
+                          className="w-full px-3 py-2.5 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500 rounded-xl text-xs font-semibold cursor-not-allowed"
+                        >
+                          <option value="">No existing customers found</option>
+                        </select>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          No customer records found in database. Use <strong>Enter Manually</strong> tab above to add a new customer or tick &quot;Save Customer to Database&quot; when creating this document.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {/* Searchable Autocomplete Customer Selector */}
+                        <CustomerSelect
+                          selectedCustomerId={selectedCustomerId}
+                          onSelectCustomer={(cust) => handleSelectExistingCustomer(cust ? cust.id : '')}
+                          customers={customersList}
+                          placeholder="Type customer name, phone, or location..."
+                        />
+
+                        {/* Standard Dropdown Select (Fallback / Direct Selection) */}
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">
+                            Or Select From Dropdown List
+                          </label>
+                          <select
+                            value={selectedCustomerId}
+                            onChange={(e) => handleSelectExistingCustomer(e.target.value)}
+                            className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">-- Choose Existing Customer --</option>
+                            {customersList.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name} — {formatIndianPhoneNumber(c.phone)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Visual Customer Summary Card when customer is selected */}
+                  {selectedCustomerId && (
+                    <div className="p-3 bg-slate-50 dark:bg-slate-950/60 rounded-xl border border-slate-200 dark:border-slate-800 text-xs space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-900 dark:text-slate-100">{customerName}</span>
+                        <span className="text-[10px] px-2 py-0.5 bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 font-bold rounded-full">
+                          Customer Selected
+                        </span>
+                      </div>
+                      {customerPhone && (
+                        <p className="text-slate-500 dark:text-slate-400 text-[11px]">
+                          <strong>Phone:</strong> {formatIndianPhoneNumber(customerPhone)}
+                        </p>
+                      )}
+                      {customerEmail && (
+                        <p className="text-slate-500 dark:text-slate-400 text-[11px]">
+                          <strong>Email:</strong> {customerEmail}
+                        </p>
+                      )}
+                      {customerAddress && (
+                        <p className="text-slate-500 dark:text-slate-400 text-[11px]">
+                          <strong>Address:</strong> {customerAddress}
+                        </p>
+                      )}
+                      {customerGstin && (
+                        <p className="text-slate-500 dark:text-slate-400 text-[11px]">
+                          <strong>GSTIN:</strong> {customerGstin}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-3">
