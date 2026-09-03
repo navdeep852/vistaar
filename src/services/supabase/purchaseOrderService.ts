@@ -211,6 +211,34 @@ export class PurchaseOrderService {
     const poNumber = poData.poNumber || (await this.generatePoNumber());
     const initialStatus: PurchaseOrderStatus = (poData.status as PurchaseOrderStatus) || 'DRAFT';
 
+    // -------------------------------------------------------------
+    // SERVER-SIDE PROCUREMENT RATE GOVERNANCE & CATALOGUE VERIFICATION
+    // -------------------------------------------------------------
+    const catIds = items.map((i) => i.supplierCatalogueItemId).filter(Boolean) as string[];
+    let cataloguePricesMap = new Map<string, number>();
+
+    if (catIds.length > 0 && isSupabaseConfigured()) {
+      try {
+        const { data: catRecords } = await supabase
+          .from('supplier_catalogue_items')
+          .select('id, purchase_price')
+          .in('id', catIds)
+          .eq('workspace_id', wsId);
+
+        if (catRecords) {
+          catRecords.forEach((cr: any) => {
+            cataloguePricesMap.set(cr.id, Number(cr.purchase_price) || 0);
+          });
+        }
+      } catch (err) {
+        console.warn('Failed to verify supplier catalogue prices from database:', err);
+      }
+    }
+
+    const currentUser = supabaseAuthService.getUser();
+    const userRole = (currentUser?.role || 'employee').toLowerCase();
+    const isAuthorizedRole = ['owner', 'admin', 'manager'].includes(userRole);
+
     // Recalculate totals decimal-safely
     let subtotal = 0;
     let totalDiscount = 0;
@@ -220,7 +248,48 @@ export class PurchaseOrderService {
 
     const mappedItemsPayload = items.map((it) => {
       const qty = Math.max(0.001, Number(it.quantity) || 1);
-      const rate = Math.max(0, Number(it.unitPrice) || 0);
+      let rate = Math.max(0, Number(it.unitPrice) || 0);
+      const catItemId = it.supplierCatalogueItemId || null;
+      let catRate: number | null = null;
+      let isOverridden = false;
+      let overrideStatus = it.overrideStatus || 'NONE';
+      let overrideReason = it.overrideReason || null;
+
+      // Rate Verification against Supplier Catalogue Source of Truth
+      if (catItemId && cataloguePricesMap.has(catItemId)) {
+        catRate = cataloguePricesMap.get(catItemId)!;
+        if (Math.abs(rate - catRate) > 0.001) {
+          if (isAuthorizedRole || overrideStatus === 'APPROVED') {
+            isOverridden = true;
+            overrideStatus = 'APPROVED';
+            overrideReason = overrideReason || 'Authorized negotiated rate override';
+          } else {
+            console.warn(
+              `[PROCUREMENT_CONTROL_BLOCKED] User (${currentUser?.email || 'Buyer'}) attempted unauthorized purchase rate modification for catalogue item ${catItemId}. Requested: ₹${rate}, Forced: ₹${catRate}`
+            );
+            rate = catRate;
+            isOverridden = false;
+            overrideStatus = 'NONE';
+            overrideReason = null;
+          }
+        } else {
+          isOverridden = false;
+          overrideStatus = 'NONE';
+        }
+      } else if (catItemId && it.catalogueUnitPrice !== undefined && it.catalogueUnitPrice !== null) {
+        catRate = Number(it.catalogueUnitPrice);
+        if (Math.abs(rate - catRate) > 0.001) {
+          if (isAuthorizedRole || overrideStatus === 'APPROVED') {
+            isOverridden = true;
+            overrideStatus = 'APPROVED';
+          } else {
+            rate = catRate;
+            isOverridden = false;
+            overrideStatus = 'NONE';
+          }
+        }
+      }
+
       const lineSubtotal = qty * rate;
 
       let discAmt = 0;
@@ -246,7 +315,13 @@ export class PurchaseOrderService {
 
       return {
         product_id: it.productId || null,
-        supplier_catalogue_item_id: it.supplierCatalogueItemId || null,
+        supplier_catalogue_item_id: catItemId,
+        catalogue_unit_price: catRate,
+        is_price_overridden: isOverridden,
+        override_reason: overrideReason,
+        override_requested_by: isOverridden ? (it.overrideRequestedBy || currentUser?.id || null) : null,
+        override_approved_by: isOverridden ? (it.overrideApprovedBy || (isAuthorizedRole ? currentUser?.id : null)) : null,
+        override_status: overrideStatus,
         item_name: customName,
         description: it.description || customName,
         quantity: qty,
@@ -345,6 +420,92 @@ export class PurchaseOrderService {
       return { data: freshPo.data };
     } catch (e: any) {
       return { error: handleSupabaseError(e, 'createPurchaseOrder') };
+    }
+  }
+
+  public async updatePurchaseOrder(
+    poId: string,
+    poData: Partial<PurchaseOrder>,
+    items: Partial<PurchaseOrderItem>[]
+  ): Promise<{ data?: PurchaseOrder; error?: string }> {
+    const wsId = this.getWorkspaceId();
+
+    const existingPoRes = await this.getPurchaseOrderById(poId);
+    if (!existingPoRes.data) return { error: 'Purchase Order not found.' };
+
+    const existingPo = existingPoRes.data;
+
+    // APPROVED PO LOCK: Direct rate/item edits forbidden on locked POs
+    const lockedStatuses: PurchaseOrderStatus[] = [
+      'SENT',
+      'CONFIRMED',
+      'PARTIALLY_RECEIVED',
+      'FULLY_RECEIVED',
+      'CLOSED',
+      'CANCELLED',
+    ];
+
+    if (lockedStatuses.includes(existingPo.status)) {
+      return {
+        error: `Purchase Order ${existingPo.poNumber} is locked (${existingPo.status}). Direct modifications are forbidden.`,
+      };
+    }
+
+    if (isSupabaseConfigured()) {
+      try {
+        await supabase.from('purchase_order_items').delete().eq('purchase_order_id', poId);
+      } catch (err) {
+        console.warn('Failed to clear old items before updating PO:', err);
+      }
+    }
+
+    return this.createPurchaseOrder({ ...poData, poNumber: existingPo.poNumber }, items);
+  }
+
+  public async requestPriceOverride(params: {
+    purchaseOrderId?: string;
+    purchaseOrderItemId?: string;
+    supplierCatalogueItemId?: string;
+    itemName: string;
+    originalRate: number;
+    requestedRate: number;
+    reason: string;
+  }): Promise<{ data?: any; error?: string }> {
+    const wsId = this.getWorkspaceId();
+    const user = supabaseAuthService.getUser();
+
+    if (!params.reason || !params.reason.trim()) {
+      return { error: 'Please provide a justification reason for the price override.' };
+    }
+
+    if (!isSupabaseConfigured()) {
+      return { data: { ...params, id: `ovr-${Date.now()}`, status: 'PENDING' } };
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('purchase_order_price_overrides')
+        .insert([
+          {
+            workspace_id: wsId,
+            purchase_order_id: params.purchaseOrderId || null,
+            purchase_order_item_id: params.purchaseOrderItemId || null,
+            supplier_catalogue_item_id: params.supplierCatalogueItemId || null,
+            item_name: params.itemName,
+            original_rate: params.originalRate,
+            requested_rate: params.requestedRate,
+            reason: params.reason.trim(),
+            requested_by: user?.id || null,
+            status: 'PENDING',
+          },
+        ])
+        .select()
+        .single();
+
+      if (error) return { error: handleSupabaseError(error, 'requestPriceOverride') };
+      return { data };
+    } catch (e: any) {
+      return { error: handleSupabaseError(e, 'requestPriceOverride') };
     }
   }
 
@@ -475,6 +636,12 @@ export class PurchaseOrderService {
         quantity: qty,
         unit: it.unit || 'Pcs',
         unitPrice: Number(it.unit_price) || 0,
+        catalogueUnitPrice: it.catalogue_unit_price !== null && it.catalogue_unit_price !== undefined ? Number(it.catalogue_unit_price) : null,
+        isPriceOverridden: Boolean(it.is_price_overridden),
+        overrideReason: it.override_reason || null,
+        overrideRequestedBy: it.override_requested_by || null,
+        overrideApprovedBy: it.override_approved_by || null,
+        overrideStatus: it.override_status || 'NONE',
         discountType: it.discount_type || 'FIXED',
         discountValue: Number(it.discount_value) || 0,
         discountAmount: Number(it.discount_amount) || 0,

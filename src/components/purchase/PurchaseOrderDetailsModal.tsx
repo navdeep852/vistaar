@@ -262,14 +262,29 @@ export const PurchaseOrderDetailsModal: React.FC<PurchaseOrderDetailsModalProps>
                       <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                         <td className="p-3">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <p className="font-bold text-slate-900 dark:text-white">{item.productName || item.description || 'Custom Item'}</p>
-                            {!item.productId && (
+                            <p className="font-bold text-slate-900 dark:text-white">{item.productName || item.itemName || item.description || 'Custom Item'}</p>
+                            {item.supplierCatalogueItemId ? (
+                              <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 text-[10px] font-bold rounded flex items-center gap-0.5">
+                                <Lock className="w-2.5 h-2.5 text-blue-600" /> Catalogue Rate
+                              </span>
+                            ) : item.isCustomItem ? (
                               <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 text-[10px] font-bold rounded">
                                 Custom Item
+                              </span>
+                            ) : null}
+
+                            {item.isPriceOverridden && (
+                              <span className="px-1.5 py-0.5 bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300 text-[10px] font-bold rounded border border-amber-300 dark:border-amber-800" title={item.overrideReason || 'Authorized rate override'}>
+                                Rate Override ({item.overrideStatus || 'APPROVED'})
                               </span>
                             )}
                           </div>
                           {item.productSku && <p className="text-[10px] text-slate-500 font-mono">SKU: {item.productSku}</p>}
+                          {item.overrideReason && (
+                            <p className="text-[10px] text-amber-700 dark:text-amber-400 italic mt-0.5">
+                              Audit Justification: {item.overrideReason}
+                            </p>
+                          )}
                           {item.description && item.description !== item.productName && (
                             <p className="text-[11px] text-slate-500 italic mt-0.5">{item.description}</p>
                           )}
@@ -277,7 +292,14 @@ export const PurchaseOrderDetailsModal: React.FC<PurchaseOrderDetailsModalProps>
                         <td className="p-3 text-right font-mono font-bold text-slate-900 dark:text-white">{item.quantity}</td>
                         <td className="p-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">{item.receivedQuantity || 0}</td>
                         <td className="p-3 text-right font-mono font-bold text-amber-600 dark:text-amber-400">{item.pendingQuantity || 0}</td>
-                        <td className="p-3 text-right font-mono">₹{item.unitPrice.toFixed(2)}</td>
+                        <td className="p-3 text-right font-mono font-semibold">
+                          ₹{item.unitPrice.toFixed(2)}
+                          {item.catalogueUnitPrice && item.catalogueUnitPrice !== item.unitPrice && (
+                            <div className="text-[9px] text-slate-400 line-through font-mono">
+                              ₹{item.catalogueUnitPrice.toFixed(2)}
+                            </div>
+                          )}
+                        </td>
                         <td className="p-3 text-right font-mono">{item.taxRate || 0}%</td>
                         <td className="p-3 text-right font-mono font-bold text-slate-900 dark:text-white">₹{item.lineTotal?.toFixed(2)}</td>
                       </tr>

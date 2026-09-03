@@ -1028,6 +1028,12 @@ export interface PurchaseOrderItem {
   quantity: number;
   unit?: string;
   unitPrice: number;
+  catalogueUnitPrice?: number | null;
+  isPriceOverridden?: boolean;
+  overrideReason?: string | null;
+  overrideRequestedBy?: string | null;
+  overrideApprovedBy?: string | null;
+  overrideStatus?: 'NONE' | 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED';
   discountType?: 'PERCENTAGE' | 'FIXED';
   discountValue?: number;
   discountAmount?: number;
@@ -1040,6 +1046,24 @@ export interface PurchaseOrderItem {
   lineTotal?: number;
   receivedQuantity?: number;
   pendingQuantity?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PurchaseOrderPriceOverride {
+  id: string;
+  workspaceId: string;
+  purchaseOrderId?: string | null;
+  purchaseOrderItemId?: string | null;
+  supplierCatalogueItemId?: string | null;
+  itemName: string;
+  originalRate: number;
+  requestedRate: number;
+  approvedRate?: number | null;
+  reason: string;
+  requestedBy?: string | null;
+  approvedBy?: string | null;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
   createdAt?: string;
   updatedAt?: string;
 }
