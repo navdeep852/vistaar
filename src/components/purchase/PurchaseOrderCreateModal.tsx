@@ -36,6 +36,7 @@ export const PurchaseOrderCreateModal: React.FC<PurchaseOrderCreateModalProps> =
   initialPo,
 }) => {
   const [loading, setLoading] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   // User Role Check
   const currentUser = supabaseAuthService.getUser();
@@ -441,8 +442,6 @@ export const PurchaseOrderCreateModal: React.FC<PurchaseOrderCreateModalProps> =
   };
 
   const totals = calculateTotals();
-
-  const isSubmittingRef = useRef(false);
 
   const handleSave = async (statusToSave: 'DRAFT' | 'SENT') => {
     if (isSubmittingRef.current) return;
