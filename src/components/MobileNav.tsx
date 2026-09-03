@@ -22,6 +22,7 @@ import {
   BookOpen,
   Wallet,
   Truck,
+  ShoppingCart,
 } from 'lucide-react';
 
 
@@ -77,6 +78,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
 
     { id: 'udhari', label: 'Udhari Ledger', icon: Scale },
     { id: 'payments', label: 'Payments', icon: CreditCard },
+    { id: 'purchase-orders', label: 'Purchase Orders', icon: ShoppingCart },
     { id: 'products', label: 'Products', icon: Package },
     { id: 'stock', label: 'Stock Movement', icon: Boxes },
     { id: 'counter-sale', label: 'Counter Sale', icon: ShoppingBag },

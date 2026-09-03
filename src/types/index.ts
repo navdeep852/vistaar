@@ -113,6 +113,7 @@ export interface Supplier {
   phone: string;
   email: string;
   address: string;
+  gstin?: string;
 }
 
 export interface Product {
@@ -1001,6 +1002,131 @@ export interface EwayBillFilterOptions {
   page?: number;
   pageSize?: number;
 }
+
+// ============================================================================
+// PURCHASE ORDER MODULE TYPES
+// ============================================================================
+export type PurchaseOrderStatus =
+  | 'DRAFT'
+  | 'SENT'
+  | 'CONFIRMED'
+  | 'PARTIALLY_RECEIVED'
+  | 'FULLY_RECEIVED'
+  | 'CLOSED'
+  | 'CANCELLED';
+
+export interface PurchaseOrderItem {
+  id?: string;
+  purchaseOrderId?: string;
+  productId: string;
+  productName?: string;
+  productSku?: string;
+  description?: string;
+  quantity: number;
+  unit?: string;
+  unitPrice: number;
+  discountType?: 'PERCENTAGE' | 'FIXED';
+  discountValue?: number;
+  discountAmount?: number;
+  taxRate?: number;
+  taxAmount?: number;
+  cgstAmount?: number;
+  sgstAmount?: number;
+  igstAmount?: number;
+  lineSubtotal?: number;
+  lineTotal?: number;
+  receivedQuantity?: number;
+  pendingQuantity?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PurchaseOrderStatusHistory {
+  id?: string;
+  purchaseOrderId: string;
+  oldStatus?: string | null;
+  newStatus: PurchaseOrderStatus;
+  changedBy?: string | null;
+  notes?: string | null;
+  createdAt?: string;
+}
+
+export interface PurchaseOrderReceiptItem {
+  id?: string;
+  receiptId?: string;
+  purchaseOrderItemId: string;
+  productId: string;
+  productName?: string;
+  orderedQuantity: number;
+  previouslyReceivedQuantity: number;
+  receivedQuantity: number;
+  createdAt?: string;
+}
+
+export interface PurchaseOrderReceipt {
+  id?: string;
+  workspaceId?: string;
+  purchaseOrderId: string;
+  receiptNumber: string;
+  receiptDate: string;
+  receivedBy?: string;
+  notes?: string;
+  status?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  items?: PurchaseOrderReceiptItem[];
+}
+
+export interface PurchaseOrder {
+  id?: string;
+  workspaceId?: string;
+  supplierId: string;
+  supplierName?: string;
+  supplierPhone?: string;
+  supplierGstin?: string;
+  supplierAddress?: string;
+  poNumber: string;
+  poDate: string;
+  expectedDeliveryDate?: string | null;
+  referenceNumber?: string | null;
+  status: PurchaseOrderStatus;
+  paymentTerms?: string | null;
+  deliveryLocationId?: string | null;
+
+  subtotal: number;
+  discountAmount: number;
+  taxableAmount: number;
+  taxAmount: number;
+  grandTotal: number;
+
+  notes?: string | null;
+  termsConditions?: string | null;
+  internalNotes?: string | null;
+
+  createdBy?: string;
+  sentAt?: string | null;
+  confirmedAt?: string | null;
+  cancelledAt?: string | null;
+  closedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+
+  items?: PurchaseOrderItem[];
+  statusHistory?: PurchaseOrderStatusHistory[];
+  receipts?: PurchaseOrderReceipt[];
+}
+
+export interface PurchaseOrderFilterOptions {
+  search?: string;
+  status?: string;
+  supplierId?: string;
+  startDate?: string;
+  endDate?: string;
+  sortBy?: 'newest' | 'oldest' | 'highest_value' | 'lowest_value';
+  page?: number;
+  pageSize?: number;
+}
+
 
 
 

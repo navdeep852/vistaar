@@ -20,6 +20,7 @@ import {
   Scale,
   BookOpen,
   Wallet,
+  ShoppingCart,
 } from 'lucide-react';
 
 
@@ -97,6 +98,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         { id: 'stock', label: 'Stock Movement', icon: Boxes, badge: lowStockCount, badgeColor: 'bg-amber-500' },
         { id: 'counter-sale', label: 'Counter Sale', icon: ShoppingBag },
         { id: 'categories', label: 'Categories', icon: FolderTree },
+      ],
+    },
+    {
+      title: 'PURCHASES & LOGISTICS',
+      items: [
+        { id: 'purchase-orders', label: 'Purchase Orders', icon: ShoppingCart },
         { id: 'suppliers', label: 'Suppliers', icon: Truck },
       ],
     },

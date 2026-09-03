@@ -20,6 +20,8 @@ import { ExpensesView } from './views/ExpensesView';
 import { DaybookView } from './views/DaybookView';
 import { CashbookView } from './views/CashbookView';
 import { EwayBillsView } from './views/EwayBillsView';
+import { PurchaseOrdersView } from './views/PurchaseOrdersView';
+
 
 
 
@@ -123,6 +125,9 @@ function MainAppContent() {
         );
       case 'eway':
         return <EwayBillsView />;
+      case 'purchase-orders':
+        return <PurchaseOrdersView />;
+
 
       case 'customers':
         return (
