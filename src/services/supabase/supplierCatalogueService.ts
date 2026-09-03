@@ -76,11 +76,12 @@ export class SupplierCatalogueService {
       }
 
       // 2. Insert record in supplier_catalogue_files
-      const { data, error } = await supabase
+      let insertResult = await supabase
         .from('supplier_catalogue_files')
         .insert([
           {
             workspace_id: wsId,
+            business_id: wsId,
             supplier_id: supplierId,
             file_name: file.name,
             storage_path: uploadRes.path,
@@ -90,6 +91,7 @@ export class SupplierCatalogueService {
             total_rows: 0,
             successful_rows: 0,
             failed_rows: 0,
+            warning_rows: 0,
             uploaded_by: supabaseAuthService.getUser()?.id || null,
           },
         ])
@@ -98,6 +100,33 @@ export class SupplierCatalogueService {
           suppliers(name)
         `)
         .single();
+
+      if (insertResult.error) {
+        // Retry select without join if relationship query fails
+        insertResult = await supabase
+          .from('supplier_catalogue_files')
+          .insert([
+            {
+              workspace_id: wsId,
+              business_id: wsId,
+              supplier_id: supplierId,
+              file_name: file.name,
+              storage_path: uploadRes.path,
+              file_type: ext,
+              file_size: file.size,
+              import_status: 'UPLOADED',
+              total_rows: 0,
+              successful_rows: 0,
+              failed_rows: 0,
+              warning_rows: 0,
+              uploaded_by: supabaseAuthService.getUser()?.id || null,
+            },
+          ])
+          .select('*')
+          .single();
+      }
+
+      const { data, error } = insertResult;
 
       if (error || !data) {
         return { error: handleSupabaseError(error, 'uploadFile - insert header') };
