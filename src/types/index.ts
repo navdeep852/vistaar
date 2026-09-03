@@ -804,7 +804,9 @@ export type VehicleType = 'REGULAR' | 'OVER_DIMENSIONAL_CARGO';
 export type EwayBillStatus =
   | 'DRAFT'
   | 'READY'
+  | 'GENERATING'
   | 'GENERATION_PENDING'
+  | 'GENERATED'
   | 'ACTIVE'
   | 'EXPIRING_SOON'
   | 'EXPIRED'
@@ -962,6 +964,12 @@ export interface EwayBill {
   cancellationRemarks?: string;
 
   governmentReference?: string;
+  ewbTransactionId?: string;
+  ewbOfficialResponse?: Record<string, any>;
+  ewbQrPayload?: string;
+  ewbEnvironment?: 'SANDBOX' | 'PRODUCTION';
+  ewbErrorCode?: string;
+  ewbErrorMessage?: string;
   lastApiStatus?: string;
   lastApiErrorCode?: string;
   lastApiErrorMessage?: string;

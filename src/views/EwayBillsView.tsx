@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { EwayBill, EwayBillStatus, Transporter, Vehicle, BusinessLocation } from '../types';
 import { ewayBillService } from '../services/supabase';
+import { ewayBillApiService } from '../services/ewayBillApiService';
 import { CreateEwayBillModal } from '../components/eway/CreateEwayBillModal';
 import { EwayBillDetailsModal } from '../components/eway/EwayBillDetailsModal';
 import { UpdateVehicleModal } from '../components/eway/UpdateVehicleModal';
@@ -29,6 +30,7 @@ import { EwayBillPrintModal } from '../components/eway/EwayBillPrintModal';
 import { TransportersModal } from '../components/eway/TransportersModal';
 import { VehiclesModal } from '../components/eway/VehiclesModal';
 import { LocationsModal } from '../components/eway/LocationsModal';
+import { VerifyEwayBillModal } from '../components/eway/VerifyEwayBillModal';
 
 export const EwayBillsView = () => {
   const [activeTab, setActiveTab] = useState<'ewb' | 'transporters' | 'vehicles' | 'locations'>('ewb');
@@ -42,6 +44,7 @@ export const EwayBillsView = () => {
 
   // Modals state
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isVerifyModalOpen, setIsVerifyModalOpen] = useState(false);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [isUpdateVehicleModalOpen, setIsUpdateVehicleModalOpen] = useState(false);
   const [isExtendValidityModalOpen, setIsExtendValidityModalOpen] = useState(false);
@@ -53,6 +56,8 @@ export const EwayBillsView = () => {
   const [isLocationsModalOpen, setIsLocationsModalOpen] = useState(false);
 
   const [selectedEwayBill, setSelectedEwayBill] = useState<EwayBill | null>(null);
+
+  const envMode = ewayBillApiService.getEnvironmentMode();
 
   const loadEwayBills = async () => {
     setLoading(true);
@@ -71,7 +76,7 @@ export const EwayBillsView = () => {
 
   // KPI Calculations
   const totalCount = ewayBills.length;
-  const activeCount = ewayBills.filter((e) => e.status === 'ACTIVE').length;
+  const activeCount = ewayBills.filter((e) => e.status === 'ACTIVE' || e.status === 'GENERATED').length;
   const expiringCount = ewayBills.filter((e) => e.status === 'EXPIRING_SOON').length;
   const expiredCount = ewayBills.filter((e) => e.status === 'EXPIRED').length;
   const cancelledCount = ewayBills.filter((e) => e.status === 'CANCELLED').length;
@@ -86,8 +91,14 @@ export const EwayBillsView = () => {
             <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
               E-Way Bills & Logistics Compliance
             </h1>
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-              GST Live
+            <span
+              className={`px-2.5 py-0.5 rounded-full text-xs font-bold border uppercase tracking-wider ${
+                envMode === 'PRODUCTION'
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                  : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+              }`}
+            >
+              {envMode === 'PRODUCTION' ? 'GST Live Production' : 'GST Gateway Sandbox'}
             </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
@@ -96,6 +107,13 @@ export const EwayBillsView = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={() => setIsVerifyModalOpen(true)}
+            className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer shadow-xs"
+          >
+            <ShieldCheck className="w-4 h-4 text-emerald-500" />
+            Verify EWB
+          </button>
           <button
             onClick={() => setIsTransportersModalOpen(true)}
             className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer shadow-xs"
@@ -474,6 +492,11 @@ export const EwayBillsView = () => {
       <LocationsModal
         isOpen={isLocationsModalOpen}
         onClose={() => setIsLocationsModalOpen(false)}
+      />
+
+      <VerifyEwayBillModal
+        isOpen={isVerifyModalOpen}
+        onClose={() => setIsVerifyModalOpen(false)}
       />
     </div>
   );

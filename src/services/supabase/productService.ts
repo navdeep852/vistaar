@@ -345,21 +345,34 @@ export class ProductService {
 
   public async getProductAvailableStock(productId: string): Promise<number> {
     if (!isSupabaseConfigured()) {
+      const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+      const p = local.find((prod) => prod.id === productId) || store.getProducts().find((prod) => prod.id === productId);
+      const prodStock = Math.max(0, Number(p?.currentStock) || 0);
+
       const receipts = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []).filter(
         (r: any) => r.product_id === productId
       );
       if (receipts.length > 0) {
         const batchSum = receipts.reduce((acc, row) => acc + (Number(row.quantity_remaining) || 0), 0);
-        return Math.max(0, batchSum);
+        return Math.max(prodStock, Math.max(0, batchSum));
       }
-      const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
-      const p = local.find((prod) => prod.id === productId) || store.getProducts().find((prod) => prod.id === productId);
-      return Math.max(0, Number(p?.currentStock) || 0);
+      return prodStock;
     }
 
     const wsId = this.getWorkspaceId();
     try {
-      // 1. Try fetching sum of active stock receipts
+      // 1. Fetch current_stock directly from products table (canonical inventory source)
+      const { data: prodData, error: prodErr } = await supabase
+        .from('products')
+        .select('id, name, current_stock')
+        .eq('workspace_id', wsId)
+        .eq('id', productId)
+        .maybeSingle();
+
+      const prodStock = !prodErr && prodData ? Math.max(0, Number(prodData.current_stock) || 0) : 0;
+
+      // 2. Fetch stock_receipts sum if receipts are configured
+      let batchSum = 0;
       const { data: receipts, error: recErr } = await supabase
         .from('stock_receipts')
         .select('quantity_remaining')
@@ -367,25 +380,25 @@ export class ProductService {
         .eq('product_id', productId);
 
       if (!recErr && receipts && receipts.length > 0) {
-        const batchSum = receipts.reduce((acc: number, row: { quantity_remaining?: number | string | null }) => acc + (Number(row.quantity_remaining) || 0), 0);
-        return Math.max(0, batchSum);
+        batchSum = receipts.reduce((acc: number, row: { quantity_remaining?: number | string | null }) => acc + (Number(row.quantity_remaining) || 0), 0);
       }
 
-      // 2. Fallback to product.current_stock directly on products table
-      const { data: prodData, error: prodErr } = await supabase
-        .from('products')
-        .select('current_stock')
-        .eq('workspace_id', wsId)
-        .eq('id', productId)
-        .maybeSingle();
+      // Return maximum between products table current_stock and stock_receipts sum
+      const availableStock = receipts && receipts.length > 0 ? Math.max(prodStock, Math.max(0, batchSum)) : (prodData ? prodStock : 0);
 
-      if (!prodErr && prodData) {
-        return Math.max(0, Number(prodData.current_stock) || 0);
-      }
+      const pStore = store.getProducts().find((prod) => prod.id === productId);
+      const finalStock = availableStock || Math.max(0, Number(pStore?.currentStock) || 0);
 
-      // 3. Fallback to local store
-      const p = store.getProducts().find((prod) => prod.id === productId);
-      return Math.max(0, Number(p?.currentStock) || 0);
+      console.log('[INVOICE STOCK CHECK]', {
+        productId,
+        productName: prodData?.name || pStore?.name || 'Product',
+        businessId: wsId,
+        storedQuantity: prodData?.current_stock ?? pStore?.currentStock,
+        batchSum: receipts && receipts.length > 0 ? batchSum : 'N/A',
+        availableQuantity: finalStock,
+      });
+
+      return finalStock;
     } catch (e) {
       handleSupabaseError(e, 'getProductAvailableStock');
       const p = store.getProducts().find((prod) => prod.id === productId);

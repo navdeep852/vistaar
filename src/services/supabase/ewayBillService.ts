@@ -70,6 +70,12 @@ export class EwayBillService {
       cancellationRemarks: row.cancellation_remarks,
 
       governmentReference: row.government_reference,
+      ewbTransactionId: row.ewb_transaction_id || row.transaction_id,
+      ewbOfficialResponse: row.ewb_official_response || row.official_response,
+      ewbQrPayload: row.ewb_qr_payload || row.qr_payload,
+      ewbEnvironment: row.ewb_environment || row.environment,
+      ewbErrorCode: row.ewb_error_code || row.error_code,
+      ewbErrorMessage: row.ewb_error_message || row.error_message,
       lastApiStatus: row.last_api_status,
       lastApiErrorCode: row.last_api_error_code,
       lastApiErrorMessage: row.last_api_error_message,
@@ -284,6 +290,12 @@ export class EwayBillService {
       valid_from: ewayBill.validFrom || null,
       valid_until: ewayBill.validUntil || null,
       government_reference: ewayBill.governmentReference || null,
+      ewb_transaction_id: ewayBill.ewbTransactionId || null,
+      ewb_official_response: ewayBill.ewbOfficialResponse || null,
+      ewb_qr_payload: ewayBill.ewbQrPayload || null,
+      ewb_environment: ewayBill.ewbEnvironment || 'SANDBOX',
+      ewb_error_code: ewayBill.ewbErrorCode || null,
+      ewb_error_message: ewayBill.ewbErrorMessage || null,
     };
 
     try {

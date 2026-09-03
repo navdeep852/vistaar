@@ -346,8 +346,8 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
     ]);
   };
 
-  const handleSelectProductForLine = (index: number, prod: Product) => {
-    const availStock = Number(prod.currentStock ?? (prod as any).current_stock ?? 0);
+  const handleSelectProductForLine = async (index: number, prod: Product) => {
+    const initialAvailStock = Number(prod.currentStock ?? (prod as any).current_stock ?? 0);
     setItems((prev) => {
       const updated = [...prev];
       updated[index] = {
@@ -358,11 +358,29 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         partNumber: prod.partNumber || (prod as any).part_number || '',
         unit: prod.unit || 'Pcs',
         sellingPrice: prod.sellingPrice ?? (prod as any).selling_price ?? 0,
-        availableStock: availStock,
+        availableStock: initialAvailStock,
         taxPercent: prod.taxPercent ?? 18,
       };
       return updated;
     });
+
+    if (prod.id) {
+      try {
+        const liveStock = await productService.getProductAvailableStock(prod.id);
+        setItems((prev) => {
+          const updated = [...prev];
+          if (updated[index] && updated[index].productId === prod.id) {
+            updated[index] = {
+              ...updated[index],
+              availableStock: liveStock,
+            };
+          }
+          return updated;
+        });
+      } catch (e) {
+        console.warn('Failed to fetch live stock for product:', prod.id, e);
+      }
+    }
   };
 
 

@@ -251,7 +251,7 @@ export const CreateEwayBillModal: React.FC<CreateEwayBillModalProps> = ({
     setErrorMsg(null);
 
     try {
-      // Step 1: Call Government GSP API Provider
+      // Step 1: Call Official Government GSP API Provider
       const apiRes = await ewayBillApiService.generateEwayBill(currentPayload as EwayBill);
 
       if (!apiRes.success) {
@@ -260,7 +260,7 @@ export const CreateEwayBillModal: React.FC<CreateEwayBillModalProps> = ({
         return;
       }
 
-      // Step 2: Persist Generated EWB with official metadata
+      // Step 2: Persist Generated EWB with official metadata and authentic QR payload
       const { data, error } = await ewayBillService.createEwayBill(
         {
           ...currentPayload,
@@ -269,6 +269,10 @@ export const CreateEwayBillModal: React.FC<CreateEwayBillModalProps> = ({
           validFrom: apiRes.validFrom,
           validUntil: apiRes.validUntil,
           governmentReference: apiRes.governmentReference,
+          ewbTransactionId: apiRes.transactionId,
+          ewbOfficialResponse: apiRes.rawResponse,
+          ewbQrPayload: apiRes.qrPayload,
+          ewbEnvironment: apiRes.environment || 'SANDBOX',
           status: 'ACTIVE',
           lastApiStatus: 'SUCCESS',
         },

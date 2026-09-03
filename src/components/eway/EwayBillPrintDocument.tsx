@@ -1,5 +1,6 @@
 import React from 'react';
 import { EwayBill } from '../../types';
+import { EwayBillQrCode } from './EwayBillQrCode';
 
 interface EwayBillPrintDocumentProps {
   ewayBill: EwayBill;
@@ -10,6 +11,10 @@ export const EwayBillPrintDocument: React.FC<EwayBillPrintDocumentProps> = ({
   ewayBill,
   isPrintMode = false,
 }) => {
+  const isOfficial = ewayBill.status === 'ACTIVE' || ewayBill.status === 'GENERATED' || ewayBill.status === 'EXPIRING_SOON';
+  const isDraft = ewayBill.status === 'DRAFT' || ewayBill.status === 'READY';
+  const isFailed = ewayBill.status === 'GENERATION_FAILED';
+
   const generatedAtStr = ewayBill.generatedAt
     ? new Date(ewayBill.generatedAt).toLocaleString('en-IN', {
         dateStyle: 'medium',
@@ -89,44 +94,52 @@ export const EwayBillPrintDocument: React.FC<EwayBillPrintDocumentProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-base font-black uppercase tracking-wider text-slate-900" style={{ fontSize: '13pt' }}>
-              FORM GST EWB-01
+              {isOfficial ? 'FORM GST EWB-01' : isFailed ? 'E-Way Bill Generation Failed' : 'E-Way Bill Draft'}
             </h1>
-            <span className="text-[7.5pt] font-extrabold px-1.5 py-0.5 border border-slate-800 bg-slate-100 rounded-xs uppercase">
-              e-Way Bill System
+            <span
+              className={`text-[7.5pt] font-extrabold px-1.5 py-0.5 border rounded-xs uppercase ${
+                isOfficial
+                  ? 'border-emerald-800 bg-emerald-50 text-emerald-900'
+                  : isFailed
+                  ? 'border-rose-800 bg-rose-50 text-rose-900'
+                  : 'border-amber-800 bg-amber-50 text-amber-900'
+              }`}
+            >
+              {isOfficial ? 'Officially Generated' : isFailed ? 'FAILED — NOT GOVERNMENT ISSUED' : 'DRAFT — NOT GOVERNMENT ISSUED'}
             </span>
           </div>
           <p className="text-[8.5pt] font-bold text-slate-700 mt-0.5">
-            Government of India — Ministry of Finance • GST Compliance Gateway
+            {isOfficial ? 'Government of India — Ministry of Finance • GST Compliance Gateway' : 'VISTAAR Local Pre-Generation Compliance Draft'}
           </p>
           <p className="text-[7.5pt] text-slate-600 font-mono mt-0.5">
-            NIC / GSP Verification Reference: <span className="font-bold">{ewayBill.governmentReference || 'NIC-EWB-REG-2026'}</span>
+            NIC / GSP Verification Reference:{' '}
+            <span className="font-bold">{isOfficial ? ewayBill.governmentReference || 'NIC-EWB-OFFICIAL' : 'N/A (Draft State)'}</span>
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Simulated Scannable Vector QR Code Graphic */}
-          <div className="w-12 h-12 border border-slate-900 p-0.5 bg-white flex flex-col justify-between" title="NIC QR Verification Code">
-            <div className="flex justify-between">
-              <div className="w-3.5 h-3.5 bg-slate-900 border border-white" />
-              <div className="w-1.5 h-1.5 bg-slate-900" />
-              <div className="w-3.5 h-3.5 bg-slate-900 border border-white" />
+          {/* Authentic Scannable QR Code or Draft Indicator */}
+          {isOfficial ? (
+            <EwayBillQrCode
+              qrPayload={
+                ewayBill.ewbQrPayload ||
+                `${ewayBill.ewayBillNumber}|${ewayBill.generatedAt}|${ewayBill.fromGstin}|${ewayBill.documentNumber}|${ewayBill.documentDate}|${ewayBill.fromGstin}|${ewayBill.toGstin || 'URP'}|${ewayBill.totalInvoiceValue}`
+              }
+              size={64}
+              showCaption={false}
+            />
+          ) : (
+            <div className="w-24 h-16 border border-dashed border-slate-300 p-1 bg-slate-50 flex items-center justify-center text-center rounded">
+              <span className="text-[7pt] font-bold text-slate-400 uppercase leading-tight">
+                {isFailed ? 'No official QR available' : 'QR unavailable — official EWB has not been generated'}
+              </span>
             </div>
-            <div className="flex justify-around items-center">
-              <div className="w-2 h-2 bg-slate-900" />
-              <div className="w-1 h-3 bg-slate-900" />
-              <div className="w-2 h-2 bg-slate-900" />
-            </div>
-            <div className="flex justify-between">
-              <div className="w-3.5 h-3.5 bg-slate-900 border border-white" />
-              <div className="w-2 h-1.5 bg-slate-900" />
-              <div className="w-2 h-2 bg-slate-900" />
-            </div>
-          </div>
+          )}
 
           <div className="text-right">
             <div className="text-[8pt] text-slate-500 font-bold uppercase tracking-wider">E-Way Bill Number</div>
             <div className="font-mono font-black text-sm text-slate-900 tracking-widest" style={{ fontSize: '12pt' }}>
-              {ewayBill.ewayBillNumber || 'DRAFT-EWB'}
+              {isOfficial ? ewayBill.ewayBillNumber : isDraft ? 'DRAFT (Unissued)' : 'FAILED'}
             </div>
             <div className="mt-1">
               <span className="inline-block px-2 py-0.5 border border-slate-900 font-extrabold text-[8pt] rounded-xs bg-slate-100 uppercase">

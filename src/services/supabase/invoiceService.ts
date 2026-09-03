@@ -1,4 +1,4 @@
-import { supabase } from '../../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { Invoice, Product } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError } from '../../lib/supabaseError';
@@ -218,7 +218,32 @@ export class InvoiceService {
         if (!productId || qty <= 0) continue;
 
         store.adjustStock(productId, 'Sale', -qty, `Invoice Finalization #${invNumber}`, invNumber);
+
+        if (isSupabaseConfigured()) {
+          try {
+            const { data: currentProd } = await supabase
+              .from('products')
+              .select('current_stock')
+              .eq('workspace_id', wsId)
+              .eq('id', productId)
+              .maybeSingle();
+
+            if (currentProd) {
+              const newStock = Math.max(0, (Number(currentProd.current_stock) || 0) - qty);
+              await supabase
+                .from('products')
+                .update({ current_stock: newStock, updated_at: new Date().toISOString() })
+                .eq('workspace_id', wsId)
+                .eq('id', productId);
+            }
+          } catch (e) {
+            console.warn('[Stock Deduction] Supabase update warning:', e);
+          }
+        }
       }
+
+      // Invalidate product service cache so all views receive fresh stock immediately
+      productService.invalidateCache();
 
       // Update local tenant storage invoice status
       const local = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
