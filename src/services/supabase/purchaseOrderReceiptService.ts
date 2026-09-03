@@ -79,11 +79,18 @@ export class PurchaseOrderReceiptService {
       return { success: false, error: 'Please enter a valid quantity greater than 0 to receive stock.' };
     }
 
-    // 2. Validate over-receiving for each line item
+    // 2. Validate over-receiving & custom item product linking for each line item
     for (const itemInput of itemsToProcess) {
       const poItem = (po.items || []).find((i) => i.id === itemInput.purchaseOrderItemId);
       if (!poItem) {
-        return { success: false, error: `PO item not found for product ID ${itemInput.productId}` };
+        return { success: false, error: `PO item not found for item ID ${itemInput.purchaseOrderItemId}` };
+      }
+
+      if (!poItem.productId) {
+        return {
+          success: false,
+          error: `This item ('${poItem.productName || poItem.description}') is not linked to a product in your inventory catalogue. Please create or link an inventory product before receiving stock.`,
+        };
       }
 
       const pendingQty = Math.max(0, poItem.quantity - (poItem.receivedQuantity || 0));
@@ -119,7 +126,7 @@ export class PurchaseOrderReceiptService {
         if (poItem) {
           poItem.receivedQuantity = (poItem.receivedQuantity || 0) + itemInput.receiveQuantity;
           await inventoryService.createStockReceipt({
-            productId: poItem.productId,
+            productId: poItem.productId!,
             supplierId: po.supplierId,
             receiptNumber,
             purchaseOrderNumber: po.poNumber,
@@ -189,7 +196,7 @@ export class PurchaseOrderReceiptService {
         // 2. THIS IS THE CRITICAL INVENTORY INCREMENT RULE
         // Create stock_receipt in inventoryService to update products.current_stock
         await inventoryService.createStockReceipt({
-          productId: poItem.productId,
+          productId: poItem.productId!,
           supplierId: po.supplierId,
           receiptNumber,
           purchaseOrderNumber: po.poNumber,
@@ -229,6 +236,31 @@ export class PurchaseOrderReceiptService {
       return { success: true, receipt: receiptRecord as any };
     } catch (e: any) {
       return { success: false, error: handleSupabaseError(e, 'postGoodsReceipt') };
+    }
+  }
+
+  public async linkCustomPoItemToProduct(
+    poItemId: string,
+    productId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!isSupabaseConfigured()) {
+      return { success: true };
+    }
+
+    try {
+      const { error } = await supabase
+        .from('purchase_order_items')
+        .update({ product_id: productId, updated_at: new Date().toISOString() })
+        .eq('id', poItemId);
+
+      if (error) {
+        return { success: false, error: handleSupabaseError(error, 'linkCustomPoItemToProduct') };
+      }
+
+      productService.invalidateCache();
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: handleSupabaseError(e, 'linkCustomPoItemToProduct') };
     }
   }
 }

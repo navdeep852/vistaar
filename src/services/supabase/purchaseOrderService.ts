@@ -179,8 +179,34 @@ export class PurchaseOrderService {
   ): Promise<{ data?: PurchaseOrder; error?: string }> {
     const wsId = this.getWorkspaceId();
 
-    if (!poData.supplierId) return { error: 'Please select a valid supplier.' };
-    if (!items || items.length === 0) return { error: 'Purchase Order must contain at least one line item.' };
+    if (!poData.supplierId || typeof poData.supplierId !== 'string' || !poData.supplierId.trim()) {
+      return { error: 'Please select a supplier from the supplier list.' };
+    }
+
+    if (!items || items.length === 0) {
+      return { error: 'Purchase Order must contain at least one line item.' };
+    }
+
+    // Verify supplier exists and belongs to current workspace if Supabase is configured
+    if (isSupabaseConfigured()) {
+      try {
+        const { data: supData, error: supErr } = await supabase
+          .from('suppliers')
+          .select('id, workspace_id')
+          .eq('id', poData.supplierId)
+          .single();
+
+        if (supErr || !supData) {
+          return { error: 'The selected supplier could not be found. Please select the supplier again.' };
+        }
+
+        if (supData.workspace_id !== wsId) {
+          return { error: 'Invalid supplier for this business.' };
+        }
+      } catch (err) {
+        return { error: 'The selected supplier could not be found. Please select the supplier again.' };
+      }
+    }
 
     const poNumber = poData.poNumber || (await this.generatePoNumber());
     const initialStatus: PurchaseOrderStatus = (poData.status as PurchaseOrderStatus) || 'DRAFT';
@@ -216,9 +242,12 @@ export class PurchaseOrderService {
       totalTax += taxAmt;
       grandTotal += lineTotal;
 
+      const customName = it.productName || it.itemName || it.description || 'Custom Item';
+
       return {
-        product_id: it.productId,
-        description: it.description || null,
+        product_id: it.productId || null,
+        item_name: customName,
+        description: it.description || customName,
         quantity: qty,
         unit: it.unit || 'Pcs',
         unit_price: rate,
@@ -430,11 +459,15 @@ export class PurchaseOrderService {
       const prod = it.products || {};
       const qty = Number(it.quantity) || 0;
       const rec = Number(it.received_quantity) || 0;
+      const isCustom = !it.product_id;
+      const name = prod.name || it.item_name || it.description || 'Custom Item';
       return {
         id: it.id,
         purchaseOrderId: it.purchase_order_id,
-        productId: it.product_id,
-        productName: prod.name || it.description || 'Product',
+        productId: it.product_id || null,
+        productName: name,
+        itemName: it.item_name || name,
+        isCustomItem: isCustom,
         productSku: prod.sku || '',
         description: it.description,
         quantity: qty,

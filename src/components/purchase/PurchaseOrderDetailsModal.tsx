@@ -261,8 +261,18 @@ export const PurchaseOrderDetailsModal: React.FC<PurchaseOrderDetailsModalProps>
                     {(po.items || []).map((item, idx) => (
                       <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                         <td className="p-3">
-                          <p className="font-bold text-slate-900 dark:text-white">{item.productName}</p>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="font-bold text-slate-900 dark:text-white">{item.productName || item.description || 'Custom Item'}</p>
+                            {!item.productId && (
+                              <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 text-[10px] font-bold rounded">
+                                Custom Item
+                              </span>
+                            )}
+                          </div>
                           {item.productSku && <p className="text-[10px] text-slate-500 font-mono">SKU: {item.productSku}</p>}
+                          {item.description && item.description !== item.productName && (
+                            <p className="text-[11px] text-slate-500 italic mt-0.5">{item.description}</p>
+                          )}
                         </td>
                         <td className="p-3 text-right font-mono font-bold text-slate-900 dark:text-white">{item.quantity}</td>
                         <td className="p-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">{item.receivedQuantity || 0}</td>

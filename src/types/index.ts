@@ -1018,8 +1018,10 @@ export type PurchaseOrderStatus =
 export interface PurchaseOrderItem {
   id?: string;
   purchaseOrderId?: string;
-  productId: string;
+  productId?: string | null;
   productName?: string;
+  itemName?: string;
+  isCustomItem?: boolean;
   productSku?: string;
   description?: string;
   quantity: number;
@@ -1055,7 +1057,7 @@ export interface PurchaseOrderReceiptItem {
   id?: string;
   receiptId?: string;
   purchaseOrderItemId: string;
-  productId: string;
+  productId?: string | null;
   productName?: string;
   orderedQuantity: number;
   previouslyReceivedQuantity: number;
