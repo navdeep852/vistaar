@@ -286,7 +286,17 @@ export class ProductService {
       return { product: fullProd };
     }
 
-    const wsId = await this.getOrFetchWorkspaceId();
+    const authUserId = supabaseAuthService.getUser()?.id || '';
+    let cachedWsId = supabaseAuthService.getCurrentCompanyId();
+    let authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId(true);
+
+    if (cachedWsId !== authWsId) {
+      console.warn(`[WORKSPACE_RECONCILIATION_RETRY] Cached workspace_id (${cachedWsId}) differs from authoritative database workspace_id (${authWsId}). Refreshing session...`);
+      cachedWsId = authWsId;
+    }
+
+    supabaseAuthService.assertWorkspaceIdValid(authWsId, 'INSERT', 'products');
+    const wsId = authWsId;
 
     // Resolve Category ID if name provided but ID missing
     let resolvedCategoryId = product.categoryId;
@@ -319,6 +329,13 @@ export class ProductService {
     }
 
     const payload = toDbProduct({ ...product, categoryId: resolvedCategoryId }, wsId);
+
+    console.log('PRODUCT INSERT WORKSPACE DEBUG', {
+      'auth.uid()': authUserId,
+      'cached workspace_id': cachedWsId,
+      'authoritative workspace_id': authWsId,
+      'payload workspace_id': payload.workspace_id,
+    });
 
     try {
       const { data, error } = await supabase

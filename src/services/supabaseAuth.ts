@@ -281,24 +281,25 @@ export class SupabaseAuthService {
    * Resolves: auth.uid() -> profiles.id -> profiles.workspace_id
    * Reconciles cached session & local storage automatically.
    */
-  public async getAuthoritativeWorkspaceId(): Promise<string> {
-    const currentCid = this.getCurrentCompanyId();
-    if (currentCid && isValidUuid(currentCid)) {
-      return currentCid;
+  public async getAuthoritativeWorkspaceId(forceRefresh: boolean = false): Promise<string> {
+    if (!forceRefresh) {
+      const currentCid = this.getCurrentCompanyId();
+      if (currentCid && isValidUuid(currentCid) && currentCid !== this.currentProfile?.id) {
+        return currentCid;
+      }
     }
 
     if (!isSupabaseConfigured()) {
-      return this.currentProfile?.companyId || '';
+      const cid = this.getCurrentCompanyId();
+      return cid && isValidUuid(cid) && cid !== this.currentProfile?.id ? cid : '';
     }
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const authUser = session?.user;
       if (!authUser) {
-        if (this.currentProfile?.companyId && isValidUuid(this.currentProfile.companyId) && this.currentProfile.companyId !== this.currentProfile.id) {
-          return this.currentProfile.companyId;
-        }
-        return '';
+        const cid = this.getCurrentCompanyId();
+        return cid && isValidUuid(cid) && cid !== this.currentProfile?.id ? cid : '';
       }
 
       const userId = authUser.id;
@@ -308,23 +309,9 @@ export class SupabaseAuthService {
         .from('profiles')
         .select('workspace_id, workspaces(company_name)')
         .eq('id', userId)
-        .maybeSingle();
+        .single();
 
       let dbWsId = profile?.workspace_id;
-
-      // 2. Validate dbWsId is a valid UUID AND NOT equal to authUser.id
-      if (!dbWsId || !isValidUuid(dbWsId) || dbWsId === userId) {
-        // Fallback: Query workspaces table by owner_email or id
-        const { data: ws } = await supabase
-          .from('workspaces')
-          .select('id, company_name')
-          .or(`owner_email.eq.${authUser.email},id.eq.${userId}`)
-          .maybeSingle();
-
-        if (ws?.id && isValidUuid(ws.id) && ws.id !== userId) {
-          dbWsId = ws.id;
-        }
-      }
 
       if (!dbWsId || !isValidUuid(dbWsId) || dbWsId === userId) {
         console.error(`[WORKSPACE_RESOLVER_ERROR] Authoritative workspace_id could not be resolved for auth.uid=${userId}`);
@@ -344,13 +331,19 @@ export class SupabaseAuthService {
         }
       } else {
         await this.syncProfileFromSupabaseUser(userId, authUser.email);
+        const curProfile = this.currentProfile as UserProfile | null;
+        if (curProfile) {
+          curProfile.companyId = dbWsId;
+          this.saveSessionToStorage(curProfile);
+        }
       }
 
       return dbWsId;
     } catch (e) {
       console.warn('getAuthoritativeWorkspaceId error:', e);
-      if (this.currentProfile?.companyId && isValidUuid(this.currentProfile.companyId) && this.currentProfile.companyId !== this.currentProfile.id) {
-        return this.currentProfile.companyId;
+      const cid = this.getCurrentCompanyId();
+      if (cid && isValidUuid(cid) && cid !== this.currentProfile?.id) {
+        return cid;
       }
       return '';
     }
@@ -759,31 +752,20 @@ export class SupabaseAuthService {
         return { success: false, error: 'Authentication session expired. Please verify your email again.' };
       }
 
-      // Query authoritative profile record from database
-      const { data: profileData, error: profileErr } = await supabase
+      const { data: profileData } = await supabase
         .from('profiles')
         .select('workspace_id')
         .eq('id', authUser.id)
         .single();
 
-      let workspaceId = profileData?.workspace_id;
-
-      if (profileErr || !workspaceId || !isValidUuid(workspaceId) || workspaceId === authUser.id) {
-        const { data: wsData } = await supabase
-          .from('workspaces')
-          .select('id')
-          .eq('owner_email', cleanEmail)
-          .maybeSingle();
-
-        if (wsData?.id && isValidUuid(wsData.id) && wsData.id !== authUser.id) {
-          workspaceId = wsData.id;
-        }
+      if (!profileData?.workspace_id) {
+        return {
+          success: false,
+          error: 'Could not resolve your workspace. Please try logging in again in a moment.'
+        };
       }
 
-      if (!workspaceId || !isValidUuid(workspaceId) || workspaceId === authUser.id) {
-        console.error(`[REGISTRATION_WORKSPACE_ERROR] Unable to determine workspace for user ${authUser.id}`);
-        throw new Error('Unable to determine workspace for authenticated user.');
-      }
+      const workspaceId = profileData.workspace_id;
 
       // Update existing workspace details instead of creating a second workspace row
       const { error: wsErr } = await supabase
