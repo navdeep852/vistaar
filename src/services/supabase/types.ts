@@ -22,6 +22,7 @@ import type {
   FinancialAccountType,
   DaybookTransaction,
 } from '../../types';
+import { isValidUuid } from '../../lib/supabaseError';
 
 
 export interface DbWorkspace {
@@ -339,8 +340,7 @@ export function toDbProduct(prod: Partial<Product>, workspaceId: string): Partia
   const partNumber = (prod.partNumber || prod.productCode || '').trim();
   const sku = (prod.sku || partNumber || `SKU-${Date.now()}`).trim();
 
-  return {
-    workspace_id: workspaceId,
+  const payload: any = {
     name,
     part_number: partNumber || undefined,
     sku,
@@ -355,7 +355,13 @@ export function toDbProduct(prod: Partial<Product>, workspaceId: string): Partia
     tax_percent: Number(prod.taxPercent) || Number(prod.gstRate) || 0,
     hsn_sac: prod.hsnSac || undefined,
     description: prod.description || prod.notes || undefined,
-  } as any;
+  };
+
+  if (isValidUuid(workspaceId)) {
+    payload.workspace_id = workspaceId;
+  }
+
+  return payload;
 }
 
 export interface DbFinancialAccount {

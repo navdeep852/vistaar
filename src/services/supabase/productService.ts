@@ -309,23 +309,27 @@ export class ProductService {
       return { product: fullProd };
     }
 
-    const wsId = this.getWorkspaceId();
+    const wsId = await this.getOrFetchWorkspaceId();
 
     // Resolve Category ID if name provided but ID missing
     let resolvedCategoryId = product.categoryId;
     if (!resolvedCategoryId && product.category) {
       try {
-        const { data: existingCats } = await supabase
-          .from('categories')
-          .select('id, name')
-          .eq('workspace_id', wsId)
-          .ilike('name', product.category.trim());
+        let catQuery = supabase.from('categories').select('id, name');
+        if (isValidUuid(wsId)) {
+          catQuery = catQuery.eq('workspace_id', wsId);
+        }
+        const { data: existingCats } = await catQuery.ilike('name', product.category.trim());
         if (existingCats && existingCats.length > 0) {
           resolvedCategoryId = existingCats[0].id;
         } else {
+          const catPayload: any = { name: product.category.trim(), description: 'Auto-created category' };
+          if (isValidUuid(wsId)) {
+            catPayload.workspace_id = wsId;
+          }
           const { data: newCat } = await supabase
             .from('categories')
-            .insert([{ workspace_id: wsId, name: product.category.trim(), description: 'Auto-created category' }])
+            .insert([catPayload])
             .select('id')
             .single();
           if (newCat) {
@@ -360,8 +364,7 @@ export class ProductService {
       if (initialStock > 0 && createdProduct.id) {
         try {
           const pAny = product as any;
-          const receiptPayload = {
-            workspace_id: wsId,
+          const receiptPayload: any = {
             product_id: createdProduct.id,
             supplier_id: product.supplierId || null,
             receipt_number: `GRN-${Date.now()}`,
@@ -372,8 +375,19 @@ export class ProductService {
             buy_price: product.buyPrice || 0,
             notes: product.notes || 'Initial Stock on Creation',
           };
+          if (isValidUuid(wsId)) {
+            receiptPayload.workspace_id = wsId;
+          }
           await supabase.from('stock_receipts').insert([receiptPayload]);
-          await supabase.from('products').update({ current_stock: initialStock, updated_at: new Date().toISOString() }).eq('id', createdProduct.id).eq('workspace_id', wsId);
+
+          let stockUpdateQuery = supabase
+            .from('products')
+            .update({ current_stock: initialStock, updated_at: new Date().toISOString() })
+            .eq('id', createdProduct.id);
+          if (isValidUuid(wsId)) {
+            stockUpdateQuery = stockUpdateQuery.eq('workspace_id', wsId);
+          }
+          await stockUpdateQuery;
         } catch (e) {
           console.warn('Initial stock receipt creation failed:', e);
         }
