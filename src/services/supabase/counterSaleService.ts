@@ -1,6 +1,6 @@
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { supabaseAuthService } from '../supabaseAuth';
-import { handleSupabaseError } from '../../lib/supabaseError';
+import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { store } from '../store';
 
 const LOCAL_SALES_KEY = 'vistaar_local_counter_sales_db';
@@ -29,7 +29,45 @@ const safeStorageSave = (key: string, items: any[]): void => {
 
 export class CounterSaleService {
   private getWorkspaceId(): string {
-    return supabaseAuthService.getCurrentCompanyId();
+    const wsId = supabaseAuthService.getCurrentCompanyId();
+    if (isValidUuid(wsId)) return wsId;
+
+    const user = supabaseAuthService.getUser();
+    if (user?.companyId && isValidUuid(user.companyId)) return user.companyId;
+
+    try {
+      const stored = localStorage.getItem('vistaar_user_session');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.companyId && isValidUuid(parsed.companyId)) {
+          return parsed.companyId;
+        }
+      }
+    } catch (e) {}
+
+    return '';
+  }
+
+  public async getOrFetchWorkspaceId(): Promise<string> {
+    const wsId = this.getWorkspaceId();
+    if (isValidUuid(wsId)) return wsId;
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('workspace_id')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (profile?.workspace_id && isValidUuid(profile.workspace_id)) {
+          return profile.workspace_id;
+        }
+      }
+    } catch (e) {}
+
+    return '';
   }
 
   private async deductCounterSaleStock(items: any[], invoiceNumber: string, saleDate: string) {
@@ -263,7 +301,7 @@ export class CounterSaleService {
   }
 
   public async createCounterSale(sale: any): Promise<{ success: boolean; data?: any; error?: string }> {
-    const wsId = this.getWorkspaceId();
+    const wsId = await this.getOrFetchWorkspaceId();
     const saleNumber = sale.saleNumber || `CS-${Date.now()}`;
     const invoiceNumber = (sale.invoiceNumber || saleNumber).trim();
     const items = sale.items || [];
@@ -292,7 +330,7 @@ export class CounterSaleService {
 
     try {
       // 2. IDEMPOTENCY CHECK: Check if sale is already completed
-      if (isSupabaseConfigured()) {
+      if (isSupabaseConfigured() && isValidUuid(wsId)) {
         const { data: existingSale } = await supabase
           .from('counter_sales')
           .select('*, counter_sale_items(*)')
@@ -311,23 +349,28 @@ export class CounterSaleService {
       let parent: any = null;
 
       if (isSupabaseConfigured()) {
+        const parentPayload: any = {
+          customer_id: sale.customerId || null,
+          sale_number: saleNumber,
+          invoice_number: invoiceNumber,
+          customer_name: sale.customerName || 'Walk-in Customer',
+          phone_number: sale.phoneNumber || '',
+          sale_date: sale.saleDate || new Date().toISOString().split('T')[0],
+          subtotal: sale.subtotal || 0,
+          discount_type: sale.discountType || 'fixed',
+          discount_value: sale.discountValue || 0,
+          discount_amount: sale.discountAmount || 0,
+          final_total: sale.finalTotal || 0,
+          status: 'COMPLETED',
+        };
+
+        if (isValidUuid(wsId)) {
+          parentPayload.workspace_id = wsId;
+        }
+
         const { data: insertedParent, error: parentErr } = await supabase
           .from('counter_sales')
-          .insert([{
-            workspace_id: wsId,
-            customer_id: sale.customerId || null,
-            sale_number: saleNumber,
-            invoice_number: invoiceNumber,
-            customer_name: sale.customerName || 'Walk-in Customer',
-            phone_number: sale.phoneNumber || '',
-            sale_date: sale.saleDate || new Date().toISOString().split('T')[0],
-            subtotal: sale.subtotal || 0,
-            discount_type: sale.discountType || 'fixed',
-            discount_value: sale.discountValue || 0,
-            discount_amount: sale.discountAmount || 0,
-            final_total: sale.finalTotal || 0,
-            status: 'COMPLETED',
-          }])
+          .insert([parentPayload])
           .select()
           .single();
 
@@ -351,17 +394,22 @@ export class CounterSaleService {
 
         // Insert items
         if (items && items.length > 0) {
-          const itemRows = items.map((item: any) => ({
-            workspace_id: wsId,
-            counter_sale_id: saleId,
-            product_id: item.productId || item.product_id,
-            product_name_snapshot: item.productName || item.product_name_snapshot || '',
-            part_number_snapshot: item.partNumber || item.part_number_snapshot || '',
-            quantity: item.quantity,
-            rate: item.rate,
-            amount: (item.quantity || 0) * (item.rate || 0),
-            buy_price_snapshot: item.buyPriceSnapshot || 0,
-          }));
+          const itemRows = items.map((item: any) => {
+            const row: any = {
+              counter_sale_id: saleId,
+              product_id: item.productId || item.product_id,
+              product_name_snapshot: item.productName || item.product_name_snapshot || '',
+              part_number_snapshot: item.partNumber || item.part_number_snapshot || '',
+              quantity: item.quantity,
+              rate: item.rate,
+              amount: (item.quantity || 0) * (item.rate || 0),
+              buy_price_snapshot: item.buyPriceSnapshot || 0,
+            };
+            if (isValidUuid(wsId)) {
+              row.workspace_id = wsId;
+            }
+            return row;
+          });
 
           const { error: itemsErr } = await supabase.from('counter_sale_items').insert(itemRows);
           if (itemsErr) {

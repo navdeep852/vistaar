@@ -2,7 +2,7 @@ import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { Product, Category, Supplier } from '../../types';
 import { DbProduct, DbCategory, DbSupplier, fromDbProduct, toDbProduct } from './types';
 import { supabaseAuthService } from '../supabaseAuth';
-import { handleSupabaseError } from '../../lib/supabaseError';
+import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { store } from '../store';
 
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
@@ -16,7 +16,45 @@ export class ProductService {
   private CACHE_TTL_MS = 30000; // 30 seconds
 
   private getWorkspaceId(): string {
-    return supabaseAuthService.getCurrentCompanyId();
+    const wsId = supabaseAuthService.getCurrentCompanyId();
+    if (isValidUuid(wsId)) return wsId;
+
+    const user = supabaseAuthService.getUser();
+    if (user?.companyId && isValidUuid(user.companyId)) return user.companyId;
+
+    try {
+      const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('vistaar_user_session') : null;
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.companyId && isValidUuid(parsed.companyId)) {
+          return parsed.companyId;
+        }
+      }
+    } catch (e) {}
+
+    return '';
+  }
+
+  public async getOrFetchWorkspaceId(): Promise<string> {
+    const wsId = this.getWorkspaceId();
+    if (isValidUuid(wsId)) return wsId;
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('workspace_id')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (profile?.workspace_id && isValidUuid(profile.workspace_id)) {
+          return profile.workspace_id;
+        }
+      }
+    } catch (e) {}
+
+    return '';
   }
 
   public invalidateCache(): void {
@@ -30,7 +68,7 @@ export class ProductService {
     page?: number;
     pageSize?: number;
   }): Promise<{ data: Product[]; count: number; error?: string }> {
-    const wsId = this.getWorkspaceId();
+    let wsId = this.getWorkspaceId();
     const isDefaultFetch = !options?.search && !options?.categoryId && !options?.page;
 
     // Return from in-memory cache if available and fresh (<30s)
@@ -75,13 +113,17 @@ export class ProductService {
       return { data: items, count: items.length };
     }
 
+    wsId = await this.getOrFetchWorkspaceId();
     const SELECT_FIELDS = 'id, workspace_id, name, sku, part_number, product_code, category_id, categories(name), brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, gst_rate, tax_percent, active, created_at, updated_at';
 
     let query = supabase
       .from('products')
       .select(SELECT_FIELDS, { count: 'exact' })
-      .eq('workspace_id', wsId)
       .eq('active', true);
+
+    if (isValidUuid(wsId)) {
+      query = query.eq('workspace_id', wsId);
+    }
 
     if (options?.search) {
       const s = `%${options.search}%`;
@@ -156,7 +198,7 @@ export class ProductService {
       return { data: matched };
     }
 
-    const wsId = this.getWorkspaceId();
+    const wsId = await this.getOrFetchWorkspaceId();
 
     try {
       const SELECT_FIELDS = 'id, workspace_id, name, sku, part_number, product_code, barcode, category_id, categories(name), brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, gst_rate, tax_percent, active, created_at, updated_at';
@@ -164,8 +206,11 @@ export class ProductService {
       let query = supabase
         .from('products')
         .select(SELECT_FIELDS)
-        .eq('workspace_id', wsId)
         .eq('active', true);
+
+      if (isValidUuid(wsId)) {
+        query = query.eq('workspace_id', wsId);
+      }
 
       if (s.length > 0) {
         const pattern = `%${s}%`;
@@ -370,25 +415,34 @@ export class ProductService {
       return prodStock;
     }
 
-    const wsId = this.getWorkspaceId();
+    const wsId = await this.getOrFetchWorkspaceId();
     try {
       // 1. Fetch current_stock directly from products table (canonical inventory source)
-      const { data: prodData, error: prodErr } = await supabase
+      let prodQuery = supabase
         .from('products')
         .select('id, name, current_stock')
-        .eq('workspace_id', wsId)
-        .eq('id', productId)
-        .maybeSingle();
+        .eq('id', productId);
+
+      if (isValidUuid(wsId)) {
+        prodQuery = prodQuery.eq('workspace_id', wsId);
+      }
+
+      const { data: prodData, error: prodErr } = await prodQuery.maybeSingle();
 
       const prodStock = !prodErr && prodData ? Math.max(0, Number(prodData.current_stock) || 0) : 0;
 
       // 2. Fetch stock_receipts sum if receipts are configured
       let batchSum = 0;
-      const { data: receipts, error: recErr } = await supabase
+      let recQuery = supabase
         .from('stock_receipts')
         .select('quantity_remaining')
-        .eq('workspace_id', wsId)
         .eq('product_id', productId);
+
+      if (isValidUuid(wsId)) {
+        recQuery = recQuery.eq('workspace_id', wsId);
+      }
+
+      const { data: receipts, error: recErr } = await recQuery;
 
       if (!recErr && receipts && receipts.length > 0) {
         batchSum = receipts.reduce((acc: number, row: { quantity_remaining?: number | string | null }) => acc + (Number(row.quantity_remaining) || 0), 0);

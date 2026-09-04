@@ -33,14 +33,14 @@ if (proc && proc.env && !proc.env.VITE_SUPABASE_URL) {
 const rawUrl =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) ||
   (typeof proc !== 'undefined' && proc?.env?.VITE_SUPABASE_URL) ||
-  '';
+  'https://kluxsykimnjivkqxelba.supabase.co';
 
 const rawPublishableKey =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_PUBLISHABLE_KEY) ||
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) ||
   (typeof proc !== 'undefined' && proc?.env?.VITE_SUPABASE_PUBLISHABLE_KEY) ||
   (typeof proc !== 'undefined' && proc?.env?.VITE_SUPABASE_ANON_KEY) ||
-  '';
+  'sb_publishable_j5tuLPC3iQO4pQHU0BeyYQ_CH_7Ls6x';
 
 export const supabaseUrl = rawUrl;
 export const supabasePublishableKey = rawPublishableKey;
