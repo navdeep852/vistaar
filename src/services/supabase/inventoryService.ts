@@ -1,7 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import { StockReceipt, StockMovement } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
-import { handleSupabaseError } from '../../lib/supabaseError';
+import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 
 const LOCAL_RECEIPTS_KEY = 'vistaar_local_stock_receipts';
 const LOCAL_MOVEMENTS_KEY = 'vistaar_local_stock_movements';
@@ -30,7 +30,22 @@ const safeStorageSave = (key: string, items: any[]): void => {
 
 export class InventoryService {
   private getWorkspaceId(): string {
-    return supabaseAuthService.getCurrentCompanyId();
+    const wsId = supabaseAuthService.getCurrentCompanyId();
+    const userId = supabaseAuthService.getUser()?.id;
+    if (isValidUuid(wsId) && wsId !== userId) return wsId;
+    return '';
+  }
+
+  public async getOrFetchWorkspaceId(): Promise<string> {
+    try {
+      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
+      if (authWsId && isValidUuid(authWsId)) {
+        return authWsId;
+      }
+    } catch (e) {
+      console.warn('Failed to get authoritative workspace ID in inventoryService:', e);
+    }
+    return '';
   }
 
   public async getInventorySettings(): Promise<{ success: boolean; data?: { usesPartNumber: boolean | null } }> {

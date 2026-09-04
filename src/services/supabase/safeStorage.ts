@@ -8,7 +8,7 @@ const getActiveCompanyId = (): string => {
       const stored = localStorage.getItem('vistaar_user_session');
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (parsed?.companyId) return parsed.companyId;
+        if (parsed?.companyId && parsed?.id && parsed.companyId !== parsed.id) return parsed.companyId;
       }
     }
   } catch (e) {}

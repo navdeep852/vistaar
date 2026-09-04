@@ -30,43 +30,20 @@ const safeStorageSave = (key: string, items: any[]): void => {
 export class CounterSaleService {
   private getWorkspaceId(): string {
     const wsId = supabaseAuthService.getCurrentCompanyId();
-    if (isValidUuid(wsId)) return wsId;
-
-    const user = supabaseAuthService.getUser();
-    if (user?.companyId && isValidUuid(user.companyId)) return user.companyId;
-
-    try {
-      const stored = localStorage.getItem('vistaar_user_session');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed?.companyId && isValidUuid(parsed.companyId)) {
-          return parsed.companyId;
-        }
-      }
-    } catch (e) {}
-
+    const userId = supabaseAuthService.getUser()?.id;
+    if (isValidUuid(wsId) && wsId !== userId) return wsId;
     return '';
   }
 
   public async getOrFetchWorkspaceId(): Promise<string> {
-    const wsId = this.getWorkspaceId();
-    if (isValidUuid(wsId)) return wsId;
-
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('workspace_id')
-          .eq('id', user.id)
-          .maybeSingle();
-
-        if (profile?.workspace_id && isValidUuid(profile.workspace_id)) {
-          return profile.workspace_id;
-        }
+      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
+      if (authWsId && isValidUuid(authWsId)) {
+        return authWsId;
       }
-    } catch (e) {}
-
+    } catch (e) {
+      console.warn('Failed to get authoritative workspace ID in counterSaleService:', e);
+    }
     return '';
   }
 

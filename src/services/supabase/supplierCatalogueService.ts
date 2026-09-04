@@ -11,7 +11,7 @@ import {
 import { supabaseAuthService } from '../supabaseAuth';
 import { storageService } from './storageService';
 import { productService } from './productService';
-import { handleSupabaseError } from '../../lib/supabaseError';
+import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 
 const LOCAL_FILES_KEY = 'vistaar_local_catalogue_files';
@@ -20,7 +20,22 @@ const LOCAL_MAPPINGS_KEY = 'vistaar_local_catalogue_mappings';
 
 export class SupplierCatalogueService {
   private getWorkspaceId(): string {
-    return supabaseAuthService.getCurrentCompanyId();
+    const wsId = supabaseAuthService.getCurrentCompanyId();
+    const userId = supabaseAuthService.getUser()?.id;
+    if (isValidUuid(wsId) && wsId !== userId) return wsId;
+    return '';
+  }
+
+  public async getOrFetchWorkspaceId(): Promise<string> {
+    try {
+      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
+      if (authWsId && isValidUuid(authWsId)) {
+        return authWsId;
+      }
+    } catch (e) {
+      console.warn('Failed to get authoritative workspace ID in supplierCatalogueService:', e);
+    }
+    return '';
   }
 
   // ==========================================

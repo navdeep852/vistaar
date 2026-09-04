@@ -1,7 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { Invoice, Product } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
-import { handleSupabaseError } from '../../lib/supabaseError';
+import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { store } from '../store';
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 import { productService } from './productService';
@@ -11,7 +11,22 @@ const LOCAL_INVOICES_KEY = 'vistaar_local_invoices_db';
 
 export class InvoiceService {
   private getWorkspaceId(): string {
-    return supabaseAuthService.getCurrentCompanyId();
+    const wsId = supabaseAuthService.getCurrentCompanyId();
+    const userId = supabaseAuthService.getUser()?.id;
+    if (isValidUuid(wsId) && wsId !== userId) return wsId;
+    return '';
+  }
+
+  public async getOrFetchWorkspaceId(): Promise<string> {
+    try {
+      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
+      if (authWsId && isValidUuid(authWsId)) {
+        return authWsId;
+      }
+    } catch (e) {
+      console.warn('Failed to get authoritative workspace ID in invoiceService:', e);
+    }
+    return '';
   }
 
   public async getInvoices(options?: {

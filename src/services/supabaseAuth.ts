@@ -4,6 +4,7 @@ import { UserProfile, UserRole, UserAccount } from '../types';
 import { validatePassword, validateEmailFormat } from '../lib/passwordPolicy';
 import { validateIndianPhoneNumber } from '../lib/phoneUtils';
 import { store } from './store';
+import { isValidUuid } from '../lib/supabaseError';
 
 const SESSION_STORAGE_KEY = 'vistaar_user_session';
 
@@ -191,6 +192,11 @@ export class SupabaseAuthService {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed && typeof parsed === 'object' && Boolean(parsed.id) && Boolean(parsed.email || parsed.name)) {
+          // SESSION RECONCILIATION: If cached companyId was corrupted to match user.id, clean it to force database re-fetch
+          if (parsed.companyId && parsed.companyId === parsed.id) {
+            console.warn(`[SESSION_RECONCILIATION] Cleaned corrupted cached companyId matching user.id (${parsed.id})`);
+            parsed.companyId = '';
+          }
           return parsed;
         }
       }
@@ -261,7 +267,114 @@ export class SupabaseAuthService {
   }
 
   public getCurrentCompanyId(): string {
-    return this.currentProfile?.companyId || '';
+    const cid = this.currentProfile?.companyId || '';
+    if (cid && this.currentProfile?.id && cid === this.currentProfile.id) {
+      console.warn(`[WORKSPACE_CORRUPTION_DETECTED] getCurrentCompanyId found corrupted companyId matching userId (${cid}). Returning empty string.`);
+      return '';
+    }
+    return cid;
+  }
+
+  /**
+   * Central Authoritative Workspace Resolver
+   * Guarantees that auth.uid() is NEVER returned as workspace_id.
+   * Resolves: auth.uid() -> profiles.id -> profiles.workspace_id
+   * Reconciles cached session & local storage automatically.
+   */
+  public async getAuthoritativeWorkspaceId(): Promise<string> {
+    const currentCid = this.getCurrentCompanyId();
+    if (currentCid && isValidUuid(currentCid)) {
+      return currentCid;
+    }
+
+    if (!isSupabaseConfigured()) {
+      return this.currentProfile?.companyId || '';
+    }
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const authUser = session?.user;
+      if (!authUser) {
+        if (this.currentProfile?.companyId && isValidUuid(this.currentProfile.companyId) && this.currentProfile.companyId !== this.currentProfile.id) {
+          return this.currentProfile.companyId;
+        }
+        return '';
+      }
+
+      const userId = authUser.id;
+
+      // 1. Query database profile for workspace_id
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('workspace_id, workspaces(company_name)')
+        .eq('id', userId)
+        .maybeSingle();
+
+      let dbWsId = profile?.workspace_id;
+
+      // 2. Validate dbWsId is a valid UUID AND NOT equal to authUser.id
+      if (!dbWsId || !isValidUuid(dbWsId) || dbWsId === userId) {
+        // Fallback: Query workspaces table by owner_email or id
+        const { data: ws } = await supabase
+          .from('workspaces')
+          .select('id, company_name')
+          .or(`owner_email.eq.${authUser.email},id.eq.${userId}`)
+          .maybeSingle();
+
+        if (ws?.id && isValidUuid(ws.id) && ws.id !== userId) {
+          dbWsId = ws.id;
+        }
+      }
+
+      if (!dbWsId || !isValidUuid(dbWsId) || dbWsId === userId) {
+        console.error(`[WORKSPACE_RESOLVER_ERROR] Authoritative workspace_id could not be resolved for auth.uid=${userId}`);
+        throw new Error('Unable to determine workspace for authenticated user.');
+      }
+
+      // 3. Reconcile in-memory profile and localStorage session cache
+      if (this.currentProfile) {
+        if (this.currentProfile.companyId !== dbWsId) {
+          console.log(`[SESSION_RECONCILIATION] Reconciled stale companyId (${this.currentProfile.companyId}) to database workspace_id (${dbWsId})`);
+          this.currentProfile.companyId = dbWsId;
+          if (profile?.workspaces?.company_name) {
+            this.currentProfile.businessName = profile.workspaces.company_name;
+          }
+          this.saveSessionToStorage(this.currentProfile);
+          store.reloadTenantState();
+        }
+      } else {
+        await this.syncProfileFromSupabaseUser(userId, authUser.email);
+      }
+
+      return dbWsId;
+    } catch (e) {
+      console.warn('getAuthoritativeWorkspaceId error:', e);
+      if (this.currentProfile?.companyId && isValidUuid(this.currentProfile.companyId) && this.currentProfile.companyId !== this.currentProfile.id) {
+        return this.currentProfile.companyId;
+      }
+      return '';
+    }
+  }
+
+  /**
+   * Development assertion to detect workspace corruption before tenant-scoped DB operations
+   */
+  public assertWorkspaceIdValid(clientWorkspaceId: string, operationName: string, tableName: string): void {
+    if (import.meta.env?.DEV || (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production')) {
+      const authUserId = this.currentProfile?.id;
+      if (authUserId && clientWorkspaceId === authUserId) {
+        console.error(
+          `[WORKSPACE_ID_MISMATCH] Critical error in ${operationName} on ${tableName}: client workspace_id (${clientWorkspaceId}) matches auth.uid (${authUserId})! Operation blocked.`
+        );
+        throw new Error(`[WORKSPACE_ID_MISMATCH] Cannot execute ${operationName} on ${tableName} with auth user ID as workspace_id.`);
+      }
+      if (!isValidUuid(clientWorkspaceId)) {
+        console.error(
+          `[WORKSPACE_ID_MISMATCH] Invalid workspace_id format (${clientWorkspaceId}) in ${operationName} on ${tableName}. Operation blocked.`
+        );
+        throw new Error(`[WORKSPACE_ID_MISMATCH] Invalid workspace_id for ${operationName} on ${tableName}.`);
+      }
+    }
   }
 
   public isOwner(): boolean {
@@ -646,16 +759,30 @@ export class SupabaseAuthService {
         return { success: false, error: 'Authentication session expired. Please verify your email again.' };
       }
 
-      // Look up existing workspace_id created by handle_new_user trigger
-      let workspaceId = authUser.id;
-      const { data: profileData } = await supabase
+      // Query authoritative profile record from database
+      const { data: profileData, error: profileErr } = await supabase
         .from('profiles')
         .select('workspace_id')
         .eq('id', authUser.id)
         .single();
 
-      if (profileData?.workspace_id) {
-        workspaceId = profileData.workspace_id;
+      let workspaceId = profileData?.workspace_id;
+
+      if (profileErr || !workspaceId || !isValidUuid(workspaceId) || workspaceId === authUser.id) {
+        const { data: wsData } = await supabase
+          .from('workspaces')
+          .select('id')
+          .eq('owner_email', cleanEmail)
+          .maybeSingle();
+
+        if (wsData?.id && isValidUuid(wsData.id) && wsData.id !== authUser.id) {
+          workspaceId = wsData.id;
+        }
+      }
+
+      if (!workspaceId || !isValidUuid(workspaceId) || workspaceId === authUser.id) {
+        console.error(`[REGISTRATION_WORKSPACE_ERROR] Unable to determine workspace for user ${authUser.id}`);
+        throw new Error('Unable to determine workspace for authenticated user.');
       }
 
       // Update existing workspace details instead of creating a second workspace row
@@ -700,23 +827,14 @@ export class SupabaseAuthService {
       );
 
       await this.syncProfileFromSupabaseUser(authUser.id, cleanEmail);
-      if (!this.currentProfile || !this.currentProfile.companyId) {
-        this.currentProfile = {
-          id: authUser.id,
-          companyId: workspaceId,
-          employeeId: 'VST-00001',
-          name: ownerName,
-          email: cleanEmail,
-          phone: pRes.normalized,
-          department: 'Management',
-          designation: 'Company Owner & Founder',
-          role: 'owner',
-          status: 'Active',
-          businessName: companyName,
-          mustChangePassword: false,
-          avatarUrl: '',
-        };
-        this.saveSessionToStorage(this.currentProfile);
+      if (!this.currentProfile || !this.currentProfile.companyId || this.currentProfile.companyId === authUser.id) {
+        const authWsId = await this.getAuthoritativeWorkspaceId();
+        if (authWsId && authWsId !== authUser.id) {
+          if (this.currentProfile) {
+            this.currentProfile.companyId = authWsId;
+            this.saveSessionToStorage(this.currentProfile);
+          }
+        }
       }
 
       store.reloadTenantState();
@@ -794,24 +912,14 @@ export class SupabaseAuthService {
 
       if (authData.user) {
         await this.syncProfileFromSupabaseUser(authData.user.id, authData.user.email);
-        if (!this.currentProfile || !this.currentProfile.companyId) {
-          const newProfile: UserProfile = {
-            id: authData.user.id,
-            companyId: authData.user.id,
-            employeeId: 'VST-00001',
-            name: ownerName.trim(),
-            email: email.trim().toLowerCase(),
-            phone: phone.trim(),
-            department: 'Management',
-            designation: 'Company Owner & Founder',
-            role: 'owner',
-            status: 'Active',
-            businessName: companyName.trim(),
-            mustChangePassword: false,
-            avatarUrl: '',
-          };
-          this.currentProfile = newProfile;
-          this.saveSessionToStorage(newProfile);
+        if (!this.currentProfile || !this.currentProfile.companyId || this.currentProfile.companyId === authData.user.id) {
+          const authWsId = await this.getAuthoritativeWorkspaceId();
+          if (authWsId && authWsId !== authData.user.id) {
+            if (this.currentProfile) {
+              this.currentProfile.companyId = authWsId;
+              this.saveSessionToStorage(this.currentProfile);
+            }
+          }
         }
         this.notify();
         return { success: true };

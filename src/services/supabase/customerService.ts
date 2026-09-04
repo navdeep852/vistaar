@@ -2,7 +2,7 @@ import { supabase } from '../../lib/supabase';
 import { Customer } from '../../types';
 import { DbCustomer, fromDbCustomer, toDbCustomer } from './types';
 import { supabaseAuthService } from '../supabaseAuth';
-import { handleSupabaseError } from '../../lib/supabaseError';
+import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
@@ -11,7 +11,22 @@ const LOCAL_CUSTOMERS_KEY = 'vistaar_local_customers_db';
 
 export class CustomerService {
   private getWorkspaceId(): string {
-    return supabaseAuthService.getCurrentCompanyId();
+    const wsId = supabaseAuthService.getCurrentCompanyId();
+    const userId = supabaseAuthService.getUser()?.id;
+    if (isValidUuid(wsId) && wsId !== userId) return wsId;
+    return '';
+  }
+
+  public async getOrFetchWorkspaceId(): Promise<string> {
+    try {
+      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
+      if (authWsId && isValidUuid(authWsId)) {
+        return authWsId;
+      }
+    } catch (e) {
+      console.warn('Failed to get authoritative workspace ID in customerService:', e);
+    }
+    return '';
   }
 
   public async getCustomers(options?: {

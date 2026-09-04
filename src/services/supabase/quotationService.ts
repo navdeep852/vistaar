@@ -1,7 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import { Quotation, QuotationItem } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
-import { handleSupabaseError } from '../../lib/supabaseError';
+import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 
@@ -9,7 +9,22 @@ const LOCAL_QUOTATIONS_KEY = 'vistaar_local_quotations_db';
 
 export class QuotationService {
   private getWorkspaceId(): string {
-    return supabaseAuthService.getCurrentCompanyId();
+    const wsId = supabaseAuthService.getCurrentCompanyId();
+    const userId = supabaseAuthService.getUser()?.id;
+    if (isValidUuid(wsId) && wsId !== userId) return wsId;
+    return '';
+  }
+
+  public async getOrFetchWorkspaceId(): Promise<string> {
+    try {
+      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
+      if (authWsId && isValidUuid(authWsId)) {
+        return authWsId;
+      }
+    } catch (e) {
+      console.warn('Failed to get authoritative workspace ID in quotationService:', e);
+    }
+    return '';
   }
 
   public async getQuotations(): Promise<{ data: any[]; error?: string }> {

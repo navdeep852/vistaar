@@ -1,7 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import { Expense } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
-import { handleSupabaseError } from '../../lib/supabaseError';
+import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 
@@ -9,7 +9,22 @@ const LOCAL_EXPENSES_KEY = 'vistaar_local_expenses_db';
 
 export class ExpenseService {
   private getWorkspaceId(): string {
-    return supabaseAuthService.getCurrentCompanyId();
+    const wsId = supabaseAuthService.getCurrentCompanyId();
+    const userId = supabaseAuthService.getUser()?.id;
+    if (isValidUuid(wsId) && wsId !== userId) return wsId;
+    return '';
+  }
+
+  public async getOrFetchWorkspaceId(): Promise<string> {
+    try {
+      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
+      if (authWsId && isValidUuid(authWsId)) {
+        return authWsId;
+      }
+    } catch (e) {
+      console.warn('Failed to get authoritative workspace ID in expenseService:', e);
+    }
+    return '';
   }
 
   public async getExpenses(): Promise<{ data: any[]; error?: string }> {
