@@ -125,11 +125,10 @@ export class ProductService {
     }
   }
 
-  public async searchProducts(searchTerm: string, limit: number = 20): Promise<{ data: Product[]; error?: string }> {
+  public async searchProducts(searchTerm: string, limit: number = 50): Promise<{ data: Product[]; error?: string }> {
     const s = (searchTerm || '').trim();
-    if (s.length < 1) return { data: [] };
 
-    // Also get products from local store cache for instant availability
+    // Get products from local store cache for instant availability
     const storeProducts = store.getProducts();
 
     if (!isSupabaseConfigured()) {
@@ -140,6 +139,9 @@ export class ProductService {
           allItems.push(sp);
         }
       });
+      if (s.length < 1) {
+        return { data: allItems.slice(0, limit) };
+      }
       const q = s.toLowerCase();
       const matched = allItems.filter(
         (p) =>
@@ -147,25 +149,30 @@ export class ProductService {
           ((p as any).productName && (p as any).productName.toLowerCase().includes(q)) ||
           (p.sku && p.sku.toLowerCase().includes(q)) ||
           (p.partNumber && p.partNumber.toLowerCase().includes(q)) ||
+          ((p as any).barcode && (p as any).barcode.toLowerCase().includes(q)) ||
           ((p as any).productCode && (p as any).productCode.toLowerCase().includes(q))
       ).slice(0, limit);
 
       return { data: matched };
     }
 
-
     const wsId = this.getWorkspaceId();
-    const pattern = `%${s}%`;
 
     try {
-      const SELECT_FIELDS = 'id, workspace_id, name, sku, part_number, product_code, category_id, categories(name), brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, gst_rate, tax_percent, active, created_at, updated_at';
+      const SELECT_FIELDS = 'id, workspace_id, name, sku, part_number, product_code, barcode, category_id, categories(name), brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, gst_rate, tax_percent, active, created_at, updated_at';
 
-      const { data, error } = await supabase
+      let query = supabase
         .from('products')
         .select(SELECT_FIELDS)
         .eq('workspace_id', wsId)
-        .eq('active', true)
-        .or(`name.ilike.${pattern},sku.ilike.${pattern},part_number.ilike.${pattern}`)
+        .eq('active', true);
+
+      if (s.length > 0) {
+        const pattern = `%${s}%`;
+        query = query.or(`name.ilike.${pattern},sku.ilike.${pattern},part_number.ilike.${pattern},barcode.ilike.${pattern},product_code.ilike.${pattern}`);
+      }
+
+      const { data, error } = await query
         .order('name', { ascending: true })
         .limit(limit);
 
@@ -174,9 +181,11 @@ export class ProductService {
         const q = s.toLowerCase();
         const matched = storeProducts.filter(
           (p) =>
+            !s ||
             (p.name && p.name.toLowerCase().includes(q)) ||
             (p.sku && p.sku.toLowerCase().includes(q)) ||
-            (p.partNumber && p.partNumber.toLowerCase().includes(q))
+            (p.partNumber && p.partNumber.toLowerCase().includes(q)) ||
+            ((p as any).barcode && (p as any).barcode.toLowerCase().includes(q))
         ).slice(0, limit);
         return { data: matched, error: errStr };
       }
@@ -189,9 +198,11 @@ export class ProductService {
       const q = s.toLowerCase();
       const matched = storeProducts.filter(
         (p) =>
+          !s ||
           (p.name && p.name.toLowerCase().includes(q)) ||
           (p.sku && p.sku.toLowerCase().includes(q)) ||
-          (p.partNumber && p.partNumber.toLowerCase().includes(q))
+          (p.partNumber && p.partNumber.toLowerCase().includes(q)) ||
+          ((p as any).barcode && (p as any).barcode.toLowerCase().includes(q))
       ).slice(0, limit);
       return { data: matched, error: errStr };
     }

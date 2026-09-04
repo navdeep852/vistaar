@@ -38,6 +38,7 @@ import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
 import { PhoneInput } from '../components/PhoneInput';
+import { ProductAutocomplete } from '../components/ProductAutocomplete';
 import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 
 type DateFilterType = 'ALL' | 'TODAY' | 'WEEK' | 'MONTH';
@@ -291,7 +292,12 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   };
 
   // Execute Sale Submission
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const handleConfirmAndCompleteSale = async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+
     try {
       const cleanPhone = custPhone ? normalizeIndianPhoneNumber(custPhone) : '';
       const res = await counterSaleService.createCounterSale({
@@ -326,6 +332,8 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
       refreshData();
     } catch (err: any) {
       showToast(err.message || 'Failed to complete counter sale', 'error');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -585,15 +593,27 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
                   className="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs inline-flex items-center gap-2 shadow-md shadow-indigo-600/20 cursor-pointer shrink-0"
                 >
                   <Plus className="w-4 h-4 stroke-[3]" />
-                  <span>+ Add Product from Inventory</span>
+                  <span>+ Browse Inventory Catalog</span>
                 </button>
+              </div>
+
+              {/* REAL-TIME PRODUCT AUTOCOMPLETE FIELD */}
+              <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2">
+                <label className="block text-xs font-extrabold text-slate-700 dark:text-slate-300 uppercase">
+                  Add Product (Search Name, SKU, Part #, or Barcode)
+                </label>
+                <ProductAutocomplete
+                  onSelectProduct={(p) => handleSelectProduct(p)}
+                  placeholder="Focus or type product name, SKU, part number, or barcode..."
+                  fallbackProducts={products}
+                />
               </div>
 
               {/* Validation Warning Inline if no products selected */}
               {lineItems.length === 0 && (
                 <div className="p-3 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-900/60 rounded-2xl text-amber-800 dark:text-amber-300 text-xs font-semibold flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                  <span>Select at least one product for the sale.</span>
+                  <span>Select at least one product for the sale using the search bar above or catalog browser.</span>
                 </div>
               )}
 
@@ -1178,73 +1198,19 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
       <Modal
         isOpen={productSelectorOpen}
         onClose={() => setProductSelectorOpen(false)}
-        title="Select Product from Inventory"
-        maxWidth="4xl"
+        title="Select Product from Inventory Catalog"
+        maxWidth="3xl"
       >
-        <div className="space-y-4">
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400 dark:text-slate-500" />
-            <input
-              type="text"
-              value={productSearch}
-              onChange={(e) => setProductSearch(e.target.value)}
-              placeholder="Search by Part Number, Product Name, Code or SKU..."
-              className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none"
-            />
-          </div>
-
-          <div className="max-h-72 overflow-y-auto space-y-2 border border-slate-100 dark:border-slate-800 rounded-2xl p-2 bg-slate-50/50 dark:bg-slate-900/50">
-            {products
-              .filter((p) => {
-                if (!productSearch.trim()) return true;
-                const q = productSearch.toLowerCase().trim();
-                return (
-                  (p.productName || p.name).toLowerCase().includes(q) ||
-                  (p.partNumber || '').toLowerCase().includes(q) ||
-                  (p.productCode || '').toLowerCase().includes(q) ||
-                  p.sku.toLowerCase().includes(q)
-                );
-              })
-              .map((p) => {
-                const avail = p.currentStock || 0;
-                const isOut = avail <= 0;
-                const rate = p.currentSellPrice || p.sellingPrice;
-
-                return (
-                  <div
-                    key={p.id}
-                    onClick={() => !isOut && handleSelectProduct(p)}
-                    className={`p-3.5 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
-                      isOut
-                        ? 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 opacity-60 cursor-not-allowed'
-                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md cursor-pointer'
-                    }`}
-                  >
-                    <div>
-                      <h4 className="font-extrabold text-slate-900 dark:text-slate-100 text-xs">{p.productName || p.name}</h4>
-                      <p className="text-[11px] font-mono font-bold text-blue-600 dark:text-blue-400 mt-0.5">
-                        Part #: {p.partNumber || p.sku}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-4 text-right">
-                      <div>
-                        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold block uppercase">Available</span>
-                        <span className={`font-black text-xs ${isOut ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                          {avail} {p.unit}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold block uppercase">Sell Rate</span>
-                        <span className="font-extrabold text-slate-900 dark:text-slate-100 text-xs">
-                          {formatCurrency(rate)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-          </div>
+        <div className="space-y-4 py-2">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Type to search by Product Name, SKU, Part Number, or Barcode:
+          </p>
+          <ProductAutocomplete
+            autoFocus
+            onSelectProduct={(p) => handleSelectProduct(p)}
+            placeholder="Search by Part Number, Product Name, Barcode, or SKU..."
+            fallbackProducts={products}
+          />
         </div>
       </Modal>
 

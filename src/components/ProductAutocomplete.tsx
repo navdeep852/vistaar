@@ -35,21 +35,15 @@ export const ProductAutocomplete: React.FC<ProductAutocompleteProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const listboxId = useId();
 
-  // Perform search when search term changes (after 1 character)
+  // Perform search when search term changes or when dropdown opens
   useEffect(() => {
-    const trimmed = searchTerm.trim();
-    if (trimmed.length < 1) {
-      setResults([]);
-      setLoading(false);
-      return;
-    }
-
     let isMounted = true;
     setLoading(true);
 
     const timer = setTimeout(async () => {
       try {
-        // First query Supabase / tenant search
+        const trimmed = searchTerm.trim();
+        // Query Supabase / tenant search
         const searchRes = await productService.searchProducts(trimmed);
         if (!isMounted) return;
 
@@ -60,10 +54,12 @@ export const ProductAutocomplete: React.FC<ProductAutocompleteProps> = ({
           const q = trimmed.toLowerCase();
           matched = fallbackProducts.filter(
             (p) =>
+              !q ||
               (p.name && p.name.toLowerCase().includes(q)) ||
               (p.productName && p.productName.toLowerCase().includes(q)) ||
               (p.partNumber && p.partNumber.toLowerCase().includes(q)) ||
-              (p.sku && p.sku.toLowerCase().includes(q))
+              (p.sku && p.sku.toLowerCase().includes(q)) ||
+              ((p as any).barcode && (p as any).barcode.toLowerCase().includes(q))
           );
         }
 
@@ -71,14 +67,15 @@ export const ProductAutocomplete: React.FC<ProductAutocompleteProps> = ({
         setHighlightedIndex(matched.length > 0 ? 0 : -1);
       } catch (err) {
         console.warn('Product autocomplete search error:', err);
-        // Fallback to in-memory matching if server search fails
-        const q = trimmed.toLowerCase();
+        const q = searchTerm.trim().toLowerCase();
         const matched = fallbackProducts.filter(
           (p) =>
+            !q ||
             (p.name && p.name.toLowerCase().includes(q)) ||
             (p.productName && p.productName.toLowerCase().includes(q)) ||
             (p.partNumber && p.partNumber.toLowerCase().includes(q)) ||
-            (p.sku && p.sku.toLowerCase().includes(q))
+            (p.sku && p.sku.toLowerCase().includes(q)) ||
+            ((p as any).barcode && (p as any).barcode.toLowerCase().includes(q))
         );
         if (isMounted) {
           setResults(matched);
@@ -87,7 +84,7 @@ export const ProductAutocomplete: React.FC<ProductAutocompleteProps> = ({
       } finally {
         if (isMounted) setLoading(false);
       }
-    }, 150);
+    }, 120);
 
     return () => {
       isMounted = false;
