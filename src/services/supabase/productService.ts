@@ -417,18 +417,16 @@ export class ProductService {
     const cleanSku = (item.sku || '').trim();
     const cleanPartNo = (item.partNumber || '').trim();
 
-    // 1. Try matching by productId UUID first if valid
+    // 1. Try matching by productId UUID first if valid (authoritative match)
     if (item.productId && isValidUuid(item.productId)) {
       if (isSupabaseConfigured()) {
-        let query = supabase.from('products').select('*, categories(name)').eq('id', item.productId).eq('active', true);
+        let query = supabase.from('products').select('*, categories(name)').eq('id', item.productId);
         if (isValidUuid(wsId)) {
           query = query.eq('workspace_id', wsId);
         }
         const { data: prod } = await query.maybeSingle();
         if (prod) {
-          if (!cleanName || prod.name.toLowerCase() === cleanName.toLowerCase()) {
-            return fromDbProduct(prod as DbProduct);
-          }
+          return fromDbProduct(prod as DbProduct);
         }
       } else {
         const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
@@ -437,7 +435,7 @@ export class ProductService {
       }
     }
 
-    // 2. Fallback search by productName, SKU, or part number if productId was missing or mismatched
+    // 2. Fallback search by productName, SKU, or part number if productId was missing or did not resolve
     if (isSupabaseConfigured() && (cleanName || cleanSku || cleanPartNo)) {
       let query = supabase.from('products').select('*, categories(name)').eq('active', true);
       if (isValidUuid(wsId)) {
@@ -452,9 +450,21 @@ export class ProductService {
         query = query.ilike('part_number', cleanPartNo);
       }
 
-      const { data: matched } = await query.limit(1).maybeSingle();
-      if (matched) {
-        return fromDbProduct(matched as DbProduct);
+      const { data: matched } = await query
+        .order('created_at', { ascending: true })
+        .limit(5);
+
+      if (matched && matched.length > 0) {
+        if (matched.length > 1) {
+          console.warn('[resolveCanonicalProduct] Duplicate product candidate rows detected:', {
+            searchedName: cleanName,
+            searchedSku: cleanSku,
+            searchedPartNo: cleanPartNo,
+            matchedProductIds: matched.map((m: any) => m.id),
+            selectedId: matched[0].id,
+          });
+        }
+        return fromDbProduct(matched[0] as DbProduct);
       }
     }
 
