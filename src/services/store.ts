@@ -739,12 +739,14 @@ class StoreService {
 
     this.state.payments.unshift(newPayment);
 
-    if (paymentData.invoiceId) {
-      const inv = this.state.invoices.find((i) => i.id === paymentData.invoiceId);
+    if (paymentData.invoiceId || paymentData.invoiceNumber) {
+      const inv = this.state.invoices.find(
+        (i) => i.id === paymentData.invoiceId || (paymentData.invoiceNumber && i.invoiceNumber === paymentData.invoiceNumber)
+      );
       if (inv) {
-        const updatedPaid = Number((inv.paidAmount + paymentData.amount).toFixed(2));
+        const updatedPaid = Number(((inv.paidAmount || 0) + paymentData.amount).toFixed(2));
         const updatedBalance = Math.max(0, Number((inv.grandTotal - updatedPaid).toFixed(2)));
-        const newStatus: InvoiceStatus = updatedBalance <= 0 ? 'Paid' : updatedPaid > 0 ? 'Partially Paid' : inv.status;
+        const newStatus: InvoiceStatus = (Math.abs(inv.grandTotal - updatedPaid) < 0.01 || updatedBalance <= 0) ? 'Paid' : updatedPaid > 0 ? 'Partially Paid' : inv.status;
 
         inv.paidAmount = updatedPaid;
         inv.balanceAmount = updatedBalance;

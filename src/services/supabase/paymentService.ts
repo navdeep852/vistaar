@@ -1,7 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import { Payment } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
-import { handleSupabaseError } from '../../lib/supabaseError';
+import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 
@@ -31,6 +31,62 @@ export class PaymentService {
       const errStr = handleSupabaseError(e, 'getPayments');
       const fallback = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
       return { data: fallback, error: errStr };
+    }
+  }
+
+  private async syncInvoicePaymentTotals(invoiceId?: string | null, invoiceNumber?: string): Promise<void> {
+    const wsId = this.getWorkspaceId();
+    if (!invoiceId && !invoiceNumber) return;
+
+    try {
+      let query = supabase.from('invoices').select('id, grand_total, paid_amount, balance_amount, status');
+      if (invoiceId && isValidUuid(invoiceId)) {
+        query = query.eq('id', invoiceId);
+      } else if (invoiceNumber) {
+        query = query.eq('invoice_number', invoiceNumber);
+      }
+      if (isValidUuid(wsId)) {
+        query = query.eq('workspace_id', wsId);
+      }
+
+      const { data: invData, error: invErr } = await query.maybeSingle();
+      if (invErr || !invData) return;
+
+      const targetId = invData.id;
+      const grandTotal = Number(invData.grand_total) || 0;
+
+      let payQuery = supabase.from('payments').select('amount').eq('invoice_id', targetId);
+      if (isValidUuid(wsId)) {
+        payQuery = payQuery.eq('workspace_id', wsId);
+      }
+
+      const { data: payments } = await payQuery;
+      const totalPaid = (payments || []).reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
+      const balanceAmount = Math.max(0, Number((grandTotal - totalPaid).toFixed(2)));
+
+      let newStatus = invData.status || 'Issued';
+      if (Math.abs(grandTotal - totalPaid) < 0.01 || totalPaid >= grandTotal) {
+        newStatus = 'Paid';
+      } else if (totalPaid > 0) {
+        newStatus = 'Partially Paid';
+      }
+
+      let updateQuery = supabase
+        .from('invoices')
+        .update({
+          paid_amount: totalPaid,
+          balance_amount: balanceAmount,
+          status: newStatus,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', targetId);
+
+      if (isValidUuid(wsId)) {
+        updateQuery = updateQuery.eq('workspace_id', wsId);
+      }
+      await updateQuery;
+    } catch (e) {
+      console.warn('syncInvoicePaymentTotals error:', e);
     }
   }
 
@@ -69,6 +125,9 @@ export class PaymentService {
         return { error: errStr };
       }
       const createdId = data ? data.id : `pay-${Date.now()}`;
+
+      // Sync Supabase invoice paid_amount, balance_amount, status
+      await this.syncInvoicePaymentTotals(payload.invoice_id, payment.invoiceNumber);
 
       // Record Daybook Financial Transaction
       try {

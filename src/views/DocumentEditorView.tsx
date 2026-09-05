@@ -164,6 +164,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
 
   useEffect(() => {
     fetchCustomers();
+    productService.getProducts().catch((e) => console.warn('Failed to pre-fetch products in DocumentEditorView:', e));
     const unsub = store.subscribe(() => {
       const updated = store.getCustomers();
       if (updated) {
@@ -727,6 +728,9 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
 
           // Sync with Supabase
           const subRes = await invoiceService.createInvoice(inv, calculatedItems);
+          if (subRes.invoiceId) {
+            targetInvoiceId = subRes.invoiceId;
+          }
           if (subRes.error) {
             showToast(`Finalization Warning: ${subRes.error}`, 'info');
           }

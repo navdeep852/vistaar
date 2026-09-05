@@ -46,25 +46,37 @@ export function categorizeSupabaseError(error: any): CategorizedError {
 
   const tech = { message: msg, code, details, hint, status };
 
-  // 1. Permission / RLS / Authorization Error
+  // 1. Session Expired (PGRST301 / 401 / JWT Expired)
   if (
-    code === '42501' ||
     status === 401 ||
-    status === 403 ||
-    msg.includes('row-level security') ||
-    msg.includes('permission denied') ||
-    msg.includes('RLS') ||
-    msg.includes('JWT') ||
-    msg.includes('PGRST301')
+    code === 'PGRST301' ||
+    msg.includes('JWT expired') ||
+    msg.includes('invalid claim') ||
+    msg.includes('token is expired')
   ) {
     return {
-      category: 'RLS_ERROR',
-      userMessage: 'Access Denied: Row-Level Security policy or authorization blocked this database operation.',
+      category: 'AUTH_ERROR',
+      userMessage: 'Session Expired: Your authentication session has expired. Please log in again.',
       technicalDetails: tech,
     };
   }
 
-  // 2. Authentication Error
+  // 2. Permission / RLS / Authorization Error (42501 / 403)
+  if (
+    code === '42501' ||
+    status === 403 ||
+    msg.includes('row-level security') ||
+    msg.includes('permission denied') ||
+    msg.includes('RLS')
+  ) {
+    return {
+      category: 'RLS_ERROR',
+      userMessage: 'Permission Denied: Your account does not have authorization to add products to this workspace.',
+      technicalDetails: tech,
+    };
+  }
+
+  // 3. Authentication Error
   if (
     msg.includes('Invalid login credentials') ||
     msg.includes('invalid_credentials') ||
@@ -74,34 +86,34 @@ export function categorizeSupabaseError(error: any): CategorizedError {
   ) {
     return {
       category: 'AUTH_ERROR',
-      userMessage: 'Authentication Failure: Invalid credentials or expired user session.',
+      userMessage: 'Authentication Failure: Invalid credentials or unconfirmed account.',
       technicalDetails: tech,
     };
   }
 
-  // 3. PostgreSQL Unique Constraint Violation (23505)
+  // 4. PostgreSQL Unique Constraint Violation (23505) - Duplicate Part Number / Code
   if (code === '23505' || msg.includes('duplicate key')) {
     return {
       category: 'CONSTRAINT_ERROR',
-      userMessage: 'Duplicate Record: A record with this unique value already exists.',
+      userMessage: 'Duplicate Product: A product with this Part Number, Product Code, or SKU already exists.',
       technicalDetails: tech,
     };
   }
 
-  // 4. PostgreSQL Foreign Key Violation (23503)
+  // 5. PostgreSQL Foreign Key Violation (23503)
   if (code === '23503' || msg.includes('foreign key constraint')) {
     return {
       category: 'CONSTRAINT_ERROR',
-      userMessage: 'Invalid Reference: The related record (category, supplier, customer, or product) was not found.',
+      userMessage: 'Invalid Reference: The related Category or Supplier was not found.',
       technicalDetails: tech,
     };
   }
 
-  // 5. Validation / Check Constraint Violation (23514)
-  if (code === '23514' || msg.includes('check constraint') || msg.includes('invalid input syntax')) {
+  // 6. Validation / Check / Not-Null Constraint Violation (23514 / 23502)
+  if (code === '23514' || code === '23502' || msg.includes('check constraint') || msg.includes('not-null constraint') || msg.includes('invalid input syntax')) {
     return {
       category: 'VALIDATION_ERROR',
-      userMessage: 'Validation Error: Data value violates database constraints.',
+      userMessage: 'Validation Error: Product details violate database required constraints.',
       technicalDetails: tech,
     };
   }

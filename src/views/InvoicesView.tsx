@@ -12,6 +12,7 @@ import {
   Truck,
 } from 'lucide-react';
 import { store } from '../services/store';
+import { invoiceService, paymentService } from '../services/supabase';
 import { Invoice, InvoiceStatus, PaymentMethod } from '../types';
 import { Modal } from '../components/Modal';
 import { TemplateGalleryModal } from '../components/TemplateGalleryModal';
@@ -80,7 +81,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
     setPaymentModalOpen(true);
   };
 
-  const handleRecordPayment = (e: React.FormEvent) => {
+  const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedInvoice) return;
 
@@ -89,7 +90,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       return;
     }
 
-    store.recordPayment({
+    const payData = {
       customerId: selectedInvoice.customerId || 'manual-cust',
       customerName: selectedInvoice.customerName,
       invoiceId: selectedInvoice.id,
@@ -98,7 +99,19 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       date: new Date().toISOString().split('T')[0],
       method: payMethod,
       referenceNo: payRef,
-    });
+    };
+
+    store.recordPayment(payData);
+
+    try {
+      await paymentService.createPayment(payData);
+      const { data } = await invoiceService.getInvoices();
+      if (data && Array.isArray(data)) {
+        setInvoices(data);
+      }
+    } catch (err: any) {
+      console.warn('Failed to sync payment with Supabase:', err);
+    }
 
     showToast(`Recorded payment of ${settings.currency}${payAmount} for Invoice ${selectedInvoice.invoiceNumber}!`, 'success');
     setPaymentModalOpen(false);

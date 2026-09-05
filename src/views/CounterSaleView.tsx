@@ -379,30 +379,41 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   };
 
   // Search & Filter Sales History
-  const filteredSales = sales.filter((s) => {
+  const filteredSales = (sales || []).filter((s) => {
+    if (!s) return false;
+    const saleDateStr = s.saleDate || (s as any).sale_date || '';
     const todayStr = new Date().toISOString().split('T')[0];
-    if (dateFilter === 'TODAY' && s.saleDate !== todayStr) return false;
+    if (dateFilter === 'TODAY' && saleDateStr !== todayStr) return false;
 
     if (dateFilter === 'WEEK') {
       const now = new Date();
       const weekAgo = new Date(now.getTime() - 7 * 86400000).toISOString().split('T')[0];
-      if (s.saleDate < weekAgo) return false;
+      if (saleDateStr < weekAgo) return false;
     }
 
     if (dateFilter === 'MONTH') {
       const currentMonth = todayStr.substring(0, 7);
-      if (!s.saleDate.startsWith(currentMonth)) return false;
+      if (!saleDateStr.startsWith(currentMonth)) return false;
     }
 
     if (historySearch.trim()) {
       const q = historySearch.toLowerCase().trim();
-      const matchCust = s.customerName.toLowerCase().includes(q);
-      const matchPhone = (s.phoneNumber || '').toLowerCase().includes(q);
-      const matchInv = s.invoiceNumber.toLowerCase().includes(q);
-      const matchSaleNo = s.saleNumber.toLowerCase().includes(q);
-      const matchRef = (s.estimateReference || '').toLowerCase().includes(q);
-      const matchItem = s.items.some(
-        (i) => i.productNameSnapshot.toLowerCase().includes(q) || i.partNumberSnapshot.toLowerCase().includes(q)
+      const custNameStr = s.customerName || (s as any).customer_name || '';
+      const phoneStr = s.phoneNumber || (s as any).phone_number || '';
+      const invNumStr = s.invoiceNumber || (s as any).invoice_number || '';
+      const saleNumStr = s.saleNumber || (s as any).sale_number || '';
+      const refStr = s.estimateReference || (s as any).estimate_reference || '';
+      const itemsList = s.items || (s as any).counter_sale_items || [];
+
+      const matchCust = custNameStr.toLowerCase().includes(q);
+      const matchPhone = phoneStr.toLowerCase().includes(q);
+      const matchInv = invNumStr.toLowerCase().includes(q);
+      const matchSaleNo = saleNumStr.toLowerCase().includes(q);
+      const matchRef = refStr.toLowerCase().includes(q);
+      const matchItem = Array.isArray(itemsList) && itemsList.some(
+        (i: any) =>
+          ((i.productNameSnapshot || i.product_name_snapshot || i.productName || '').toLowerCase().includes(q)) ||
+          ((i.partNumberSnapshot || i.part_number_snapshot || i.partNumber || '').toLowerCase().includes(q))
       );
       if (!matchCust && !matchPhone && !matchInv && !matchSaleNo && !matchRef && !matchItem) return false;
     }

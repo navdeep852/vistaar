@@ -2,6 +2,7 @@ import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { store } from '../store';
+import { fromDbCounterSale } from './types';
 
 const LOCAL_SALES_KEY = 'vistaar_local_counter_sales_db';
 
@@ -228,13 +229,13 @@ export class CounterSaleService {
       if (error) {
         const errStr = handleSupabaseError(error, 'getCounterSales');
         const fallback = safeStorageGet(LOCAL_SALES_KEY);
-        return { data: fallback, error: errStr };
+        return { data: (fallback || []).map((row: any) => fromDbCounterSale(row)), error: errStr };
       }
-      return { data: data || [] };
+      return { data: (data || []).map((row: any) => fromDbCounterSale(row)) };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getCounterSales');
       const fallback = safeStorageGet(LOCAL_SALES_KEY);
-      return { data: fallback, error: errStr };
+      return { data: (fallback || []).map((row: any) => fromDbCounterSale(row)), error: errStr };
     }
   }
 

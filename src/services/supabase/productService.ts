@@ -408,6 +408,8 @@ export class ProductService {
   }
 
   public async getProductAvailableStock(productId: string): Promise<number> {
+    if (!productId) return 0;
+
     if (!isSupabaseConfigured()) {
       const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
       const p = local.find((prod) => prod.id === productId) || store.getProducts().find((prod) => prod.id === productId);
@@ -437,7 +439,12 @@ export class ProductService {
 
       const { data: prodData, error: prodErr } = await prodQuery.maybeSingle();
 
-      const prodStock = !prodErr && prodData ? Math.max(0, Number(prodData.current_stock) || 0) : 0;
+      if (prodErr) {
+        handleSupabaseError(prodErr, 'getProductAvailableStock.products');
+        throw new Error(`Failed to query inventory stock: ${prodErr.message}`);
+      }
+
+      const prodStock = prodData ? Math.max(0, Number(prodData.current_stock) || 0) : 0;
 
       // 2. Fetch stock_receipts sum if receipts are configured
       let batchSum = 0;
@@ -456,26 +463,28 @@ export class ProductService {
         batchSum = receipts.reduce((acc: number, row: { quantity_remaining?: number | string | null }) => acc + (Number(row.quantity_remaining) || 0), 0);
       }
 
-      // Return maximum between products table current_stock and stock_receipts sum
+      // Return maximum between products table current_stock and active stock_receipts sum
       const availableStock = receipts && receipts.length > 0 ? Math.max(prodStock, Math.max(0, batchSum)) : (prodData ? prodStock : 0);
-
       const pStore = store.getProducts().find((prod) => prod.id === productId);
-      const finalStock = availableStock || Math.max(0, Number(pStore?.currentStock) || 0);
+      const finalStock = (prodData || (receipts && receipts.length > 0)) ? availableStock : Math.max(0, Number(pStore?.currentStock) || 0);
 
-      console.log('[INVOICE STOCK CHECK]', {
+      console.log('[AUTHORITATIVE STOCK CHECK]', {
         productId,
         productName: prodData?.name || pStore?.name || 'Product',
-        businessId: wsId,
-        storedQuantity: prodData?.current_stock ?? pStore?.currentStock,
+        workspaceId: wsId,
+        storedCurrentStock: prodData?.current_stock,
         batchSum: receipts && receipts.length > 0 ? batchSum : 'N/A',
-        availableQuantity: finalStock,
+        finalAvailableStock: finalStock,
       });
 
       return finalStock;
-    } catch (e) {
-      handleSupabaseError(e, 'getProductAvailableStock');
+    } catch (e: any) {
+      console.error('[getProductAvailableStock Error]', e);
       const p = store.getProducts().find((prod) => prod.id === productId);
-      return Math.max(0, Number(p?.currentStock) || 0);
+      if (p && p.currentStock !== undefined) {
+        return Math.max(0, Number(p.currentStock) || 0);
+      }
+      throw e;
     }
   }
 

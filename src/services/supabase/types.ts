@@ -480,4 +480,48 @@ export function fromDbDaybookTransaction(row: DbDaybookTransaction): DaybookTran
   };
 }
 
+export function fromDbCounterSaleItem(row: any): CounterSaleItem {
+  return {
+    id: row.id,
+    counterSaleId: row.counter_sale_id || row.counterSaleId || '',
+    productId: row.product_id || row.productId || '',
+    stockReceiptId: row.stock_receipt_id || row.stockReceiptId || undefined,
+    productNameSnapshot: row.product_name_snapshot || row.productNameSnapshot || row.product_name || row.productName || 'Product',
+    partNumberSnapshot: row.part_number_snapshot || row.partNumberSnapshot || row.part_number || row.partNumber || '',
+    quantity: Number(row.quantity) || 0,
+    rate: Number(row.rate) || 0,
+    amount: Number(row.amount) || (Number(row.quantity) || 0) * (Number(row.rate) || 0),
+    buyPriceSnapshot: row.buy_price_snapshot !== undefined ? Number(row.buy_price_snapshot) : undefined,
+    createdAt: row.created_at || new Date().toISOString(),
+  };
+}
+
+export function fromDbCounterSale(row: any): CounterSale {
+  const rawItems = row.counter_sale_items || row.items || [];
+  const mappedItems = Array.isArray(rawItems) ? rawItems.map((item: any) => fromDbCounterSaleItem(item)) : [];
+
+  return {
+    id: row.id,
+    saleNumber: row.sale_number || row.saleNumber || `CS-${row.id}`,
+    customerId: row.customer_id || row.customerId || undefined,
+    customerName: row.customer_name || row.customerName || 'Walk-in Customer',
+    phoneNumber: row.phone_number || row.phoneNumber || '',
+    saleDate: row.sale_date || row.saleDate || (row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
+    invoiceNumber: row.invoice_number || row.invoiceNumber || row.sale_number || row.saleNumber || '',
+    estimateReference: row.estimate_reference || row.estimateReference || '',
+    subtotal: Number(row.subtotal) || 0,
+    discountType: (row.discount_type || row.discountType || 'fixed') as any,
+    discountValue: Number(row.discount_value || row.discountValue) || 0,
+    discountAmount: Number(row.discount_amount || row.discountAmount) || 0,
+    finalTotal: Number(row.final_total || row.finalTotal) || Number(row.subtotal) || 0,
+    status: (row.status as any) || 'COMPLETED',
+    items: mappedItems,
+    notes: row.notes || undefined,
+    createdBy: row.created_by || row.createdBy || undefined,
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
+  };
+}
+
+
 
