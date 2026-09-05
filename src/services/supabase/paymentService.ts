@@ -1,4 +1,4 @@
-import { supabase } from '../../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { Payment } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
@@ -55,6 +55,23 @@ export class PaymentService {
       const targetId = invData.id;
       const grandTotal = Number(invData.grand_total) || 0;
 
+      // Ensure any payments linked by invoice_number have invoice_id set
+      if (invoiceNumber) {
+        try {
+          let linkQuery = supabase
+            .from('payments')
+            .update({ invoice_id: targetId })
+            .is('invoice_id', null)
+            .eq('reference_number', invoiceNumber);
+          if (isValidUuid(wsId)) {
+            linkQuery = linkQuery.eq('workspace_id', wsId);
+          }
+          await linkQuery;
+        } catch (e) {
+          // ignore
+        }
+      }
+
       let payQuery = supabase.from('payments').select('amount').eq('invoice_id', targetId);
       if (isValidUuid(wsId)) {
         payQuery = payQuery.eq('workspace_id', wsId);
@@ -93,15 +110,29 @@ export class PaymentService {
   public async createPayment(payment: Partial<Payment>): Promise<{ paymentId?: string; error?: string }> {
     const wsId = this.getWorkspaceId();
     const payNum = payment.paymentNumber || `PAY-${Date.now()}`;
+
+    // Resolve canonical invoice database UUID if invoiceId or invoiceNumber is provided
+    let resolvedInvoiceId: string | null = (payment.invoiceId && isValidUuid(payment.invoiceId)) ? payment.invoiceId : null;
+    if (!resolvedInvoiceId && payment.invoiceNumber && isSupabaseConfigured()) {
+      try {
+        let invQuery = supabase.from('invoices').select('id').eq('invoice_number', payment.invoiceNumber);
+        if (isValidUuid(wsId)) invQuery = invQuery.eq('workspace_id', wsId);
+        const { data: invRow } = await invQuery.maybeSingle();
+        if (invRow) resolvedInvoiceId = invRow.id;
+      } catch (e) {
+        // ignore
+      }
+    }
+
     const payload = {
       workspace_id: wsId,
       customer_id: payment.customerId || null,
-      invoice_id: payment.invoiceId || null,
+      invoice_id: resolvedInvoiceId,
       payment_number: payNum,
       amount: payment.amount || 0,
       date: payment.date || new Date().toISOString().split('T')[0],
       payment_method: payment.method || 'Cash',
-      reference_number: payment.referenceNo || null,
+      reference_number: payment.referenceNo || payment.invoiceNumber || null,
       notes: payment.notes || null,
     };
 
