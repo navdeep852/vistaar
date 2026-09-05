@@ -487,23 +487,45 @@ export class ProductService {
       return prodStock;
     }
 
-    const wsId = await this.getOrFetchWorkspaceId();
+    let wsId = await this.getOrFetchWorkspaceId();
     try {
+      const fetchProduct = async (workspaceId: string) => {
+        let prodQuery = supabase
+          .from('products')
+          .select('id, name, current_stock, workspace_id')
+          .eq('id', productId);
+
+        if (isValidUuid(workspaceId)) {
+          prodQuery = prodQuery.eq('workspace_id', workspaceId);
+        }
+
+        const { data, error } = await prodQuery.maybeSingle();
+
+        if (error) {
+          handleSupabaseError(error, 'getProductAvailableStock.products');
+          throw new Error(`Failed to query inventory stock: ${error.message}`);
+        }
+
+        return data;
+      };
+
       // 1. Fetch current_stock directly from products table (canonical inventory source)
-      let prodQuery = supabase
-        .from('products')
-        .select('id, name, current_stock')
-        .eq('id', productId);
+      let prodData = await fetchProduct(wsId);
 
-      if (isValidUuid(wsId)) {
-        prodQuery = prodQuery.eq('workspace_id', wsId);
-      }
-
-      const { data: prodData, error: prodErr } = await prodQuery.maybeSingle();
-
-      if (prodErr) {
-        handleSupabaseError(prodErr, 'getProductAvailableStock.products');
-        throw new Error(`Failed to query inventory stock: ${prodErr.message}`);
+      // If no product row returned, force a fresh authoritative workspace ID lookup and retry once
+      if (!prodData && isSupabaseConfigured()) {
+        const staleWsId = wsId;
+        const freshWsId = await supabaseAuthService.getAuthoritativeWorkspaceId(true);
+        if (freshWsId && freshWsId !== staleWsId) {
+          wsId = freshWsId;
+          prodData = await fetchProduct(wsId);
+          console.warn('[getProductAvailableStock] Retried product lookup with fresh workspace_id due to mismatch:', {
+            productId,
+            staleWsId,
+            freshWsId,
+            found: !!prodData,
+          });
+        }
       }
 
       const prodStock = prodData ? Math.max(0, Number(prodData.current_stock) || 0) : 0;

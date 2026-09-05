@@ -198,8 +198,21 @@ export class InvoiceService {
         return { success: true };
       }
 
-      if (error && error.message && error.message.includes('INSUFFICIENT_STOCK')) {
-        return { success: false, error: error.message };
+      if (error) {
+        console.error('[finalizeInvoice] RPC finalize_invoice_stock returned error:', error);
+
+        const code = (error as any).code || '';
+        const msg = (error as any).message || '';
+        const isUnavailable =
+          code === 'PGRST202' ||
+          msg.includes('Could not find the function') ||
+          msg.includes('does not exist') ||
+          msg.startsWith('Failed to fetch') ||
+          msg.includes('NetworkError');
+
+        if (!isUnavailable) {
+          return { success: false, error: msg || 'Invoice finalization failed.' };
+        }
       }
 
       // Step 2: Fallback application-level stock deduction if RPC is unconfigured or in offline mode
