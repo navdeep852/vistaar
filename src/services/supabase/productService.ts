@@ -407,6 +407,68 @@ export class ProductService {
     return { success: true, data: res.product };
   }
 
+  /**
+   * Resolves the canonical database Product record for an item.
+   * Prevents identity mismatches where productId points to a different product than productName.
+   */
+  public async resolveCanonicalProduct(item: { productId?: string; productName?: string; sku?: string; partNumber?: string }): Promise<Product | null> {
+    const wsId = await this.getOrFetchWorkspaceId();
+    const cleanName = (item.productName || '').trim();
+    const cleanSku = (item.sku || '').trim();
+    const cleanPartNo = (item.partNumber || '').trim();
+
+    // 1. Try matching by productId UUID first if valid
+    if (item.productId && isValidUuid(item.productId)) {
+      if (isSupabaseConfigured()) {
+        let query = supabase.from('products').select('*, categories(name)').eq('id', item.productId).eq('active', true);
+        if (isValidUuid(wsId)) {
+          query = query.eq('workspace_id', wsId);
+        }
+        const { data: prod } = await query.maybeSingle();
+        if (prod) {
+          if (!cleanName || prod.name.toLowerCase() === cleanName.toLowerCase()) {
+            return fromDbProduct(prod as DbProduct);
+          }
+        }
+      } else {
+        const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+        const p = local.find((prod) => prod.id === item.productId) || store.getProducts().find((prod) => prod.id === item.productId);
+        if (p) return p;
+      }
+    }
+
+    // 2. Fallback search by productName, SKU, or part number if productId was missing or mismatched
+    if (isSupabaseConfigured() && (cleanName || cleanSku || cleanPartNo)) {
+      let query = supabase.from('products').select('*, categories(name)').eq('active', true);
+      if (isValidUuid(wsId)) {
+        query = query.eq('workspace_id', wsId);
+      }
+
+      if (cleanName) {
+        query = query.ilike('name', cleanName);
+      } else if (cleanSku) {
+        query = query.ilike('sku', cleanSku);
+      } else if (cleanPartNo) {
+        query = query.ilike('part_number', cleanPartNo);
+      }
+
+      const { data: matched } = await query.limit(1).maybeSingle();
+      if (matched) {
+        return fromDbProduct(matched as DbProduct);
+      }
+    }
+
+    // 3. Check local store memory fallback
+    const storeProds = store.getProducts();
+    const matchStore = storeProds.find(
+      (p) =>
+        (item.productId && p.id === item.productId) ||
+        (cleanName && p.name.toLowerCase() === cleanName.toLowerCase()) ||
+        (cleanSku && p.sku.toLowerCase() === cleanSku.toLowerCase())
+    );
+    return matchStore || null;
+  }
+
   public async getProductAvailableStock(productId: string): Promise<number> {
     if (!productId) return 0;
 

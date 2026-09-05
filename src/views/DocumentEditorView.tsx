@@ -647,13 +647,54 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
       }
 
       if (documentType === 'invoice') {
+        const authWsId = await productService.getOrFetchWorkspaceId();
+        const authUser = supabaseAuthService.getUser();
+
         // Live authoritative stock validation for linked catalog products
-        for (const item of items) {
-          if (item.productId) {
-            const liveAvail = await productService.getProductAvailableStock(item.productId);
+        for (let idx = 0; idx < items.length; idx++) {
+          const item = items[idx];
+
+          // Resolve canonical database Product record for item
+          const canonicalProd = await productService.resolveCanonicalProduct(item);
+          const targetProdId = canonicalProd?.id || item.productId;
+
+          if (targetProdId) {
+            // Update line item with canonical database productId
+            item.productId = targetProdId;
+            if (canonicalProd) {
+              item.productName = canonicalProd.name;
+              item.sku = canonicalProd.sku;
+            }
+
+            const liveAvail = await productService.getProductAvailableStock(targetProdId);
+            (item as any).availableStock = liveAvail;
+
+            // Structured Forensic Logging (Phase 1)
+            console.log('------------------------------------------------');
+            console.log('[INVOICE STOCK FORENSIC]');
+            console.log('workspaceId:', authWsId);
+            console.log('authUserId:', authUser?.id);
+            console.log('invoiceId:', initialDraftData?.id || 'NEW_INVOICE');
+            console.log('invoiceLineId:', `line-${idx}`);
+            console.log('productId:', targetProdId);
+            console.log('productName:', item.productName);
+            console.log('sku:', item.sku);
+            console.log('requestedQuantity:', item.quantity);
+            console.log('------------------------------------------------');
+
+            console.log('------------------------------------------------');
+            console.log('[STOCK QUERY RESULT]');
+            console.log('table:', 'products / stock_receipts');
+            console.log('query filters:', { productId: targetProdId, workspaceId: authWsId });
+            console.log('returned rows:', canonicalProd ? 1 : 0);
+            console.log('returned product_id:', canonicalProd?.id);
+            console.log('returned workspace_id:', authWsId);
+            console.log('returned quantity:', canonicalProd?.currentStock);
+            console.log('returned available_quantity:', liveAvail);
+            console.log('------------------------------------------------');
+
             if (item.quantity > liveAvail) {
-              const storeProd = store.getProducts().find((p: Product) => p.id === item.productId);
-              const pName = storeProd?.name || item.productName || 'Product';
+              const pName = canonicalProd?.name || item.productName || 'Product';
               showToast(
                 `Insufficient stock for "${pName}". Requested ${item.quantity}, but only ${liveAvail} units are available.`,
                 'error'
