@@ -344,15 +344,27 @@ export class CounterSaleService {
       balance_amount: balanceAmount,
       payment_reference: sale.paymentReference || null,
       payment_notes: sale.paymentNotes || null,
-      items: items.map((i: any) => ({
-        productId: i.productId || i.product_id,
-        productNameSnapshot: i.productName || i.productNameSnapshot || i.product_name_snapshot || 'Product',
-        partNumberSnapshot: i.partNumber || i.partNumberSnapshot || i.part_number_snapshot || '',
-        quantity: Math.abs(Number(i.quantity) || 0),
-        rate: Number(i.rate) || 0,
-        amount: (Math.abs(Number(i.quantity) || 0)) * (Number(i.rate) || 0),
-        buyPriceSnapshot: Number(i.buyPriceSnapshot || i.buy_price_snapshot || 0),
-      })),
+      items: items.map((i: any) => {
+        const pId = i.productId || i.product_id;
+        const pName = i.productName || i.productNameSnapshot || i.product_name_snapshot || 'Product';
+        const pPart = i.partNumber || i.partNumberSnapshot || i.part_number_snapshot || '';
+        const qty = Math.abs(Number(i.quantity) || 0);
+        const rate = Number(i.rate) || 0;
+        const buyPrice = Number(i.buyPriceSnapshot || i.buy_price_snapshot || 0);
+        return {
+          productId: pId,
+          product_id: pId,
+          productNameSnapshot: pName,
+          product_name_snapshot: pName,
+          partNumberSnapshot: pPart,
+          part_number_snapshot: pPart,
+          quantity: qty,
+          rate: rate,
+          amount: qty * rate,
+          buyPriceSnapshot: buyPrice,
+          buy_price_snapshot: buyPrice,
+        };
+      }),
     };
 
     // 3. PRODUCTION SUPABASE MODE: STRICT SERVER-SIDE ATOMIC POSTGRESQL RPC EXECUTION

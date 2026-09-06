@@ -298,6 +298,7 @@ DECLARE
     
     -- Loop variables
     v_item RECORD;
+    v_item_json JSONB;
     v_prod_id UUID;
     v_prod_name TEXT;
     v_part_num TEXT;
@@ -431,22 +432,10 @@ BEGIN
     END IF;
 
     -- 5. Product Stock Validation & Row Locking (FOR UPDATE)
-    FOR v_item IN SELECT * FROM jsonb_to_recordset(v_items_json) AS (
-        productId UUID,
-        product_id UUID,
-        productNameSnapshot TEXT,
-        product_name_snapshot TEXT,
-        partNumberSnapshot TEXT,
-        part_number_snapshot TEXT,
-        quantity NUMERIC,
-        rate NUMERIC,
-        amount NUMERIC,
-        buyPriceSnapshot NUMERIC,
-        buy_price_snapshot NUMERIC
-    )
+    FOR v_item_json IN SELECT * FROM jsonb_array_elements(v_items_json)
     LOOP
-        v_prod_id := COALESCE(v_item.productId, v_item.product_id);
-        v_item_qty := ABS(COALESCE(v_item.quantity, 0));
+        v_prod_id := NULLIF(COALESCE(v_item_json->>'productId', v_item_json->>'product_id', ''), '')::UUID;
+        v_item_qty := ABS(COALESCE((v_item_json->>'quantity')::NUMERIC, 0));
 
         IF v_prod_id IS NOT NULL AND v_item_qty > 0 THEN
             -- Lock Product Row
@@ -517,27 +506,15 @@ BEGIN
     ) RETURNING id INTO v_counter_sale_id;
 
     -- 7. Insert Line Items & Deduct Inventory (FIFO)
-    FOR v_item IN SELECT * FROM jsonb_to_recordset(v_items_json) AS (
-        productId UUID,
-        product_id UUID,
-        productNameSnapshot TEXT,
-        product_name_snapshot TEXT,
-        partNumberSnapshot TEXT,
-        part_number_snapshot TEXT,
-        quantity NUMERIC,
-        rate NUMERIC,
-        amount NUMERIC,
-        buyPriceSnapshot NUMERIC,
-        buy_price_snapshot NUMERIC
-    )
+    FOR v_item_json IN SELECT * FROM jsonb_array_elements(v_items_json)
     LOOP
-        v_prod_id := COALESCE(v_item.productId, v_item.product_id);
-        v_prod_name := COALESCE(v_item.productNameSnapshot, v_item.product_name_snapshot, 'Product');
-        v_part_num := COALESCE(v_item.partNumberSnapshot, v_item.part_number_snapshot, '');
-        v_item_qty := ABS(COALESCE(v_item.quantity, 0));
-        v_item_rate := COALESCE(v_item.rate, 0);
-        v_item_amt := COALESCE(v_item.amount, v_item_qty * v_item_rate);
-        v_item_buy_price := COALESCE(v_item.buyPriceSnapshot, v_item.buy_price_snapshot, 0);
+        v_prod_id := NULLIF(COALESCE(v_item_json->>'productId', v_item_json->>'product_id', ''), '')::UUID;
+        v_prod_name := COALESCE(v_item_json->>'productNameSnapshot', v_item_json->>'product_name_snapshot', v_item_json->>'productName', v_item_json->>'product_name', 'Product');
+        v_part_num := COALESCE(v_item_json->>'partNumberSnapshot', v_item_json->>'part_number_snapshot', v_item_json->>'partNumber', v_item_json->>'part_number', '');
+        v_item_qty := ABS(COALESCE((v_item_json->>'quantity')::NUMERIC, 0));
+        v_item_rate := COALESCE((v_item_json->>'rate')::NUMERIC, 0);
+        v_item_amt := COALESCE((v_item_json->>'amount')::NUMERIC, v_item_qty * v_item_rate);
+        v_item_buy_price := COALESCE((v_item_json->>'buyPriceSnapshot')::NUMERIC, (v_item_json->>'buy_price_snapshot')::NUMERIC, 0);
 
         INSERT INTO public.counter_sale_items (
             workspace_id,
@@ -915,8 +892,9 @@ BEGIN
 
     -- Cancel Udhari record if any
     UPDATE public.udhari_records
-    SET status = 'CANCELLED',
+    SET status = 'PAID'::public.udhari_status,
         outstanding_amount = 0,
+        notes = COALESCE(notes, '') || ' [Cancelled Sale]',
         updated_at = NOW()
     WHERE workspace_id = v_workspace_id AND udhari_code = 'UD-' || v_sale.invoice_number;
 
