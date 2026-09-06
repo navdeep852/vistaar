@@ -72,57 +72,7 @@ export class DaybookService {
 
     try {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
-        // 1. Try querying public.accounting_entries first
-        try {
-          let query = supabase
-            .from('accounting_entries')
-            .select('*', { count: 'exact' })
-            .eq('workspace_id', wsId);
-
-          const { start, end } = this.getDateBounds(options?.dateRange, options?.startDate, options?.endDate);
-          if (start) query = query.gte('entry_date', start);
-          if (end) query = query.lte('entry_date', end);
-
-          if (options?.transactionType && options.transactionType !== 'ALL') {
-            query = query.eq('entry_type', options.transactionType);
-          }
-
-          if (options?.search && options.search.trim()) {
-            const s = `%${options.search.trim()}%`;
-            query = query.or(`entry_number.ilike.${s},reference_number.ilike.${s},description.ilike.${s}`);
-          }
-
-          query = query.order('entry_date', { ascending: false }).order('created_at', { ascending: false });
-
-          const { data, count, error } = await query;
-
-          if (!error && data && data.length > 0) {
-            const mapped = data.map((row: any) => ({
-              id: row.id,
-              workspaceId: row.workspace_id,
-              transactionCode: row.entry_number,
-              transactionDate: row.entry_date,
-              transactionType: row.entry_type as any,
-              direction: (row.entry_type === 'EXPENSE' || row.entry_type === 'SUPPLIER_PAYMENT' ? 'OUT' : 'IN') as any,
-              amount: Number(row.amount) || 0,
-              paymentMode: row.payment_method || 'Cash',
-              referenceType: row.source_type as any,
-              referenceId: row.source_id,
-              referenceNumber: row.reference_number,
-              description: row.description,
-              notes: row.notes,
-              status: (row.entry_type === 'REVERSAL' ? 'REVERSED' : 'COMPLETED') as any,
-              createdAt: row.created_at,
-              updatedAt: row.updated_at,
-            }));
-
-            return { data: mapped as DaybookTransaction[], count: count || mapped.length };
-          }
-        } catch (accErr) {
-          // Fall through to daybook_transactions or live synthesis
-        }
-
-        // 2. Try querying daybook_transactions
+        // 1. Query public.daybook_transactions first (Authoritative unified financial journal)
         try {
           let dtQuery = supabase
             .from('daybook_transactions')
@@ -137,6 +87,19 @@ export class DaybookService {
             dtQuery = dtQuery.eq('transaction_type', options.transactionType);
           }
 
+          if (options?.paymentStatus && options.paymentStatus !== 'ALL') {
+            dtQuery = dtQuery.eq('payment_status', options.paymentStatus);
+          }
+
+          if (options?.paymentMode && options.paymentMode !== 'ALL') {
+            dtQuery = dtQuery.eq('payment_mode', options.paymentMode);
+          }
+
+          if (options?.search && options.search.trim()) {
+            const s = `%${options.search.trim()}%`;
+            dtQuery = dtQuery.or(`transaction_code.ilike.${s},reference_number.ilike.${s},description.ilike.${s},party_name.ilike.${s}`);
+          }
+
           dtQuery = dtQuery.order('transaction_date', { ascending: false }).order('created_at', { ascending: false });
 
           const { data: dtData, count: dtCount, error: dtErr } = await dtQuery;
@@ -148,7 +111,7 @@ export class DaybookService {
           // Fall through
         }
 
-        // 3. Fallback: Synthesize from completed counter_sales and issued invoices in Supabase
+        // 2. Fallback: Synthesize from completed counter_sales and issued invoices in Supabase
         const synthesized = await this.synthesizeDaybookFromLiveSales(wsId, options);
         if (synthesized.length > 0) {
           return { data: synthesized, count: synthesized.length };
@@ -183,6 +146,15 @@ export class DaybookService {
       const { data: csList } = await csQuery;
       if (csList) {
         for (const cs of csList) {
+          const total = Number(cs.final_total) || 0;
+          const received = Number(cs.amount_received !== undefined && cs.amount_received !== null ? cs.amount_received : cs.final_total) || 0;
+          const remaining = Number(cs.balance_amount) || Math.max(0, total - received);
+          const pStatus = remaining <= 0 ? 'PAID' : (received > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+
+          if (options?.paymentStatus && options.paymentStatus !== 'ALL' && pStatus !== options.paymentStatus) {
+            continue;
+          }
+
           list.push({
             id: cs.id,
             workspaceId: cs.workspace_id,
@@ -190,7 +162,10 @@ export class DaybookService {
             transactionDate: cs.sale_date,
             transactionType: 'SALE',
             direction: 'IN',
-            amount: Number(cs.final_total) || 0,
+            amount: received, // Inflow = actual money received
+            totalAmount: total, // Gross Total column strictly for sales
+            remainingAmount: remaining, // Unpaid remaining
+            paymentStatus: pStatus as any,
             paymentMode: (cs.payment_method || 'Cash') as any,
             partyType: 'customer',
             partyId: cs.customer_id,
@@ -218,6 +193,15 @@ export class DaybookService {
       const { data: invList } = await invQuery;
       if (invList) {
         for (const inv of invList) {
+          const grandTotal = Number(inv.grand_total) || 0;
+          const paid = Number(inv.paid_amount) || 0;
+          const remaining = Number(inv.balance_amount) || Math.max(0, grandTotal - paid);
+          const pStatus = remaining <= 0 ? 'PAID' : (paid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+
+          if (options?.paymentStatus && options.paymentStatus !== 'ALL' && pStatus !== options.paymentStatus) {
+            continue;
+          }
+
           list.push({
             id: inv.id,
             workspaceId: inv.workspace_id,
@@ -225,7 +209,10 @@ export class DaybookService {
             transactionDate: inv.date,
             transactionType: 'SALE',
             direction: 'IN',
-            amount: Number(inv.grand_total) || 0,
+            amount: paid, // Inflow = actual money received
+            totalAmount: grandTotal, // Gross Total column strictly for sales
+            remainingAmount: remaining, // Remaining unpaid amount
+            paymentStatus: pStatus as any,
             paymentMode: 'Cash' as any,
             partyType: 'customer',
             partyId: inv.customer_id,
@@ -296,6 +283,9 @@ export class DaybookService {
     partyId?: string;
     partyName?: string;
     description?: string;
+    totalAmount?: number | null;
+    remainingAmount?: number | null;
+    paymentStatus?: 'PAID' | 'PARTIALLY PAID' | 'UNPAID' | 'CANCELLED';
     notes?: string;
     transactionDate?: string;
   }): Promise<{ success: boolean; id?: string; error?: string }> {
@@ -304,38 +294,16 @@ export class DaybookService {
     const entryNumber = `ACC-${params.referenceNumber || params.referenceId || Date.now()}`;
 
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
-      // 1. Write to accounting_entries
+      // 1. Primary write target: daybook_transactions with full idempotency & audit trail
       try {
-        const payload: any = {
-          workspace_id: wsId,
-          entry_date: entryDate,
-          entry_number: entryNumber,
-          entry_type: params.transactionType,
-          source_type: params.referenceType,
-          source_id: isValidUuid(params.referenceId) ? params.referenceId : null,
-          reference_number: params.referenceNumber || null,
-          description: params.description || `${params.transactionType} #${params.referenceNumber || ''}`,
-          customer_id: isValidUuid(params.partyId) ? params.partyId : null,
-          amount: Math.abs(Number(params.amount) || 0),
-          payment_method: params.paymentMode || 'Cash',
-          notes: params.notes || null,
-        };
-
-        const { data, error } = await supabase
-          .from('accounting_entries')
-          .insert([payload])
+        const { data: existing } = await supabase
+          .from('daybook_transactions')
           .select('id')
-          .single();
+          .eq('workspace_id', wsId)
+          .eq('reference_type', params.referenceType)
+          .eq('reference_id', params.referenceId)
+          .maybeSingle();
 
-        if (!error && data) {
-          return { success: true, id: data.id };
-        }
-      } catch (accErr) {
-        // Fall through
-      }
-
-      // 2. Also attempt daybook_transactions if available
-      try {
         const dtPayload: any = {
           workspace_id: wsId,
           transaction_code: entryNumber,
@@ -343,6 +311,9 @@ export class DaybookService {
           transaction_type: params.transactionType,
           direction: params.direction || 'IN',
           amount: Math.abs(Number(params.amount) || 0),
+          total_amount: params.totalAmount !== undefined ? params.totalAmount : null,
+          remaining_amount: params.remainingAmount !== undefined ? params.remainingAmount : null,
+          payment_status: params.paymentStatus || (params.transactionType === 'SALE' ? (params.remainingAmount && params.remainingAmount > 0 ? (params.amount > 0 ? 'PARTIALLY PAID' : 'UNPAID') : 'PAID') : null),
           payment_mode: params.paymentMode || 'Cash',
           party_type: params.partyType || 'customer',
           party_id: isValidUuid(params.partyId) ? params.partyId : null,
@@ -352,20 +323,46 @@ export class DaybookService {
           reference_number: params.referenceNumber || null,
           description: params.description,
           notes: params.notes,
-          status: 'COMPLETED',
+          status: params.paymentStatus === 'CANCELLED' ? 'VOID' : 'COMPLETED',
+          updated_at: new Date().toISOString(),
         };
 
-        const { data: dtData, error: dtErr } = await supabase
-          .from('daybook_transactions')
-          .insert([dtPayload])
-          .select('id')
-          .single();
+        if (existing) {
+          // Update existing transaction entry
+          let { error: updErr } = await supabase
+            .from('daybook_transactions')
+            .update(dtPayload)
+            .eq('id', existing.id);
 
-        if (!dtErr && dtData) {
-          return { success: true, id: dtData.id };
+          if (updErr && (updErr.code === '42703' || updErr.message?.includes('column'))) {
+            delete dtPayload.total_amount;
+            delete dtPayload.remaining_amount;
+            delete dtPayload.payment_status;
+            await supabase.from('daybook_transactions').update(dtPayload).eq('id', existing.id);
+          }
+          return { success: true, id: existing.id };
+        } else {
+          // Insert new transaction entry
+          let { data: insData, error: insErr } = await supabase
+            .from('daybook_transactions')
+            .insert([dtPayload])
+            .select('id')
+            .single();
+
+          if (insErr && (insErr.code === '42703' || insErr.message?.includes('column'))) {
+            delete dtPayload.total_amount;
+            delete dtPayload.remaining_amount;
+            delete dtPayload.payment_status;
+            const retry = await supabase.from('daybook_transactions').insert([dtPayload]).select('id').single();
+            if (!retry.error && retry.data) {
+              return { success: true, id: retry.data.id };
+            }
+          } else if (!insErr && insData) {
+            return { success: true, id: insData.id };
+          }
         }
       } catch (dtErr) {
-        // Fall through
+        // Fall through to local fallback
       }
     }
 
@@ -378,6 +375,9 @@ export class DaybookService {
       transactionType: params.transactionType,
       direction: params.direction || 'IN',
       amount: Math.abs(Number(params.amount) || 0),
+      totalAmount: params.totalAmount,
+      remainingAmount: params.remainingAmount,
+      paymentStatus: params.paymentStatus || (params.transactionType === 'SALE' ? (params.remainingAmount && params.remainingAmount > 0 ? (params.amount > 0 ? 'PARTIALLY PAID' : 'UNPAID') : 'PAID') : undefined),
       paymentMode: (params.paymentMode || 'Cash') as any,
       partyType: params.partyType,
       partyId: params.partyId,
@@ -392,7 +392,12 @@ export class DaybookService {
     };
 
     const local = safeGetTenantStorage<any>(LOCAL_DAYBOOK_KEY, []);
-    local.unshift(localEntry);
+    const existingIndex = local.findIndex((t: any) => t.referenceType === params.referenceType && t.referenceId === params.referenceId);
+    if (existingIndex >= 0) {
+      local[existingIndex] = { ...local[existingIndex], ...localEntry, id: local[existingIndex].id };
+    } else {
+      local.unshift(localEntry);
+    }
     safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, local);
 
     return { success: true, id: localEntry.id };

@@ -122,6 +122,48 @@ export class PaymentService {
         updateQuery = updateQuery.eq('workspace_id', wsId);
       }
       await updateQuery;
+
+      // Authoritative Daybook update for original Invoice Sale entry
+      try {
+        const { daybookService } = await import('./daybookService');
+        const pStatus = balanceAmount <= 0.01 ? 'PAID' : (totalPaid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+        await daybookService.recordFinancialTransaction({
+          referenceType: 'INVOICE',
+          referenceId: targetId,
+          referenceNumber: invData.invoice_number,
+          transactionType: 'SALE',
+          direction: 'IN',
+          amount: totalPaid,
+          totalAmount: grandTotal,
+          remainingAmount: balanceAmount,
+          paymentStatus: pStatus,
+          partyType: 'customer',
+          partyId: invData.customer_id || undefined,
+          partyName: invData.customer_name || 'Customer',
+          description: `Invoice #${invData.invoice_number}`,
+          transactionDate: invData.date || new Date().toISOString().split('T')[0],
+        });
+      } catch (dbErr) {
+        console.warn('[syncInvoicePaymentTotals] Daybook sync notice:', dbErr);
+      }
+
+      // Synchronize Udhari & Follow-up
+      try {
+        const { udhariService } = await import('./udhariService');
+        await udhariService.syncInvoiceUdhari({
+          invoiceId: targetId,
+          invoiceNumber: invData.invoice_number,
+          customerId: invData.customer_id,
+          customerName: invData.customer_name || 'Customer',
+          customerPhone: invData.customer_phone || '9999999999',
+          grandTotal,
+          paidAmount: totalPaid,
+          balanceAmount,
+          dueDate: invData.due_date,
+        });
+      } catch (uErr) {
+        console.warn('[syncInvoicePaymentTotals] Udhari sync notice:', uErr);
+      }
     } catch (e) {
       console.warn('[syncInvoicePaymentTotals] notice:', e);
     }

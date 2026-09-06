@@ -501,6 +501,7 @@ export interface UdhariRecord {
   totalReceived: number;
   outstandingAmount: number;
   dueDate: string; // YYYY-MM-DD
+  invoiceId?: string;
   notes?: string;
   status: UdhariStatus;
   createdAt: string;
@@ -589,6 +590,7 @@ export interface FollowUp {
   quotationNumber?: string;
   invoiceId?: string;
   invoiceNumber?: string;
+  udhariId?: string;
   assignedTo: string;
   title: string;
   notes?: string;
@@ -768,6 +770,10 @@ export interface DaybookTransaction {
   createdBy?: string;
   createdAt: string;
   updatedAt?: string;
+  // Unified Financial Pipeline Fields
+  totalAmount?: number | null;
+  remainingAmount?: number | null;
+  paymentStatus?: 'PAID' | 'PARTIALLY PAID' | 'UNPAID' | 'CANCELLED';
 }
 
 export interface DaybookFilterOptions {
@@ -776,6 +782,7 @@ export interface DaybookFilterOptions {
   endDate?: string;
   transactionType?: string;
   paymentMode?: string;
+  paymentStatus?: string;
   partyType?: string;
   search?: string;
   page?: number;

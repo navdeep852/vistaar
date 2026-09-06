@@ -970,6 +970,7 @@ class StoreService {
     dueDate: string;
     notes?: string;
     customerId?: string;
+    invoiceId?: string;
   }): UdhariRecord {
     if (!this.state.udharis) this.state.udharis = [];
     if (data.originalAmount <= 0) {
@@ -986,6 +987,7 @@ class StoreService {
     const newUdhari: UdhariRecord = {
       id,
       customerId: data.customerId,
+      invoiceId: data.invoiceId,
       customerNameSnapshot: data.customerNameSnapshot.trim(),
       phoneSnapshot: data.phoneSnapshot.trim(),
       originalAmount: Number(data.originalAmount),
@@ -1000,7 +1002,108 @@ class StoreService {
 
     this.state.udharis.unshift(newUdhari);
     this.saveToStorage();
+    this.notify();
     return newUdhari;
+  }
+
+  public syncInvoiceUdhari(params: {
+    invoiceId: string;
+    invoiceNumber: string;
+    customerId?: string;
+    customerName: string;
+    customerPhone: string;
+    grandTotal: number;
+    paidAmount: number;
+    balanceAmount: number;
+    dueDate?: string;
+  }): UdhariRecord | null {
+    if (!this.state.udharis) this.state.udharis = [];
+    if (!this.state.followUps) this.state.followUps = [];
+
+    const effectiveDueDate = params.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0];
+    const isCleared = params.balanceAmount <= 0.01;
+    const udhariStatus = isCleared ? 'PAID' : (params.paidAmount > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+
+    let udhari = this.state.udharis.find(
+      (u) => u.invoiceId === params.invoiceId || u.id === `UD-${params.invoiceNumber}`
+    );
+
+    const now = new Date().toISOString();
+
+    if (udhari) {
+      udhari.invoiceId = params.invoiceId;
+      udhari.totalReceived = params.paidAmount;
+      udhari.outstandingAmount = Math.max(0, params.balanceAmount);
+      udhari.status = udhariStatus;
+      udhari.updatedAt = now;
+      if (!isCleared) {
+        udhari.originalAmount = params.grandTotal;
+        udhari.dueDate = effectiveDueDate;
+      }
+    } else if (!isCleared) {
+      udhari = {
+        id: `UD-${params.invoiceNumber}`,
+        invoiceId: params.invoiceId,
+        customerId: params.customerId,
+        customerNameSnapshot: params.customerName.trim(),
+        phoneSnapshot: (params.customerPhone || '9999999999').trim(),
+        originalAmount: params.grandTotal,
+        totalReceived: params.paidAmount,
+        outstandingAmount: params.balanceAmount,
+        dueDate: effectiveDueDate,
+        notes: `Invoice #${params.invoiceNumber}`,
+        status: udhariStatus,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.state.udharis.unshift(udhari);
+    }
+
+    // Follow-up synchronization
+    let followUp = this.state.followUps.find(
+      (f) => f.invoiceId === params.invoiceId || f.invoiceNumber === params.invoiceNumber || (udhari && f.udhariId === udhari.id)
+    );
+
+    if (isCleared) {
+      if (followUp && followUp.status !== 'Completed') {
+        followUp.status = 'Completed';
+        followUp.completedAt = now;
+      }
+    } else {
+      if (followUp) {
+        followUp.status = 'Pending';
+        followUp.dueDate = effectiveDueDate;
+        followUp.notes = `Outstanding receivable: ₹${params.balanceAmount.toLocaleString('en-IN')}`;
+      } else {
+        followUp = {
+          id: `fu-${Date.now()}`,
+          customerId: params.customerId || 'manual-cust',
+          customerName: params.customerName,
+          customerPhone: params.customerPhone || '9999999999',
+          invoiceId: params.invoiceId,
+          invoiceNumber: params.invoiceNumber,
+          udhariId: udhari?.id,
+          assignedTo: 'Admin',
+          title: `Payment follow-up — ${params.invoiceNumber}`,
+          notes: `Outstanding receivable: ₹${params.balanceAmount.toLocaleString('en-IN')}`,
+          dueDate: effectiveDueDate,
+          dueTime: '10:00',
+          priority: 'High',
+          status: 'Pending',
+          actionType: 'INTERNAL_REMINDER',
+          actionConfig: {},
+          attemptCount: 0,
+          maxAttempts: 3,
+          executionLogs: [],
+          createdAt: now,
+        };
+        this.state.followUps.unshift(followUp);
+      }
+    }
+
+    this.saveToStorage();
+    this.notify();
+    return udhari || null;
   }
 
   public recordUdhariPayment(data: {
@@ -1014,6 +1117,8 @@ class StoreService {
   }): { payment: UdhariPaymentRecord; udhari: UdhariRecord } {
     if (!this.state.udharis) this.state.udharis = [];
     if (!this.state.udhariPayments) this.state.udhariPayments = [];
+    if (!this.state.payments) this.state.payments = [];
+    if (!this.state.invoices) this.state.invoices = [];
 
     const udhari = this.state.udharis.find((u) => u.id === data.udhariId);
     if (!udhari) {
@@ -1051,7 +1156,7 @@ class StoreService {
 
     // Recalculate Udhari stats
     const totalReceived = udhari.totalReceived + receivedAmount;
-    const outstandingAmount = Math.max(0, udhari.originalAmount - totalReceived);
+    const outstandingAmount = Math.max(0, Math.round((udhari.originalAmount - totalReceived) * 100) / 100);
     const newStatus = calculateUdhariStatus(udhari.originalAmount, totalReceived, udhari.dueDate);
 
     udhari.totalReceived = totalReceived;
@@ -1059,7 +1164,60 @@ class StoreService {
     udhari.status = newStatus;
     udhari.updatedAt = now;
 
+    // If linked to an invoice, synchronize invoice and add payment entry
+    if (udhari.invoiceId) {
+      const inv = this.state.invoices.find((i) => i.id === udhari.invoiceId || i.invoiceNumber === udhari.id.replace('UD-', ''));
+      if (inv) {
+        const newPaid = Number(((inv.paidAmount || 0) + receivedAmount).toFixed(2));
+        const newBalance = Math.max(0, Number((inv.grandTotal - newPaid).toFixed(2)));
+        inv.paidAmount = newPaid;
+        inv.balanceAmount = newBalance;
+        inv.status = newBalance <= 0.01 ? 'Paid' : 'Partially Paid';
+        inv.updatedAt = now;
+
+        // Record in payment history
+        const invPayment: Payment = {
+          id: `pay-${Date.now()}`,
+          paymentNumber: paymentId,
+          customerId: inv.customerId || udhari.customerId || '',
+          customerName: inv.customerName,
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          amount: receivedAmount,
+          date: data.paymentDate || now.split('T')[0],
+          method: data.paymentMethod,
+          referenceNo: data.reference,
+          notes: data.notes || `Udhari settlement for Invoice ${inv.invoiceNumber}`,
+          createdAt: now,
+        };
+        this.state.payments.unshift(invPayment);
+      }
+    }
+
+    // Follow-up status check
+    if (outstandingAmount <= 0.01) {
+      const followUp = this.state.followUps?.find((f) => f.udhariId === udhari.id || (udhari.invoiceId && f.invoiceId === udhari.invoiceId));
+      if (followUp) {
+        followUp.status = 'Completed';
+        followUp.completedAt = now;
+      }
+    }
+
+    // Trigger background Supabase persistence
+    import('./supabase/udhariService').then(({ udhariService }) => {
+      udhariService.recordUdhariPayment({
+        udhariId: udhari.id,
+        amount: receivedAmount,
+        paymentMethod: data.paymentMethod,
+        paymentDate: data.paymentDate,
+        phoneNumber: data.phoneNumber,
+        reference: data.reference,
+        notes: data.notes,
+      }).catch((e) => console.warn('Background Udhari payment sync notice:', e));
+    }).catch(() => {});
+
     this.saveToStorage();
+    this.notify();
     return { payment: newPayment, udhari };
   }
 

@@ -218,6 +218,7 @@ export interface DbUdhariRecord {
   total_received: number;
   outstanding_amount: number;
   due_date: string;
+  invoice_id?: string | null;
   status: string;
   created_at?: string;
 }
@@ -239,6 +240,8 @@ export interface DbFollowUp {
   customer_id?: string;
   customer_name: string;
   customer_phone: string;
+  invoice_id?: string | null;
+  udhari_id?: string | null;
   title: string;
   due_date: string;
   due_time: string;
@@ -435,6 +438,9 @@ export interface DbDaybookTransaction {
   is_reverse_charge?: boolean;
   tax_category?: string;
   tds_tcs_amount?: number;
+  total_amount?: number | null;
+  remaining_amount?: number | null;
+  payment_status?: string | null;
   created_by?: string;
   created_at: string;
   updated_at?: string;
@@ -477,6 +483,9 @@ export function fromDbDaybookTransaction(row: DbDaybookTransaction): DaybookTran
     isReverseCharge: Boolean(row.is_reverse_charge),
     taxCategory: (row.tax_category || 'TAXABLE') as any,
     tdsTcsAmount: Number(row.tds_tcs_amount) || 0,
+    totalAmount: row.total_amount !== undefined && row.total_amount !== null ? Number(row.total_amount) : null,
+    remainingAmount: row.remaining_amount !== undefined && row.remaining_amount !== null ? Number(row.remaining_amount) : null,
+    paymentStatus: (row.payment_status as any) || undefined,
     createdBy: row.created_by || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at || undefined,

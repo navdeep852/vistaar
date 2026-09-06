@@ -45,6 +45,7 @@ export const DaybookView: React.FC = () => {
   const [endDate, setEndDate] = useState('');
   const [transactionType, setTransactionType] = useState('ALL');
   const [paymentMode, setPaymentMode] = useState('ALL');
+  const [paymentStatus, setPaymentStatus] = useState('ALL');
   const [search, setSearch] = useState('');
 
   // Modals
@@ -74,6 +75,7 @@ export const DaybookView: React.FC = () => {
         endDate: dateRange === 'custom' ? endDate : undefined,
         transactionType,
         paymentMode,
+        paymentStatus,
         search,
       };
 
@@ -93,7 +95,7 @@ export const DaybookView: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, [dateRange, startDate, endDate, transactionType, paymentMode]);
+  }, [dateRange, startDate, endDate, transactionType, paymentMode, paymentStatus]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -244,6 +246,46 @@ export const DaybookView: React.FC = () => {
           <ArrowDownLeft className="w-3 h-3 text-emerald-500" />
         )}
         {typeLabels[tx.transactionType] || tx.transactionType}
+      </span>
+    );
+  };
+
+  const renderPaymentStatusTag = (tx: DaybookTransaction) => {
+    if (tx.status === 'VOID' || tx.paymentStatus === 'CANCELLED') {
+      return (
+        <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+          CANCELLED
+        </span>
+      );
+    }
+    const isSale = tx.transactionType === 'SALE' || tx.referenceType === 'INVOICE' || tx.referenceType === 'COUNTER_SALE';
+    if (!isSale && !tx.paymentStatus) {
+      return <span className="text-slate-300 dark:text-slate-700">—</span>;
+    }
+
+    const status = tx.paymentStatus || (
+      tx.remainingAmount !== null && tx.remainingAmount !== undefined
+        ? (tx.remainingAmount <= 0.01 ? 'PAID' : (tx.amount > 0 ? 'PARTIALLY PAID' : 'UNPAID'))
+        : 'PAID'
+    );
+
+    if (status === 'PAID') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-md bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/50">
+          PAID
+        </span>
+      );
+    }
+    if (status === 'PARTIALLY PAID') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-md bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-400 border border-amber-200 dark:border-amber-900/50">
+          PARTIALLY PAID
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-md bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-400 border border-rose-200 dark:border-rose-900/50">
+        UNPAID
       </span>
     );
   };
@@ -468,6 +510,24 @@ export const DaybookView: React.FC = () => {
             </select>
           </div>
 
+          {/* Payment Status Tag Filter */}
+          <div>
+            <label className="block text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1">
+              Status / Tag
+            </label>
+            <select
+              value={paymentStatus}
+              onChange={(e) => setPaymentStatus(e.target.value)}
+              className="w-full px-3 py-2 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-blue-500 outline-none"
+            >
+              <option value="ALL">All Statuses</option>
+              <option value="PAID">PAID</option>
+              <option value="PARTIALLY PAID">PARTIALLY PAID</option>
+              <option value="UNPAID">UNPAID</option>
+              <option value="CANCELLED">CANCELLED</option>
+            </select>
+          </div>
+
           {/* Search Input */}
           <div className="sm:col-span-2 lg:col-span-2 flex items-end gap-2">
             <div className="relative flex-1">
@@ -480,7 +540,7 @@ export const DaybookView: React.FC = () => {
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search by party, ref #, description..."
+                  placeholder="Search by invoice #, customer, ref #..."
                   className="w-full pl-9 pr-3 py-2 text-xs font-medium rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                 />
               </div>
@@ -526,11 +586,14 @@ export const DaybookView: React.FC = () => {
                   <tr>
                     <th className="px-5 py-3.5">Date & Code</th>
                     <th className="px-4 py-3.5">Type & Event</th>
-                    <th className="px-4 py-3.5">Party / Customer / Vendor</th>
+                    <th className="px-4 py-3.5">Customer / Party</th>
                     <th className="px-4 py-3.5">Description</th>
-                    <th className="px-4 py-3.5">Mode</th>
+                    <th className="px-4 py-3.5 text-right">Total</th>
                     <th className="px-4 py-3.5 text-right">Inflow (+₹)</th>
                     <th className="px-4 py-3.5 text-right">Outflow (-₹)</th>
+                    <th className="px-4 py-3.5 text-right">Remaining Amount</th>
+                    <th className="px-4 py-3.5">Mode</th>
+                    <th className="px-4 py-3.5">Status / Tag</th>
                     <th className="px-5 py-3.5 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -538,7 +601,8 @@ export const DaybookView: React.FC = () => {
                   {transactions.map((tx) => {
                     const isOut = tx.direction === 'OUT';
                     const isNonCash = tx.direction === 'NON_CASH';
-                    const isVoided = tx.status === 'VOID';
+                    const isVoided = tx.status === 'VOID' || tx.paymentStatus === 'CANCELLED';
+                    const isSale = tx.transactionType === 'SALE' || tx.referenceType === 'INVOICE' || tx.referenceType === 'COUNTER_SALE';
 
                     return (
                       <tr
@@ -578,17 +642,20 @@ export const DaybookView: React.FC = () => {
                           {tx.description || tx.notes || '—'}
                         </td>
 
-                        {/* Payment Mode */}
-                        <td className="px-4 py-4 whitespace-nowrap">
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-medium">
-                            {renderPaymentModeIcon(tx.paymentMode)}
-                            {tx.paymentMode || 'Cash'}
-                          </span>
+                        {/* Total: Rule 23 — Strictly filled for Invoice and Counter Sale only */}
+                        <td className="px-4 py-4 text-right whitespace-nowrap font-mono font-bold text-xs">
+                          {isSale ? (
+                            <span className="text-slate-900 dark:text-slate-100 font-semibold">
+                              {formatCurrency(tx.totalAmount !== null && tx.totalAmount !== undefined ? tx.totalAmount : tx.amount)}
+                            </span>
+                          ) : (
+                            <span className="text-slate-300 dark:text-slate-700">—</span>
+                          )}
                         </td>
 
-                        {/* Inflow (+₹) */}
+                        {/* Inflow (+₹): Actual money received */}
                         <td className="px-4 py-4 text-right whitespace-nowrap font-mono font-bold text-sm">
-                          {!isOut && !isNonCash && !isVoided ? (
+                          {!isOut && !isNonCash && !isVoided && tx.amount > 0 ? (
                             <span className="text-emerald-600 dark:text-emerald-400">
                               +{formatCurrency(tx.amount)}
                             </span>
@@ -606,6 +673,36 @@ export const DaybookView: React.FC = () => {
                           ) : (
                             <span className="text-slate-300 dark:text-slate-700">—</span>
                           )}
+                        </td>
+
+                        {/* Remaining Amount: Rule 24 — Remaining for Sales, '—' for others */}
+                        <td className="px-4 py-4 text-right whitespace-nowrap font-mono font-bold text-xs">
+                          {isSale ? (
+                            tx.remainingAmount !== null && tx.remainingAmount !== undefined ? (
+                              tx.remainingAmount > 0 ? (
+                                <span className="text-amber-600 dark:text-amber-400 font-semibold">{formatCurrency(tx.remainingAmount)}</span>
+                              ) : (
+                                <span className="text-slate-400 font-normal">₹0.00</span>
+                              )
+                            ) : (
+                              <span className="text-slate-400 font-normal">₹0.00</span>
+                            )
+                          ) : (
+                            <span className="text-slate-300 dark:text-slate-700">—</span>
+                          )}
+                        </td>
+
+                        {/* Payment Mode */}
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-medium">
+                            {renderPaymentModeIcon(tx.paymentMode)}
+                            {tx.paymentMode || 'Cash'}
+                          </span>
+                        </td>
+
+                        {/* Status / Tag */}
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          {renderPaymentStatusTag(tx)}
                         </td>
 
                         {/* Actions */}
@@ -643,7 +740,8 @@ export const DaybookView: React.FC = () => {
             <div className="lg:hidden divide-y divide-slate-100 dark:divide-slate-800">
               {transactions.map((tx) => {
                 const isOut = tx.direction === 'OUT';
-                const isVoided = tx.status === 'VOID';
+                const isVoided = tx.status === 'VOID' || tx.paymentStatus === 'CANCELLED';
+                const isSale = tx.transactionType === 'SALE' || tx.referenceType === 'INVOICE' || tx.referenceType === 'COUNTER_SALE';
 
                 return (
                   <div
@@ -660,8 +758,29 @@ export const DaybookView: React.FC = () => {
                           {tx.partyName || 'Walk-in / General'}
                         </h4>
                       </div>
-                      {renderTypeBadge(tx)}
+                      <div className="flex flex-col items-end gap-1">
+                        {renderTypeBadge(tx)}
+                        {renderPaymentStatusTag(tx)}
+                      </div>
                     </div>
+
+                    {/* Sale Totals and Balance for Sales */}
+                    {isSale && (
+                      <div className="grid grid-cols-2 gap-2 p-2 bg-slate-50 dark:bg-slate-800/40 rounded-xl text-[11px]">
+                        <div>
+                          <span className="text-slate-400 block font-semibold uppercase text-[9px]">Sale Total</span>
+                          <span className="font-bold text-slate-800 dark:text-slate-200 font-mono">
+                            {formatCurrency(tx.totalAmount !== null && tx.totalAmount !== undefined ? tx.totalAmount : tx.amount)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block font-semibold uppercase text-[9px]">Remaining Balance</span>
+                          <span className="font-bold font-mono text-amber-600 dark:text-amber-400">
+                            {tx.remainingAmount !== null && tx.remainingAmount !== undefined ? formatCurrency(tx.remainingAmount) : '₹0.00'}
+                          </span>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="text-xs text-slate-600 dark:text-slate-400">
                       {tx.description || tx.notes || 'No description provided'}
@@ -716,7 +835,7 @@ export const DaybookView: React.FC = () => {
                   <span className="font-bold text-slate-900 dark:text-white">{selectedTx.direction}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 font-semibold block uppercase text-[10px]">Amount</span>
+                  <span className="text-slate-400 font-semibold block uppercase text-[10px]">Inflow / Outflow</span>
                   <span className="font-bold text-slate-900 dark:text-white font-mono text-sm">
                     {formatCurrency(selectedTx.amount)}
                   </span>
@@ -727,9 +846,29 @@ export const DaybookView: React.FC = () => {
                     {renderPaymentModeIcon(selectedTx.paymentMode)} {selectedTx.paymentMode}
                   </span>
                 </div>
+                {selectedTx.totalAmount !== null && selectedTx.totalAmount !== undefined && (
+                  <div>
+                    <span className="text-slate-400 font-semibold block uppercase text-[10px]">Gross Sale Total</span>
+                    <span className="font-bold text-slate-900 dark:text-white font-mono text-sm">
+                      {formatCurrency(selectedTx.totalAmount)}
+                    </span>
+                  </div>
+                )}
+                {selectedTx.remainingAmount !== null && selectedTx.remainingAmount !== undefined && (
+                  <div>
+                    <span className="text-slate-400 font-semibold block uppercase text-[10px]">Remaining Balance</span>
+                    <span className="font-bold text-amber-600 dark:text-amber-400 font-mono text-sm">
+                      {formatCurrency(selectedTx.remainingAmount)}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2 pt-2">
+                <div className="flex justify-between border-b border-slate-100 dark:border-slate-800 py-1.5">
+                  <span className="text-slate-500">Financial Tag:</span>
+                  <div>{renderPaymentStatusTag(selectedTx)}</div>
+                </div>
                 <div className="flex justify-between border-b border-slate-100 dark:border-slate-800 py-1.5">
                   <span className="text-slate-500">Transaction Date:</span>
                   <span className="font-semibold text-slate-800 dark:text-slate-200">{selectedTx.transactionDate}</span>

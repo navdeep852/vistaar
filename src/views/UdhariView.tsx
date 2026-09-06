@@ -80,6 +80,7 @@ export const UdhariView: React.FC = () => {
   const [payReference, setPayReference] = useState('');
   const [payNotes, setPayNotes] = useState('');
   const [payError, setPayError] = useState<string>('');
+  const [isSubmittingPay, setIsSubmittingPay] = useState(false);
 
   // Form State: Edit Udhari
   const [editCustomerName, setEditCustomerName] = useState<string>('');
@@ -313,9 +314,9 @@ export const UdhariView: React.FC = () => {
     }
   };
 
-  const handlePaySubmit = (e: React.FormEvent) => {
+  const handlePaySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeUdhari) return;
+    if (!activeUdhari || isSubmittingPay) return;
 
     if (!isValidIndianPhoneNumber(payPhone, true)) {
       setPayError('Please enter a valid 10-digit Indian phone number.');
@@ -328,18 +329,31 @@ export const UdhariView: React.FC = () => {
       return;
     }
 
-    if (numAmount > activeUdhari.outstandingAmount) {
+    if (numAmount > (activeUdhari.outstandingAmount + 0.05)) {
       setPayError('Amount received cannot be greater than the outstanding balance.');
       return;
     }
 
+    setIsSubmittingPay(true);
     try {
+      const normalizedPhone = normalizeIndianPhoneNumber(payPhone);
       const result = store.recordUdhariPayment({
         udhariId: activeUdhari.id,
         amount: numAmount,
         paymentMethod: payMethod,
         paymentDate: payDate,
-        phoneNumber: normalizeIndianPhoneNumber(payPhone),
+        phoneNumber: normalizedPhone,
+        reference: payReference,
+        notes: payNotes,
+      });
+
+      // Synchronize authoritative Supabase backend
+      await udhariService.recordUdhariPayment({
+        udhariId: activeUdhari.id,
+        amount: numAmount,
+        paymentMethod: payMethod,
+        paymentDate: payDate,
+        phoneNumber: normalizedPhone,
         reference: payReference,
         notes: payNotes,
       });
@@ -351,6 +365,8 @@ export const UdhariView: React.FC = () => {
       refreshData();
     } catch (err: any) {
       setPayError(err.message || 'Failed to record payment');
+    } finally {
+      setIsSubmittingPay(false);
     }
   };
 
@@ -1396,10 +1412,10 @@ export const UdhariView: React.FC = () => {
               </button>
               <button
                 type="submit"
-                disabled={!!payError}
-                className="px-6 py-2.5 rounded-xl bg-emerald-600 text-white font-bold text-xs hover:bg-emerald-500 disabled:opacity-50 shadow-md shadow-emerald-600/20 cursor-pointer"
+                disabled={!!payError || isSubmittingPay}
+                className="px-6 py-2.5 rounded-xl bg-emerald-600 text-white font-bold text-xs hover:bg-emerald-500 disabled:opacity-50 shadow-md shadow-emerald-600/20 cursor-pointer flex items-center gap-2"
               >
-                Record Payment
+                {isSubmittingPay ? 'Recording...' : 'Record Payment'}
               </button>
             </div>
           </form>

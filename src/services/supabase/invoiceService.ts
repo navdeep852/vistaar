@@ -197,7 +197,14 @@ export class InvoiceService {
             .eq('workspace_id', wsId);
         }
 
-        // Record Daybook sale entry & Cashbook if initial payment
+        const total = Number(invoice.grandTotal) || 0;
+        const paid = Number(invoice.paidAmount) || 0;
+        const remaining = Number(invoice.balanceAmount) !== undefined && Number(invoice.balanceAmount) !== null
+          ? Number(invoice.balanceAmount)
+          : Math.max(0, total - paid);
+        const pStatus = remaining <= 0.01 ? 'PAID' : (paid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+
+        // Record Daybook sale entry with strictly partitioned Inflow and Gross Total
         try {
           const { daybookService } = await import('./daybookService');
           await daybookService.recordFinancialTransaction({
@@ -206,7 +213,10 @@ export class InvoiceService {
             referenceNumber: invNumber,
             transactionType: 'SALE',
             direction: 'IN',
-            amount: Number(invoice.grandTotal) || 0,
+            amount: paid, // Inflow = actual money received
+            totalAmount: total, // Gross Total column strictly for sales
+            remainingAmount: remaining, // Unpaid balance
+            paymentStatus: pStatus,
             partyType: 'customer',
             partyId: invoice.customerId || undefined,
             partyName: invoice.customerName || 'Customer',
@@ -215,6 +225,24 @@ export class InvoiceService {
           });
         } catch (dbErr) {
           console.warn('[createInvoice] Accounting record notice:', dbErr);
+        }
+
+        // Synchronize Udhari Ledger and Follow-up for customer receivable
+        try {
+          const { udhariService } = await import('./udhariService');
+          await udhariService.syncInvoiceUdhari({
+            invoiceId,
+            invoiceNumber: invNumber,
+            customerId: invoice.customerId,
+            customerName: invoice.customerName || 'Customer',
+            customerPhone: invoice.customerPhone || '9999999999',
+            grandTotal: total,
+            paidAmount: paid,
+            balanceAmount: remaining,
+            dueDate: invoice.dueDate,
+          });
+        } catch (uErr) {
+          console.warn('[createInvoice] Udhari sync notice:', uErr);
         }
 
         try {

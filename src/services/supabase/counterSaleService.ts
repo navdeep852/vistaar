@@ -380,11 +380,62 @@ export class CounterSaleService {
           if (pId) store.adjustStock(pId, 'Sale', -Math.abs(item.quantity), `Counter Sale #${invoiceNumber}`, invoiceNumber);
         });
 
+        const completeSale = fromDbCounterSale(rpcRes.data);
+        const finalTot = Number(completeSale.finalTotal) || 0;
+        const recAmt = Number(completeSale.amountReceived !== undefined ? completeSale.amountReceived : finalTot) || 0;
+        const balAmt = Number(completeSale.balanceAmount) || Math.max(0, finalTot - recAmt);
+        const pStat = balAmt <= 0.01 ? 'PAID' : (recAmt > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+
+        // 1. Authoritative Daybook Sale Entry
+        try {
+          const { daybookService } = await import('./daybookService');
+          await daybookService.recordFinancialTransaction({
+            referenceType: 'COUNTER_SALE',
+            referenceId: completeSale.id,
+            referenceNumber: completeSale.invoiceNumber || completeSale.saleNumber,
+            transactionType: 'SALE',
+            direction: 'IN',
+            amount: recAmt, // Inflow = actual money received
+            totalAmount: finalTot, // Gross Total filled strictly for Invoice & Counter Sale
+            remainingAmount: balAmt, // Remaining unpaid
+            paymentStatus: pStat,
+            paymentMode: completeSale.paymentMethod,
+            partyType: 'customer',
+            partyId: completeSale.customerId || undefined,
+            partyName: completeSale.customerName || 'Walk-in Customer',
+            description: `Counter Sale #${completeSale.invoiceNumber || completeSale.saleNumber}`,
+            transactionDate: completeSale.saleDate || new Date().toISOString().split('T')[0],
+          });
+        } catch (dbErr) {
+          console.warn('[finalizeCounterSale] Daybook sync notice:', dbErr);
+        }
+
+        const finalPayMethod = completeSale.paymentMethod || 'Cash';
+
+        // 2. Authoritative Cashbook Entry for actual money received
+        if (recAmt > 0 && !['Credit', 'Credit / Udhari', 'Udhari'].includes(finalPayMethod)) {
+          try {
+            const { cashbookService } = await import('./cashbookService');
+            await cashbookService.recordCashbookEntry({
+              sourceType: 'COUNTER_SALE',
+              sourceId: completeSale.id,
+              referenceNumber: completeSale.invoiceNumber || completeSale.saleNumber,
+              direction: 'IN',
+              amount: recAmt,
+              paymentMethod: finalPayMethod,
+              partyName: completeSale.customerName || 'Walk-in Customer',
+              description: `Counter sale payment #${completeSale.invoiceNumber || completeSale.saleNumber}`,
+              transactionDate: completeSale.saleDate || new Date().toISOString().split('T')[0],
+            });
+          } catch (cbErr) {
+            console.warn('[finalizeCounterSale] Cashbook sync notice:', cbErr);
+          }
+        }
+
         // Invalidate caches
         productService.invalidateCache();
         salesAnalyticsService.invalidateCache();
 
-        const completeSale = fromDbCounterSale(rpcRes.data);
         return { success: true, data: completeSale };
       }
 

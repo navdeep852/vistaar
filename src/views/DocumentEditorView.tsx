@@ -824,6 +824,35 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           await paymentService.createPayment(payData);
         }
 
+        // Authoritative Udhari & Follow-up synchronization for unpaid or partial balances
+        if (targetInvoiceId) {
+          store.syncInvoiceUdhari({
+            invoiceId: targetInvoiceId,
+            invoiceNumber: invoiceNumStr,
+            customerId: selectedCustomerId || undefined,
+            customerName,
+            customerPhone: customerPhone || '9999999999',
+            grandTotal,
+            paidAmount: effectivePaidAmount,
+            balanceAmount,
+            dueDate: dueDateOrValid,
+          });
+
+          import('../services/supabase/udhariService').then(({ udhariService }) => {
+            udhariService.syncInvoiceUdhari({
+              invoiceId: targetInvoiceId,
+              invoiceNumber: invoiceNumStr,
+              customerId: selectedCustomerId || undefined,
+              customerName,
+              customerPhone: customerPhone || '9999999999',
+              grandTotal,
+              paidAmount: effectivePaidAmount,
+              balanceAmount,
+              dueDate: dueDateOrValid,
+            }).catch((uErr) => console.warn('[DocumentEditorView] Udhari sync notice:', uErr));
+          }).catch(() => {});
+        }
+
         showToast(`Invoice ${invoiceNumStr} finalized & snapshot saved!`, 'success');
       } else {
         const qt = store.addQuotation({
