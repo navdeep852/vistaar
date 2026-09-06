@@ -57,6 +57,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   const [payAmount, setPayAmount] = useState<number>(0);
   const [payMethod, setPayMethod] = useState<PaymentMethod>('UPI');
   const [payRef, setPayRef] = useState('');
+  const [isSubmittingPay, setIsSubmittingPay] = useState(false);
 
   const settings = store.getSettings();
 
@@ -83,38 +84,57 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedInvoice) return;
+    if (!selectedInvoice || isSubmittingPay) return;
 
     if (payAmount <= 0) {
       showToast('Payment amount must be greater than zero.', 'error');
       return;
     }
 
-    const payData = {
-      customerId: selectedInvoice.customerId || 'manual-cust',
-      customerName: selectedInvoice.customerName,
-      invoiceId: selectedInvoice.id,
-      invoiceNumber: selectedInvoice.invoiceNumber,
-      amount: payAmount,
-      date: new Date().toISOString().split('T')[0],
-      method: payMethod,
-      referenceNo: payRef,
-    };
-
-    store.recordPayment(payData);
-
-    try {
-      await paymentService.createPayment(payData);
-      const { data } = await invoiceService.getInvoices();
-      if (data && Array.isArray(data)) {
-        setInvoices(data);
-      }
-    } catch (err: any) {
-      console.warn('Failed to sync payment with Supabase:', err);
+    if (payAmount > (selectedInvoice.balanceAmount + 0.05)) {
+      showToast(`Amount received (${settings.currency}${payAmount}) cannot exceed outstanding balance (${settings.currency}${selectedInvoice.balanceAmount}).`, 'error');
+      return;
     }
 
-    showToast(`Recorded payment of ${settings.currency}${payAmount} for Invoice ${selectedInvoice.invoiceNumber}!`, 'success');
-    setPaymentModalOpen(false);
+    setIsSubmittingPay(true);
+    try {
+      const { customerPaymentService } = await import('../services/supabase/customerPaymentService');
+      const payData = {
+        customerId: selectedInvoice.customerId || 'manual-cust',
+        customerName: selectedInvoice.customerName,
+        customerPhone: selectedInvoice.customerPhone,
+        invoiceId: selectedInvoice.id,
+        invoiceNumber: selectedInvoice.invoiceNumber,
+        amount: payAmount,
+        paymentDate: new Date().toISOString().split('T')[0],
+        paymentMethod: payMethod,
+        reference: payRef,
+      };
+
+      const res = await customerPaymentService.recordCustomerPayment(payData);
+      if (!res.success) {
+        showToast(res.error || 'Payment failed — no financial records were changed.', 'error');
+        return;
+      }
+
+      showToast(`Recorded payment of ${settings.currency}${payAmount} for Invoice ${selectedInvoice.invoiceNumber}!`, 'success');
+      setPaymentModalOpen(false);
+
+      // Refresh invoices from both store and Supabase
+      setInvoices(store.getInvoices());
+      try {
+        const { data } = await invoiceService.getInvoices();
+        if (data && Array.isArray(data)) {
+          setInvoices(data);
+        }
+      } catch {
+        // ignore
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Payment transaction failed', 'error');
+    } finally {
+      setIsSubmittingPay(false);
+    }
   };
 
   const handleSendWhatsApp = (inv: Invoice) => {
@@ -418,9 +438,12 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-500 shadow-md cursor-pointer"
+                disabled={isSubmittingPay}
+                className={`px-5 py-2 rounded-xl text-white text-xs font-bold shadow-md cursor-pointer transition-all ${
+                  isSubmittingPay ? 'bg-slate-400 cursor-not-allowed opacity-60' : 'bg-emerald-600 hover:bg-emerald-500'
+                }`}
               >
-                Save Payment
+                {isSubmittingPay ? 'Processing...' : 'Save Payment'}
               </button>
             </div>
           </form>

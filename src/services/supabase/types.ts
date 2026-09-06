@@ -465,7 +465,9 @@ export function fromDbDaybookTransaction(row: DbDaybookTransaction): DaybookTran
     referenceType: row.reference_type as any,
     referenceId: row.reference_id || undefined,
     referenceNumber: row.reference_number || undefined,
-    description: row.description || undefined,
+    description: (row.description && row.description.includes('undefined'))
+      ? row.description.replace(/#undefined/g, row.reference_number ? `#${row.reference_number}` : '')
+      : (row.description || (row.reference_number ? `${row.reference_type || 'Transaction'} #${row.reference_number}` : undefined)),
     notes: row.notes || undefined,
     status: (row.status || 'COMPLETED') as any,
     gstApplicable: Boolean(row.gst_applicable),

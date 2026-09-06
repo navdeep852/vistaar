@@ -218,6 +218,26 @@ class StoreService {
     this.notify();
   }
 
+  public saveAndNotify() {
+    this.saveToStorage();
+  }
+
+  public syncRemoteUdharis(remoteRecords: any[]) {
+    if (!this.state.udharis) this.state.udharis = [];
+    for (const remote of remoteRecords) {
+      const found = this.state.udharis.find((l) => l.id === remote.id || (remote.invoiceId && l.invoiceId === remote.invoiceId));
+      if (found) {
+        found.totalReceived = remote.totalReceived;
+        found.outstandingAmount = remote.outstandingAmount;
+        found.status = remote.status;
+        found.originalAmount = remote.originalAmount;
+      } else {
+        this.state.udharis.push(remote);
+      }
+    }
+    this.saveToStorage();
+  }
+
   public reloadTenantState() {
     this.state = this.loadFromStorage();
     this.notify();
@@ -728,38 +748,218 @@ class StoreService {
     return Array.isArray(this.state.payments) ? this.state.payments : [];
   }
 
-  public recordPayment(paymentData: Omit<Payment, 'id' | 'paymentNumber' | 'createdAt'>): Payment {
+  public recordUnifiedCustomerPayment(data: {
+    paymentId?: string;
+    paymentCode?: string;
+    invoiceId?: string;
+    invoiceNumber?: string;
+    udhariId?: string;
+    customerId?: string;
+    customerName?: string;
+    customerPhone?: string;
+    amount: number;
+    paymentMethod: PaymentMethod;
+    paymentDate: string;
+    reference?: string;
+    notes?: string;
+    isDbPersisted?: boolean;
+  }): { payment: Payment; invoice?: Invoice; udhari?: UdhariRecord } {
+    if (!this.state.payments) this.state.payments = [];
+    if (!this.state.invoices) this.state.invoices = [];
+    if (!this.state.udharis) this.state.udharis = [];
+    if (!this.state.udhariPayments) this.state.udhariPayments = [];
+    if (!this.state.followUps) this.state.followUps = [];
+
+    const amount = Number(data.amount);
+    if (isNaN(amount) || amount <= 0) {
+      throw new Error('Payment amount must be greater than zero.');
+    }
+
     const count = this.state.payments.length + 1;
     const year = new Date().getFullYear();
-    const paymentNumber = `PAY-${year}-${String(count).padStart(4, '0')}`;
+    const paymentNumber = data.paymentCode || `PAY-${year}-${String(count).padStart(4, '0')}`;
+    const paymentId = data.paymentId || `pay-${Date.now()}`;
+    const now = new Date().toISOString();
+    const payDate = data.paymentDate || now.split('T')[0];
 
+    // 1. Resolve target invoice
+    let inv = data.invoiceId
+      ? this.state.invoices.find((i) => i.id === data.invoiceId)
+      : data.invoiceNumber
+      ? this.state.invoices.find((i) => i.invoiceNumber === data.invoiceNumber)
+      : undefined;
+
+    // 2. Resolve target Udhari
+    let udhari = data.udhariId
+      ? this.state.udharis.find((u) => u.id === data.udhariId)
+      : inv
+      ? this.state.udharis.find((u) => u.invoiceId === inv?.id || u.id === `UD-${inv?.invoiceNumber}`)
+      : undefined;
+
+    if (!inv && udhari?.invoiceId) {
+      inv = this.state.invoices.find((i) => i.id === udhari?.invoiceId);
+    }
+
+    // Overpayment protection
+    if (udhari && amount > (udhari.outstandingAmount + 0.05)) {
+      throw new Error(`Amount received (₹${amount.toLocaleString('en-IN')}) cannot be greater than the outstanding balance (₹${udhari.outstandingAmount.toLocaleString('en-IN')}).`);
+    } else if (inv && !udhari && amount > (inv.balanceAmount + 0.05)) {
+      throw new Error(`Amount received (₹${amount.toLocaleString('en-IN')}) cannot be greater than the invoice balance (₹${inv.balanceAmount.toLocaleString('en-IN')}).`);
+    }
+
+    const customerName = data.customerName || inv?.customerName || udhari?.customerNameSnapshot || 'Customer';
+    const invoiceNumber = inv?.invoiceNumber || data.invoiceNumber || (udhari?.id?.startsWith('UD-') ? udhari.id.replace('UD-', '') : '');
+
+    // 3. Create & insert standard Payment record
     const newPayment: Payment = {
-      ...paymentData,
-      id: `pay-${Date.now()}`,
+      id: paymentId,
       paymentNumber,
-      createdAt: new Date().toISOString(),
+      customerId: data.customerId || inv?.customerId || udhari?.customerId || '',
+      customerName,
+      invoiceId: inv?.id,
+      invoiceNumber: invoiceNumber || undefined,
+      amount,
+      date: payDate,
+      method: data.paymentMethod,
+      referenceNo: data.reference,
+      notes: data.notes || (invoiceNumber ? `Payment for Invoice #${invoiceNumber}` : undefined),
+      createdAt: now,
     };
-
     this.state.payments.unshift(newPayment);
 
-    if (paymentData.invoiceId || paymentData.invoiceNumber) {
-      const inv = this.state.invoices.find(
-        (i) => i.id === paymentData.invoiceId || (paymentData.invoiceNumber && i.invoiceNumber === paymentData.invoiceNumber)
-      );
-      if (inv) {
-        const updatedPaid = Number(((inv.paidAmount || 0) + paymentData.amount).toFixed(2));
-        const updatedBalance = Math.max(0, Number((inv.grandTotal - updatedPaid).toFixed(2)));
-        const newStatus: InvoiceStatus = (Math.abs(inv.grandTotal - updatedPaid) < 0.01 || updatedBalance <= 0) ? 'Paid' : updatedPaid > 0 ? 'Partially Paid' : inv.status;
+    // 4. Update Invoice
+    if (inv) {
+      const updatedPaid = Number(((inv.paidAmount || 0) + amount).toFixed(2));
+      const updatedBalance = Math.max(0, Number((inv.grandTotal - updatedPaid).toFixed(2)));
+      const newStatus: InvoiceStatus = (Math.abs(inv.grandTotal - updatedPaid) < 0.01 || updatedBalance <= 0)
+        ? 'Paid'
+        : (updatedPaid > 0 ? 'Partially Paid' : inv.status);
 
-        inv.paidAmount = updatedPaid;
-        inv.balanceAmount = updatedBalance;
-        inv.status = newStatus;
-        inv.updatedAt = new Date().toISOString();
+      inv.paidAmount = updatedPaid;
+      inv.balanceAmount = updatedBalance;
+      inv.status = newStatus;
+      inv.updatedAt = now;
+    }
+
+    // 5. Update or link Udhari Record
+    if (udhari) {
+      const updatedRec = Number(((udhari.totalReceived || 0) + amount).toFixed(2));
+      const updatedOut = Math.max(0, Number((udhari.originalAmount - updatedRec).toFixed(2)));
+      const udStatus = updatedOut <= 0.01 ? 'PAID' : 'PARTIALLY PAID';
+
+      udhari.totalReceived = updatedRec;
+      udhari.outstandingAmount = updatedOut;
+      udhari.status = udStatus as any;
+      udhari.updatedAt = now;
+      if (inv?.id && !udhari.invoiceId) {
+        udhari.invoiceId = inv.id;
+      }
+
+      // Record Udhari payment history
+      const udhariPay: UdhariPaymentRecord = {
+        id: paymentNumber,
+        udhariId: udhari.id,
+        customerId: udhari.customerId,
+        amount,
+        paymentMethod: data.paymentMethod,
+        paymentDate: payDate,
+        phoneNumber: (data.customerPhone || udhari.phoneSnapshot || '9999999999').trim(),
+        reference: data.reference,
+        notes: data.notes,
+        createdAt: now,
+      };
+      this.state.udhariPayments.unshift(udhariPay);
+    }
+
+    // 6. Update Follow-up
+    const remainingBalance = inv ? inv.balanceAmount : (udhari ? udhari.outstandingAmount : 0);
+    const followUp = this.state.followUps.find(
+      (f) => (inv?.id && f.invoiceId === inv.id) || (invoiceNumber && f.invoiceNumber === invoiceNumber) || (udhari?.id && f.udhariId === udhari.id)
+    );
+    if (followUp) {
+      if (remainingBalance <= 0.01) {
+        followUp.status = 'Completed';
+        followUp.completedAt = now;
+        followUp.notes = (followUp.notes || '') + ` [Settled in full on ${payDate}]`;
+      } else {
+        followUp.notes = `Outstanding receivable: ₹${remainingBalance.toLocaleString('en-IN')}`;
       }
     }
 
+    // 7. Background Accounting Synchronization (Cashbook & Daybook)
+    const isCredit = (data.paymentMethod as string) === 'Credit / Udhari' || (data.paymentMethod as string) === 'Credit' || (data.paymentMethod as string) === 'Udhari';
+    if (amount > 0 && !isCredit) {
+      import('./supabase/cashbookService').then(({ cashbookService }) => {
+        cashbookService.recordCashbookEntry({
+          sourceType: 'INVOICE_PAYMENT',
+          sourceId: paymentId,
+          referenceNumber: invoiceNumber || paymentNumber,
+          direction: 'IN',
+          amount,
+          paymentMethod: data.paymentMethod,
+          partyName: customerName,
+          description: `Payment received for Invoice #${invoiceNumber || paymentNumber}`,
+          notes: data.reference ? `Ref: ${data.reference}` : data.notes,
+          transactionDate: payDate,
+        }).catch(() => {});
+      }).catch(() => {});
+
+      import('./supabase/daybookService').then(({ daybookService }) => {
+        if (inv) {
+          daybookService.recordFinancialTransaction({
+            referenceType: 'INVOICE',
+            referenceId: inv.id,
+            referenceNumber: inv.invoiceNumber,
+            transactionType: 'SALE',
+            direction: 'IN',
+            amount: inv.paidAmount,
+            totalAmount: inv.grandTotal,
+            remainingAmount: inv.balanceAmount,
+            paymentStatus: inv.balanceAmount <= 0.01 ? 'PAID' : 'PARTIALLY PAID',
+            partyType: 'customer',
+            partyId: inv.customerId,
+            partyName: inv.customerName,
+            description: `Invoice #${inv.invoiceNumber}`,
+            transactionDate: inv.date,
+          }).catch(() => {});
+        }
+
+        daybookService.recordFinancialTransaction({
+          referenceType: 'PAYMENT',
+          referenceId: paymentId,
+          referenceNumber: invoiceNumber || paymentNumber,
+          transactionType: 'CUSTOMER_PAYMENT',
+          direction: 'IN',
+          amount,
+          paymentMode: data.paymentMethod as any,
+          partyType: 'customer',
+          partyId: inv?.customerId || udhari?.customerId,
+          partyName: customerName,
+          description: `Payment Received #${paymentNumber} for Invoice #${invoiceNumber || ''}`.trim(),
+          notes: data.reference ? `Ref: ${data.reference}` : data.notes,
+          transactionDate: payDate,
+        }).catch(() => {});
+      }).catch(() => {});
+    }
+
     this.saveToStorage();
-    return newPayment;
+    this.notify();
+    return { payment: newPayment, invoice: inv, udhari };
+  }
+
+  public recordPayment(paymentData: Omit<Payment, 'id' | 'paymentNumber' | 'createdAt'>): Payment {
+    const res = this.recordUnifiedCustomerPayment({
+      invoiceId: paymentData.invoiceId,
+      invoiceNumber: paymentData.invoiceNumber,
+      customerId: paymentData.customerId,
+      customerName: paymentData.customerName,
+      amount: paymentData.amount,
+      paymentMethod: paymentData.method,
+      paymentDate: paymentData.date,
+      reference: paymentData.referenceNo,
+      notes: paymentData.notes,
+    });
+    return res.payment;
   }
 
   // Expenses, Follow-ups, Feedbacks, Offers, Notifications
@@ -1115,110 +1315,30 @@ class StoreService {
     reference?: string;
     notes?: string;
   }): { payment: UdhariPaymentRecord; udhari: UdhariRecord } {
-    if (!this.state.udharis) this.state.udharis = [];
-    if (!this.state.udhariPayments) this.state.udhariPayments = [];
-    if (!this.state.payments) this.state.payments = [];
-    if (!this.state.invoices) this.state.invoices = [];
-
-    const udhari = this.state.udharis.find((u) => u.id === data.udhariId);
-    if (!udhari) {
-      throw new Error('Udhari record not found.');
-    }
-
-    const receivedAmount = Number(data.amount);
-    if (isNaN(receivedAmount) || receivedAmount <= 0) {
-      throw new Error('Please enter a valid received amount greater than ₹0.');
-    }
-
-    if (receivedAmount > udhari.outstandingAmount) {
-      throw new Error('Amount received cannot be greater than the outstanding balance.');
-    }
-
-    const count = this.state.udhariPayments.length + 1;
-    const year = new Date().getFullYear();
-    const paymentId = `PAY-${year}-${String(count).padStart(4, '0')}`;
-    const now = new Date().toISOString();
-
-    const newPayment: UdhariPaymentRecord = {
-      id: paymentId,
-      udhariId: udhari.id,
-      customerId: udhari.customerId,
-      amount: receivedAmount,
+    const res = this.recordUnifiedCustomerPayment({
+      udhariId: data.udhariId,
+      amount: data.amount,
       paymentMethod: data.paymentMethod,
-      paymentDate: data.paymentDate || now.split('T')[0],
-      phoneNumber: data.phoneNumber.trim(),
-      reference: data.reference?.trim(),
-      notes: data.notes?.trim(),
-      createdAt: now,
+      paymentDate: data.paymentDate,
+      customerPhone: data.phoneNumber,
+      reference: data.reference,
+      notes: data.notes,
+    });
+
+    const udhariPay: UdhariPaymentRecord = {
+      id: res.payment.paymentNumber,
+      udhariId: data.udhariId,
+      customerId: res.udhari?.customerId,
+      amount: data.amount,
+      paymentMethod: data.paymentMethod,
+      paymentDate: data.paymentDate,
+      phoneNumber: data.phoneNumber,
+      reference: data.reference,
+      notes: data.notes,
+      createdAt: res.payment.createdAt,
     };
 
-    this.state.udhariPayments.unshift(newPayment);
-
-    // Recalculate Udhari stats
-    const totalReceived = udhari.totalReceived + receivedAmount;
-    const outstandingAmount = Math.max(0, Math.round((udhari.originalAmount - totalReceived) * 100) / 100);
-    const newStatus = calculateUdhariStatus(udhari.originalAmount, totalReceived, udhari.dueDate);
-
-    udhari.totalReceived = totalReceived;
-    udhari.outstandingAmount = outstandingAmount;
-    udhari.status = newStatus;
-    udhari.updatedAt = now;
-
-    // If linked to an invoice, synchronize invoice and add payment entry
-    if (udhari.invoiceId) {
-      const inv = this.state.invoices.find((i) => i.id === udhari.invoiceId || i.invoiceNumber === udhari.id.replace('UD-', ''));
-      if (inv) {
-        const newPaid = Number(((inv.paidAmount || 0) + receivedAmount).toFixed(2));
-        const newBalance = Math.max(0, Number((inv.grandTotal - newPaid).toFixed(2)));
-        inv.paidAmount = newPaid;
-        inv.balanceAmount = newBalance;
-        inv.status = newBalance <= 0.01 ? 'Paid' : 'Partially Paid';
-        inv.updatedAt = now;
-
-        // Record in payment history
-        const invPayment: Payment = {
-          id: `pay-${Date.now()}`,
-          paymentNumber: paymentId,
-          customerId: inv.customerId || udhari.customerId || '',
-          customerName: inv.customerName,
-          invoiceId: inv.id,
-          invoiceNumber: inv.invoiceNumber,
-          amount: receivedAmount,
-          date: data.paymentDate || now.split('T')[0],
-          method: data.paymentMethod,
-          referenceNo: data.reference,
-          notes: data.notes || `Udhari settlement for Invoice ${inv.invoiceNumber}`,
-          createdAt: now,
-        };
-        this.state.payments.unshift(invPayment);
-      }
-    }
-
-    // Follow-up status check
-    if (outstandingAmount <= 0.01) {
-      const followUp = this.state.followUps?.find((f) => f.udhariId === udhari.id || (udhari.invoiceId && f.invoiceId === udhari.invoiceId));
-      if (followUp) {
-        followUp.status = 'Completed';
-        followUp.completedAt = now;
-      }
-    }
-
-    // Trigger background Supabase persistence
-    import('./supabase/udhariService').then(({ udhariService }) => {
-      udhariService.recordUdhariPayment({
-        udhariId: udhari.id,
-        amount: receivedAmount,
-        paymentMethod: data.paymentMethod,
-        paymentDate: data.paymentDate,
-        phoneNumber: data.phoneNumber,
-        reference: data.reference,
-        notes: data.notes,
-      }).catch((e) => console.warn('Background Udhari payment sync notice:', e));
-    }).catch(() => {});
-
-    this.saveToStorage();
-    this.notify();
-    return { payment: newPayment, udhari };
+    return { payment: udhariPay, udhari: res.udhari! };
   }
 
   public getUdhariHistory(udhariId: string) {

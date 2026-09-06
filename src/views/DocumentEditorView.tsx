@@ -824,8 +824,8 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           await paymentService.createPayment(payData);
         }
 
-        // Authoritative Udhari & Follow-up synchronization for unpaid or partial balances
-        if (targetInvoiceId) {
+        // Authoritative Udhari & Follow-up synchronization for unpaid or partial balances ONLY (Rule 8: Never create for fully paid)
+        if (targetInvoiceId && balanceAmount > 0.01) {
           store.syncInvoiceUdhari({
             invoiceId: targetInvoiceId,
             invoiceNumber: invoiceNumStr,

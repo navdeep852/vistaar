@@ -104,6 +104,7 @@ export const UdhariView: React.FC = () => {
     refreshData();
     udhariService.getUdhariRecords().then((res) => {
       if (res.data && res.data.length > 0) {
+        store.syncRemoteUdharis(res.data);
         refreshData();
       }
     }).catch(() => {});
@@ -337,7 +338,25 @@ export const UdhariView: React.FC = () => {
     setIsSubmittingPay(true);
     try {
       const normalizedPhone = normalizeIndianPhoneNumber(payPhone);
-      const result = store.recordUdhariPayment({
+      const { customerPaymentService } = await import('../services/supabase/customerPaymentService');
+      const payRes = await customerPaymentService.recordCustomerPayment({
+        udhariId: activeUdhari.id,
+        amount: numAmount,
+        paymentMethod: payMethod,
+        paymentDate: payDate,
+        customerPhone: normalizedPhone,
+        reference: payReference,
+        notes: payNotes,
+      });
+
+      if (!payRes.success) {
+        setPayError(payRes.error || 'Payment failed — no financial records were changed.');
+        return;
+      }
+
+      const updatedUdhari = store.getUdharis().find((u) => u.id === activeUdhari.id);
+      const paymentRecord: any = {
+        id: payRes.paymentCode || `PAY-${Date.now()}`,
         udhariId: activeUdhari.id,
         amount: numAmount,
         paymentMethod: payMethod,
@@ -345,20 +364,9 @@ export const UdhariView: React.FC = () => {
         phoneNumber: normalizedPhone,
         reference: payReference,
         notes: payNotes,
-      });
+      };
 
-      // Synchronize authoritative Supabase backend
-      await udhariService.recordUdhariPayment({
-        udhariId: activeUdhari.id,
-        amount: numAmount,
-        paymentMethod: payMethod,
-        paymentDate: payDate,
-        phoneNumber: normalizedPhone,
-        reference: payReference,
-        notes: payNotes,
-      });
-
-      setLastPaymentResult(result);
+      setLastPaymentResult({ payment: paymentRecord, udhari: updatedUdhari || activeUdhari });
       setPayModalOpen(false);
       setConfirmModalOpen(true);
       showToast(`Recorded payment of ${formatCurrency(numAmount)} from ${activeUdhari.customerNameSnapshot}!`, 'success');

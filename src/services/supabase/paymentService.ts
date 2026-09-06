@@ -170,133 +170,34 @@ export class PaymentService {
   }
 
   public async createPayment(payment: Partial<Payment>): Promise<{ paymentId?: string; error?: string }> {
-    const wsId = this.getWorkspaceId();
-    const payNum = payment.paymentNumber || `PAY-${Date.now()}`;
     const amount = Number(payment.amount) || 0;
-    const method = payment.method || 'Cash';
-    const paymentDate = payment.date || new Date().toISOString().split('T')[0];
-    const customerName = payment.customerName || 'Customer';
-
-    // Resolve canonical invoice database UUID if invoiceId or invoiceNumber is provided
-    let resolvedInvoiceId: string | null = (payment.invoiceId && isValidUuid(payment.invoiceId)) ? payment.invoiceId : null;
-    if (!resolvedInvoiceId && payment.invoiceNumber && isSupabaseConfigured()) {
-      try {
-        let invQuery = supabase.from('invoices').select('id').eq('invoice_number', payment.invoiceNumber);
-        if (isValidUuid(wsId)) invQuery = invQuery.eq('workspace_id', wsId);
-        const { data: invRow } = await invQuery.maybeSingle();
-        if (invRow) resolvedInvoiceId = invRow.id;
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    // Precise PostgreSQL column payload matching public.payments schema
-    const payload = {
-      workspace_id: wsId,
-      customer_id: payment.customerId && isValidUuid(payment.customerId) ? payment.customerId : null,
-      invoice_id: resolvedInvoiceId,
-      payment_number: payNum,
-      customer_name: customerName,
-      invoice_number: payment.invoiceNumber || null,
-      amount: amount,
-      payment_date: paymentDate,
-      method: method,
-      reference_no: payment.referenceNo || null,
-      notes: payment.notes || null,
-    };
-
-    let createdId = `pay-${Date.now()}`;
-    let isPersistedToDb = false;
-
-    if (isSupabaseConfigured() && isValidUuid(wsId)) {
-      try {
-        const { data, error } = await supabase
-          .from('payments')
-          .insert([payload])
-          .select('id')
-          .single();
-
-        if (!error && data) {
-          createdId = data.id;
-          isPersistedToDb = true;
-        } else if (error) {
-          const errStr = handleSupabaseError(error, 'createPayment');
-          console.warn('[PaymentService.createPayment] Supabase error:', errStr);
-        }
-      } catch (dbEx) {
-        console.warn('[PaymentService.createPayment] Exception:', dbEx);
-      }
-    }
-
-    // Fallback or local mirror for immediate offline reliability
-    const localPay = {
-      id: createdId,
-      ...payload,
-      createdAt: new Date().toISOString(),
-    };
-    const local = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
-    local.unshift(localPay);
-    safeSaveTenantStorage(LOCAL_PAYMENTS_KEY, local);
-
-    // Sync Supabase invoice paid_amount, balance_amount, status
-    if (isPersistedToDb && payload.invoice_id) {
-      await this.syncInvoicePaymentTotals(payload.invoice_id, payment.invoiceNumber);
-    }
-
-    // Authoritative Accounting Pipeline:
-    // Only when actual money is received (amount > 0 and non-credit)
-    const isCredit = (method as string) === 'Credit / Udhari' || (method as string) === 'Credit' || (method as string) === 'Udhari';
-    if (amount > 0 && !isCredit) {
-      // 1. Daybook Entry: CUSTOMER_PAYMENT (actual money received)
-      try {
-        const { daybookService } = await import('./daybookService');
-        await daybookService.recordFinancialTransaction({
-          referenceType: 'PAYMENT',
-          referenceId: createdId,
-          referenceNumber: payNum,
-          transactionType: 'CUSTOMER_PAYMENT',
-          direction: 'IN',
-          amount: amount,
-          paymentMode: method as any,
-          partyType: 'customer',
-          partyId: payload.customer_id || undefined,
-          partyName: customerName,
-          description: `Payment Received #${payNum} for Invoice #${payment.invoiceNumber || ''}`.trim(),
-          notes: payment.referenceNo ? `Ref: ${payment.referenceNo}` : payment.notes || undefined,
-          transactionDate: paymentDate,
-        });
-      } catch (dbErr) {
-        console.warn('Failed to record Daybook entry for payment:', dbErr);
-      }
-
-      // 2. Cashbook Entry: INVOICE_PAYMENT (actual liquidity receipt)
-      try {
-        const { cashbookService } = await import('./cashbookService');
-        await cashbookService.recordCashbookEntry({
-          sourceType: 'INVOICE_PAYMENT',
-          sourceId: createdId,
-          referenceNumber: payment.invoiceNumber || payNum,
-          direction: 'IN',
-          amount: amount,
-          paymentMethod: method, // Preserves actual method: UPI, Card, Bank Transfer, Cash, etc.
-          partyName: customerName,
-          description: `Payment received for Invoice #${payment.invoiceNumber || payNum}`,
-          notes: payment.referenceNo ? `Ref: ${payment.referenceNo}` : payment.notes || undefined,
-          transactionDate: paymentDate,
-        });
-      } catch (cbErr) {
-        console.warn('Failed to record Cashbook entry for payment:', cbErr);
-      }
+    if (isNaN(amount) || amount <= 0) {
+      return { error: 'Payment amount must be greater than zero.' };
     }
 
     try {
-      const { salesAnalyticsService } = await import('./salesAnalyticsService');
-      salesAnalyticsService.invalidateCache();
-    } catch (e) {
-      // ignore
-    }
+      const { customerPaymentService } = await import('./customerPaymentService');
+      const res = await customerPaymentService.recordCustomerPayment({
+        invoiceId: payment.invoiceId,
+        invoiceNumber: payment.invoiceNumber,
+        customerId: payment.customerId,
+        customerName: payment.customerName,
+        amount,
+        paymentMethod: payment.method || 'Cash',
+        paymentDate: payment.date,
+        reference: payment.referenceNo,
+        notes: payment.notes,
+      });
 
-    return { paymentId: createdId };
+      if (!res.success) {
+        return { error: res.error || 'Payment failed — no financial records were changed.' };
+      }
+
+      return { paymentId: res.paymentId };
+    } catch (err: any) {
+      const errStr = handleSupabaseError(err, 'createPayment');
+      return { error: errStr || 'Payment transaction failed' };
+    }
   }
 }
 

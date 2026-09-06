@@ -219,8 +219,8 @@ export class DaybookService {
             partyName: inv.customer_name || 'Customer',
             referenceType: 'INVOICE',
             referenceId: inv.id,
-            referenceNumber: inv.invoice_number,
-            description: `Invoice #${inv.invoice_number}`,
+            referenceNumber: inv.invoice_number || `INV-${inv.id.substring(0, 8)}`,
+            description: `Invoice #${inv.invoice_number || `INV-${inv.id.substring(0, 8)}`}`,
             status: 'COMPLETED',
             createdAt: inv.created_at,
           });

@@ -227,22 +227,24 @@ export class InvoiceService {
           console.warn('[createInvoice] Accounting record notice:', dbErr);
         }
 
-        // Synchronize Udhari Ledger and Follow-up for customer receivable
-        try {
-          const { udhariService } = await import('./udhariService');
-          await udhariService.syncInvoiceUdhari({
-            invoiceId,
-            invoiceNumber: invNumber,
-            customerId: invoice.customerId,
-            customerName: invoice.customerName || 'Customer',
-            customerPhone: invoice.customerPhone || '9999999999',
-            grandTotal: total,
-            paidAmount: paid,
-            balanceAmount: remaining,
-            dueDate: invoice.dueDate,
-          });
-        } catch (uErr) {
-          console.warn('[createInvoice] Udhari sync notice:', uErr);
+        // Synchronize Udhari Ledger and Follow-up for customer receivable (Rule 8: Only when balance > 0)
+        if (remaining > 0.01) {
+          try {
+            const { udhariService } = await import('./udhariService');
+            await udhariService.syncInvoiceUdhari({
+              invoiceId,
+              invoiceNumber: invNumber,
+              customerId: invoice.customerId,
+              customerName: invoice.customerName || 'Customer',
+              customerPhone: invoice.customerPhone || '9999999999',
+              grandTotal: total,
+              paidAmount: paid,
+              balanceAmount: remaining,
+              dueDate: invoice.dueDate,
+            });
+          } catch (uErr) {
+            console.warn('[createInvoice] Udhari sync notice:', uErr);
+          }
         }
 
         try {
