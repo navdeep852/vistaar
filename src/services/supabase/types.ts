@@ -464,10 +464,18 @@ export function fromDbDaybookTransaction(row: DbDaybookTransaction): DaybookTran
     partyName: row.party_name || undefined,
     referenceType: row.reference_type as any,
     referenceId: row.reference_id || undefined,
-    referenceNumber: row.reference_number || undefined,
-    description: (row.description && row.description.includes('undefined'))
-      ? row.description.replace(/#undefined/g, row.reference_number ? `#${row.reference_number}` : '')
-      : (row.description || (row.reference_number ? `${row.reference_type || 'Transaction'} #${row.reference_number}` : undefined)),
+    referenceNumber: row.reference_number || (row.reference_id && row.reference_type === 'INVOICE' ? `INV-${row.reference_id.substring(0, 8)}` : (row.reference_number || undefined)),
+    description: (() => {
+      const refNum = row.reference_number || (row.reference_id && row.reference_type === 'INVOICE' ? `INV-${row.reference_id.substring(0, 8)}` : (row.transaction_code || ''));
+      let d = row.description;
+      if (d && (d.includes('undefined') || d.includes('null'))) {
+        d = d.replace(/#undefined/g, `#${refNum}`).replace(/undefined/g, refNum).replace(/#null/g, `#${refNum}`).replace(/null/g, refNum);
+      }
+      if (!d || d.trim() === '' || d.trim() === 'Invoice #' || d.trim() === 'Invoice') {
+        d = `${row.reference_type || 'Transaction'} #${refNum}`.trim();
+      }
+      return d;
+    })(),
     notes: row.notes || undefined,
     status: (row.status || 'COMPLETED') as any,
     gstApplicable: Boolean(row.gst_applicable),

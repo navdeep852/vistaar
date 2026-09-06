@@ -133,16 +133,9 @@ export class UdhariService {
 
     try {
       if (isValidUuid(wsId) && isValidUuid(params.invoiceId)) {
-        // 1. Check if an Udhari record exists for this invoice
-        let { data: existingUdhari } = await supabase
-          .from('udhari_records')
-          .select('*')
-          .eq('workspace_id', wsId)
-          .eq('invoice_id', params.invoiceId)
-          .maybeSingle();
-
-        // Fallback check by udhari_code if invoice_id column not yet queried
-        if (!existingUdhari) {
+        // 1. Check if an Udhari record exists for this invoice (graceful check)
+        let existingUdhari: any = null;
+        try {
           const { data: byCode } = await supabase
             .from('udhari_records')
             .select('*')
@@ -150,6 +143,22 @@ export class UdhariService {
             .eq('udhari_code', `UD-${params.invoiceNumber}`)
             .maybeSingle();
           existingUdhari = byCode;
+        } catch (cErr) {
+          // ignore
+        }
+
+        if (!existingUdhari) {
+          try {
+            const { data: byInvId } = await supabase
+              .from('udhari_records')
+              .select('*')
+              .eq('workspace_id', wsId)
+              .eq('invoice_id', params.invoiceId)
+              .maybeSingle();
+            existingUdhari = byInvId;
+          } catch (invColErr) {
+            // invoice_id column might not exist yet
+          }
         }
 
         let udhariId = existingUdhari?.id;

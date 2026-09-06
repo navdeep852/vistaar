@@ -482,6 +482,7 @@ export interface Payment {
   customerName: string;
   invoiceId?: string;
   invoiceNumber?: string;
+  udhariId?: string;
   amount: number;
   date: string;
   method: PaymentMethod;

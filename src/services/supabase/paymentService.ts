@@ -59,7 +59,7 @@ export class PaymentService {
     if (!invoiceId && !invoiceNumber) return;
 
     try {
-      let query = supabase.from('invoices').select('id, grand_total, paid_amount, balance_amount, status');
+      let query = supabase.from('invoices').select('id, invoice_number, customer_id, customer_name, customer_phone, date, due_date, grand_total, paid_amount, balance_amount, status');
       if (invoiceId && isValidUuid(invoiceId)) {
         query = query.eq('id', invoiceId);
       } else if (invoiceNumber) {
@@ -74,15 +74,16 @@ export class PaymentService {
 
       const targetId = invData.id;
       const grandTotal = Number(invData.grand_total) || 0;
+      const finalInvNumber = invData.invoice_number || invoiceNumber || `INV-${targetId.substring(0, 8)}`;
 
       // Ensure any payments linked by invoice_number have invoice_id set
-      if (invoiceNumber) {
+      if (finalInvNumber) {
         try {
           let linkQuery = supabase
             .from('payments')
             .update({ invoice_id: targetId })
             .is('invoice_id', null)
-            .eq('invoice_number', invoiceNumber);
+            .eq('invoice_number', finalInvNumber);
           if (isValidUuid(wsId)) {
             linkQuery = linkQuery.eq('workspace_id', wsId);
           }
@@ -130,7 +131,7 @@ export class PaymentService {
         await daybookService.recordFinancialTransaction({
           referenceType: 'INVOICE',
           referenceId: targetId,
-          referenceNumber: invData.invoice_number,
+          referenceNumber: finalInvNumber,
           transactionType: 'SALE',
           direction: 'IN',
           amount: totalPaid,
@@ -140,7 +141,7 @@ export class PaymentService {
           partyType: 'customer',
           partyId: invData.customer_id || undefined,
           partyName: invData.customer_name || 'Customer',
-          description: `Invoice #${invData.invoice_number}`,
+          description: `Invoice #${finalInvNumber}`,
           transactionDate: invData.date || new Date().toISOString().split('T')[0],
         });
       } catch (dbErr) {
@@ -152,7 +153,7 @@ export class PaymentService {
         const { udhariService } = await import('./udhariService');
         await udhariService.syncInvoiceUdhari({
           invoiceId: targetId,
-          invoiceNumber: invData.invoice_number,
+          invoiceNumber: finalInvNumber,
           customerId: invData.customer_id,
           customerName: invData.customer_name || 'Customer',
           customerPhone: invData.customer_phone || '9999999999',

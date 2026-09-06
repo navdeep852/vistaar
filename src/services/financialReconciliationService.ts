@@ -165,6 +165,20 @@ export class FinancialReconciliationService {
             udhari.updatedAt = new Date().toISOString();
           }
 
+          // Sync linked Follow-up
+          const followUp = store.getFollowUps().find(
+            (f) => f.invoiceId === inv.id || f.invoiceNumber === inv.invoiceNumber || (udhari && f.udhariId === udhari.id)
+          );
+          if (followUp) {
+            followUp.notes = `Payment follow-up for Invoice #${inv.invoiceNumber}. Outstanding: ₹${correctBalance.toLocaleString('en-IN')}`;
+            if (correctBalance <= 0.01) {
+              followUp.status = 'Completed';
+              followUp.completedAt = new Date().toISOString();
+            } else {
+              followUp.status = 'Pending';
+            }
+          }
+
           details.push(`Repaired ${inv.invoiceNumber}: Grand Total ₹${grandTotal}, Paid ₹${totalPaid}, Balance ₹${correctBalance}, Status ${correctStatus}`);
           repairedCount++;
         }

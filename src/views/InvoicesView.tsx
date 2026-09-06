@@ -65,6 +65,14 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   useEffect(() => {
     const updateData = () => setInvoices(store.getInvoices());
     updateData();
+    import('../services/supabase/invoiceService').then(({ invoiceService }) => {
+      invoiceService.getInvoices().then((res) => {
+        if (res.data && res.data.length > 0) {
+          store.syncRemoteInvoices(res.data);
+          updateData();
+        }
+      }).catch(() => {});
+    }).catch(() => {});
     return store.subscribe(updateData);
   }, []);
 

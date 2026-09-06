@@ -807,23 +807,6 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           }
         }
 
-        // Automatically record Payment transaction if payment was collected upfront
-        if (effectivePaidAmount > 0 && targetInvoiceId) {
-          const payData = {
-            customerId: selectedCustomerId || 'manual-cust',
-            customerName,
-            invoiceId: targetInvoiceId,
-            invoiceNumber: invoiceNumStr,
-            amount: effectivePaidAmount,
-            date: paymentDate || new Date().toISOString().split('T')[0],
-            method: finalMethod,
-            referenceNo: paymentReference || undefined,
-            notes: paymentNotes || `Payment recorded at invoice finalization`,
-          };
-          store.recordPayment(payData);
-          await paymentService.createPayment(payData);
-        }
-
         // Authoritative Udhari & Follow-up synchronization for unpaid or partial balances ONLY (Rule 8: Never create for fully paid)
         if (targetInvoiceId && balanceAmount > 0.01) {
           store.syncInvoiceUdhari({
@@ -851,6 +834,23 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
               dueDate: dueDateOrValid,
             }).catch((uErr) => console.warn('[DocumentEditorView] Udhari sync notice:', uErr));
           }).catch(() => {});
+        }
+
+        // Automatically record Payment transaction if payment was collected upfront
+        if (effectivePaidAmount > 0 && targetInvoiceId) {
+          const payData = {
+            customerId: selectedCustomerId || 'manual-cust',
+            customerName,
+            invoiceId: targetInvoiceId,
+            invoiceNumber: invoiceNumStr,
+            amount: effectivePaidAmount,
+            date: paymentDate || new Date().toISOString().split('T')[0],
+            method: finalMethod,
+            referenceNo: paymentReference || undefined,
+            notes: paymentNotes || `Payment recorded at invoice finalization`,
+          };
+          store.recordPayment(payData);
+          await paymentService.createPayment(payData);
         }
 
         showToast(`Invoice ${invoiceNumStr} finalized & snapshot saved!`, 'success');

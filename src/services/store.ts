@@ -238,6 +238,37 @@ class StoreService {
     this.saveToStorage();
   }
 
+  public syncRemoteInvoices(remoteInvoices: any[]) {
+    if (!Array.isArray(this.state.invoices)) this.state.invoices = [];
+    let changed = false;
+
+    for (const r of remoteInvoices) {
+      const invNum = r.invoice_number || r.invoiceNumber;
+      const id = r.id;
+      const found = this.state.invoices.find((i) => i.id === id || (invNum && i.invoiceNumber === invNum));
+
+      if (found) {
+        const remotePaid = Number(r.paid_amount ?? r.paidAmount) || 0;
+        const remoteBal = Number(r.balance_amount ?? r.balanceAmount) || 0;
+        const remoteStatus = (r.status as InvoiceStatus) || found.status;
+        if (
+          Math.abs(found.paidAmount - remotePaid) > 0.001 ||
+          Math.abs(found.balanceAmount - remoteBal) > 0.001 ||
+          found.status !== remoteStatus
+        ) {
+          found.paidAmount = remotePaid;
+          found.balanceAmount = remoteBal;
+          found.status = remoteStatus;
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) {
+      this.saveToStorage();
+    }
+  }
+
   public reloadTenantState() {
     this.state = this.loadFromStorage();
     this.notify();
@@ -578,7 +609,55 @@ class StoreService {
 
   // Invoices
   public getInvoices(): Invoice[] {
-    return Array.isArray(this.state.invoices) ? this.state.invoices : [];
+    if (!Array.isArray(this.state.invoices)) {
+      this.state.invoices = [];
+      return [];
+    }
+
+    // Dynamic single source of truth: reconcile paidAmount and balanceAmount from actual payments
+    let stateChanged = false;
+    const payments = Array.isArray(this.state.payments) ? this.state.payments : [];
+
+    for (const inv of this.state.invoices) {
+      if (inv.status === 'Draft' || inv.status === 'Cancelled') continue;
+
+      const matchedPayments = payments.filter(
+        (p) => p.invoiceId === inv.id || (p.invoiceNumber && p.invoiceNumber === inv.invoiceNumber)
+      );
+
+      const sumPaid = Number(matchedPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0).toFixed(2));
+      const grandTotal = Number(inv.grandTotal) || 0;
+
+      // When payments are recorded, they are the authoritative source of truth
+      const totalPaid = matchedPayments.length > 0 ? sumPaid : (Number(inv.paidAmount) || 0);
+      const balanceAmount = Math.max(0, Number((grandTotal - totalPaid).toFixed(2)));
+
+      let computedStatus: InvoiceStatus = inv.status;
+      if (balanceAmount <= 0.01 && grandTotal > 0) {
+        computedStatus = 'Paid';
+      } else if (totalPaid > 0) {
+        computedStatus = 'Partially Paid';
+      } else {
+        computedStatus = 'Issued';
+      }
+
+      if (
+        Math.abs((inv.paidAmount || 0) - totalPaid) > 0.001 ||
+        Math.abs((inv.balanceAmount || 0) - balanceAmount) > 0.001 ||
+        inv.status !== computedStatus
+      ) {
+        inv.paidAmount = totalPaid;
+        inv.balanceAmount = balanceAmount;
+        inv.status = computedStatus;
+        stateChanged = true;
+      }
+    }
+
+    if (stateChanged) {
+      this.saveToStorage();
+    }
+
+    return this.state.invoices;
   }
 
   public addInvoice(invoiceData: Omit<Invoice, 'id' | 'invoiceNumber' | 'createdAt' | 'updatedAt'>): Invoice {
@@ -818,6 +897,7 @@ class StoreService {
       customerName,
       invoiceId: inv?.id,
       invoiceNumber: invoiceNumber || undefined,
+      udhariId: udhari?.id,
       amount,
       date: payDate,
       method: data.paymentMethod,
@@ -827,9 +907,12 @@ class StoreService {
     };
     this.state.payments.unshift(newPayment);
 
-    // 4. Update Invoice
+    // 4. Update Invoice: Recompute from authoritative payments ledger
     if (inv) {
-      const updatedPaid = Number(((inv.paidAmount || 0) + amount).toFixed(2));
+      const matchedPayments = this.state.payments.filter(
+        (p) => p.invoiceId === inv!.id || (p.invoiceNumber && p.invoiceNumber === inv!.invoiceNumber)
+      );
+      const updatedPaid = Number(matchedPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0).toFixed(2));
       const updatedBalance = Math.max(0, Number((inv.grandTotal - updatedPaid).toFixed(2)));
       const newStatus: InvoiceStatus = (Math.abs(inv.grandTotal - updatedPaid) < 0.01 || updatedBalance <= 0)
         ? 'Paid'
@@ -841,9 +924,16 @@ class StoreService {
       inv.updatedAt = now;
     }
 
-    // 5. Update or link Udhari Record
+    // 5. Update or link Udhari Record: Recompute from authoritative payments ledger
     if (udhari) {
-      const updatedRec = Number(((udhari.totalReceived || 0) + amount).toFixed(2));
+      const matchingPayments = this.state.payments.filter((p) => {
+        if (udhari!.invoiceId && p.invoiceId === udhari!.invoiceId) return true;
+        if (p.invoiceNumber && udhari!.id === `UD-${p.invoiceNumber}`) return true;
+        if (p.invoiceNumber && udhari!.notes?.includes(p.invoiceNumber)) return true;
+        if (p.udhariId && p.udhariId === udhari!.id) return true;
+        return false;
+      });
+      const updatedRec = Number(matchingPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0).toFixed(2));
       const updatedOut = Math.max(0, Number((udhari.originalAmount - updatedRec).toFixed(2)));
       const udStatus = updatedOut <= 0.01 ? 'PAID' : 'PARTIALLY PAID';
 
@@ -1131,17 +1221,55 @@ class StoreService {
       this.state.udhariPayments = [];
     }
 
+    const allPayments = Array.isArray(this.state.payments) ? this.state.payments : [];
+    const udhariPayments = Array.isArray(this.state.udhariPayments) ? this.state.udhariPayments : [];
+
     // Auto-update statuses based on current date & total received
     let changed = false;
     this.state.udharis.forEach((u) => {
-      const payments = this.state.udhariPayments.filter((p) => p.udhariId === u.id);
-      const totalReceived = payments.reduce((acc, p) => acc + p.amount, 0);
-      const outstandingAmount = Math.max(0, u.originalAmount - totalReceived);
+      // Find payments matching from standard payments and udhariPayments
+      const matchingPayments = allPayments.filter((p) => {
+        if (u.invoiceId && p.invoiceId === u.invoiceId) return true;
+        if (p.invoiceNumber && u.id === `UD-${p.invoiceNumber}`) return true;
+        if (p.invoiceNumber && u.notes?.includes(p.invoiceNumber)) return true;
+        if (p.udhariId && p.udhariId === u.id) return true;
+        return false;
+      });
+
+      const matchingUdhariPays = udhariPayments.filter((p) => p.udhariId === u.id);
+
+      // Avoid double-counting if a payment was recorded in both arrays
+      const payKeys = new Set<string>();
+      let totalReceived = 0;
+
+      for (const p of matchingPayments) {
+        const key = p.paymentNumber || p.id || `${p.date}-${p.amount}`;
+        if (!payKeys.has(key)) {
+          payKeys.add(key);
+          totalReceived += Number(p.amount) || 0;
+        }
+      }
+
+      for (const p of matchingUdhariPays) {
+        const key = p.id || `${p.paymentDate}-${p.amount}`;
+        if (!payKeys.has(key)) {
+          payKeys.add(key);
+          totalReceived += Number(p.amount) || 0;
+        }
+      }
+
+      // If no local payment rows are found, preserve u.totalReceived if already set (e.g. from Supabase sync)
+      if (matchingPayments.length === 0 && matchingUdhariPays.length === 0 && (Number(u.totalReceived) || 0) > 0) {
+        totalReceived = Number(u.totalReceived) || 0;
+      }
+
+      totalReceived = Number(totalReceived.toFixed(2));
+      const outstandingAmount = Math.max(0, Number((u.originalAmount - totalReceived).toFixed(2)));
       const newStatus = calculateUdhariStatus(u.originalAmount, totalReceived, u.dueDate);
 
       if (
-        u.totalReceived !== totalReceived ||
-        u.outstandingAmount !== outstandingAmount ||
+        Math.abs((u.totalReceived || 0) - totalReceived) > 0.001 ||
+        Math.abs((u.outstandingAmount || 0) - outstandingAmount) > 0.001 ||
         u.status !== newStatus
       ) {
         u.totalReceived = totalReceived;
