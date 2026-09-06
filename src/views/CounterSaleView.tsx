@@ -38,6 +38,7 @@ import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
 import { PhoneInput } from '../components/PhoneInput';
+import { QuantityInput } from '../components/QuantityInput';
 import { ProductAutocomplete } from '../components/ProductAutocomplete';
 import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 
@@ -713,14 +714,13 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
                                 </span>
                               </td>
                               <td className="p-3 text-center">
-                                <input
-                                  type="number"
-                                  min="1"
+                                <QuantityInput
+                                  size="sm"
+                                  min={1}
                                   max={item.availableStock}
-                                  required
-                                  value={item.quantity || ''}
-                                  onChange={(e) => handleUpdateItemQuantity(idx, parseInt(e.target.value) || 0)}
-                                  className="w-20 px-2 py-1.5 bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-sm font-black text-slate-900 dark:text-slate-100 text-center focus:outline-none focus:border-blue-500"
+                                  value={item.quantity}
+                                  onChange={(val) => handleUpdateItemQuantity(idx, val)}
+                                  ariaLabel={`Quantity for ${item.productName}`}
                                 />
                               </td>
                               <td className="p-3 text-right">
@@ -773,12 +773,14 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
                           <div className="grid grid-cols-2 gap-3 pt-1">
                             <div>
                               <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Quantity</label>
-                              <input
-                                type="number"
-                                min="1"
-                                value={item.quantity || ''}
-                                onChange={(e) => handleUpdateItemQuantity(idx, parseInt(e.target.value) || 0)}
-                                className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl font-black text-center text-slate-900 dark:text-slate-100"
+                              <QuantityInput
+                                size="md"
+                                min={1}
+                                max={item.availableStock}
+                                value={item.quantity}
+                                onChange={(val) => handleUpdateItemQuantity(idx, val)}
+                                ariaLabel={`Quantity for ${item.productName}`}
+                                className="w-full justify-between"
                               />
                             </div>
                             <div>

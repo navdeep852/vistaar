@@ -6,6 +6,7 @@ import { Product, InventoryTransaction, StockMovementReason } from '../types';
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
+import { QuantityInput } from '../components/QuantityInput';
 
 interface StockViewProps {
   onNavigateTab?: (tab: string) => void;
@@ -186,13 +187,14 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">Quantity *</label>
-                <input
-                  type="number"
+                <QuantityInput
+                  size="md"
                   min={1}
                   required
                   value={quantity}
-                  onChange={(e) => setQuantity(parseInt(e.target.value) || 1)}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
+                  onChange={(val) => setQuantity(val)}
+                  className="w-full justify-between"
+                  ariaLabel="Stock Adjustment Quantity"
                 />
               </div>
 

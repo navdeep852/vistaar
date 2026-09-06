@@ -39,6 +39,8 @@ import {
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
+import { QuantityInput } from '../components/QuantityInput';
+import { GstRateInput, GST_RATE_SLABS } from '../components/GstRateInput';
 
 interface ProductsViewProps {
   initialOpenCreate?: boolean;
@@ -676,7 +678,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
       const purchaseOrder = getVal('Purchase Order') || 'IMP-PO';
       const supplier = getVal('Supplier') || '';
       const hsnSac = getVal('HSN/SAC') || '';
-      const gstRate = parseFloat(getVal('GST Rate')) || 18;
+      const rawGstRate = getVal('GST Rate');
+      const parsedGstRate = rawGstRate !== '' ? parseFloat(rawGstRate) : 18;
+      const gstRate = isNaN(parsedGstRate) ? 18 : parsedGstRate;
       const minimumStock = parseInt(getVal('Minimum Stock')) || 5;
       const notes = getVal('Notes') || '';
 
@@ -702,6 +706,11 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
       if (buyPrice < 0 || sellPrice < 0) {
         status = 'ERROR';
         messages.push('Price cannot be negative');
+      }
+
+      if (rawGstRate !== '' && !GST_RATE_SLABS.includes(gstRate as any)) {
+        status = 'ERROR';
+        messages.push(`Invalid GST Rate (${rawGstRate}%). Allowed GST rates: 0%, 5%, 12%, 18%, 28%.`);
       }
 
       // Check if product already exists (Section 37 & 38)
@@ -782,6 +791,11 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
       if (target.quantity <= 0) {
         status = 'ERROR';
         messages.push('Quantity must be > 0');
+      }
+
+      if (target.gstRate !== undefined && !GST_RATE_SLABS.includes(target.gstRate as any)) {
+        status = 'ERROR';
+        messages.push(`Invalid GST Rate (${target.gstRate}%). Allowed GST rates: 0%, 5%, 12%, 18%, 28%.`);
       }
 
       if (target.isExistingProduct && status !== 'ERROR') {
@@ -1611,13 +1625,14 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
                   Opening Stock Quantity *
                 </label>
-                <input
-                  type="number"
+                <QuantityInput
+                  size="md"
+                  min={0}
                   required
-                  min="0"
-                  value={addInitialStock}
-                  onChange={(e) => setAddInitialStock(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-black text-slate-900 dark:text-slate-100"
+                  value={parseInt(addInitialStock, 10) || 0}
+                  onChange={(val) => setAddInitialStock(String(val))}
+                  className="w-full justify-between"
+                  ariaLabel="Opening Stock Quantity"
                 />
               </div>
 
@@ -1654,11 +1669,41 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
                   Min Stock Warning Level
                 </label>
+                <QuantityInput
+                  size="md"
+                  min={0}
+                  value={parseInt(addMinStock, 10) || 0}
+                  onChange={(val) => setAddMinStock(String(val))}
+                  className="w-full justify-between"
+                  ariaLabel="Min Stock Warning Level"
+                />
+              </div>
+
+              {/* HSN / SAC Code */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                  HSN / SAC Code
+                </label>
                 <input
-                  type="number"
-                  value={addMinStock}
-                  onChange={(e) => setAddMinStock(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
+                  type="text"
+                  value={addHsnSac}
+                  onChange={(e) => setAddHsnSac(e.target.value)}
+                  placeholder="e.g. 851830"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
+                />
+              </div>
+
+              {/* GST Rate */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                  GST Rate *
+                </label>
+                <GstRateInput
+                  size="md"
+                  value={Number(addGstRate) || 18}
+                  onChange={(rate) => setAddGstRate(String(rate))}
+                  className="w-full justify-between"
+                  ariaLabel="Product GST Rate"
                 />
               </div>
 
@@ -1731,13 +1776,14 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
                 Quantity Received *
               </label>
-              <input
-                type="number"
-                min="1"
+              <QuantityInput
+                size="md"
+                min={1}
                 required
-                value={recQty}
-                onChange={(e) => setRecQty(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-black text-slate-900 dark:text-slate-100"
+                value={parseInt(recQty, 10) || 1}
+                onChange={(val) => setRecQty(String(val))}
+                className="w-full justify-between"
+                ariaLabel="Quantity Received"
               />
             </div>
 
@@ -2268,7 +2314,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                       <th className="p-2.5">Status</th>
                       <th className="p-2.5">Product Name</th>
                       <th className="p-2.5">Part Number</th>
-                      <th className="p-2.5 text-right">Qty</th>
+                      <th className="p-2.5 text-center">Qty</th>
+                      <th className="p-2.5 text-center">GST %</th>
                       <th className="p-2.5 text-right">Buy Price</th>
                       <th className="p-2.5 text-right">Sell Price</th>
                     </tr>
@@ -2316,12 +2363,19 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                             className="w-full bg-transparent font-mono font-bold text-blue-600 dark:text-blue-400 border-b border-transparent hover:border-slate-300 dark:hover:border-slate-700 focus:border-blue-500 focus:outline-none"
                           />
                         </td>
-                        <td className="p-2.5 text-right font-bold text-slate-900 dark:text-slate-100">
-                          <input
-                            type="number"
+                        <td className="p-2.5 text-center">
+                          <QuantityInput
+                            size="sm"
+                            min={1}
                             value={r.quantity}
-                            onChange={(e) => handleUpdateStagedRow(idx, { quantity: parseInt(e.target.value) || 0 })}
-                            className="w-16 bg-transparent text-right font-bold text-slate-900 dark:text-slate-100 border-b border-transparent hover:border-slate-300 dark:hover:border-slate-700 focus:border-blue-500 focus:outline-none"
+                            onChange={(val) => handleUpdateStagedRow(idx, { quantity: val })}
+                          />
+                        </td>
+                        <td className="p-2.5 text-center">
+                          <GstRateInput
+                            size="sm"
+                            value={r.gstRate ?? 18}
+                            onChange={(val) => handleUpdateStagedRow(idx, { gstRate: val })}
                           />
                         </td>
                         <td className="p-2.5 text-right text-slate-600 dark:text-slate-400">

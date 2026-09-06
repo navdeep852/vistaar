@@ -4,6 +4,7 @@ import { PurchaseOrder, Product } from '../../types';
 import { purchaseOrderReceiptService, productService } from '../../services/supabase';
 import { showToast } from '../Toast';
 import { QuickAddProductModal } from './QuickAddProductModal';
+import { QuantityInput } from '../QuantityInput';
 
 interface ReceiveStockModalProps {
   isOpen: boolean;
@@ -276,18 +277,15 @@ export const ReceiveStockModal: React.FC<ReceiveStockModalProps> = ({
                         <td className="p-3 text-right font-mono font-bold text-amber-600 dark:text-amber-400">
                           {pending} {item.unit || 'Pcs'}
                         </td>
-                        <td className="p-3 text-right">
-                          <input
-                            type="number"
-                            min="0"
+                        <td className="p-3 text-center">
+                          <QuantityInput
+                            size="sm"
+                            min={0}
                             max={pending}
-                            step="any"
                             disabled={pending === 0 || isUnlinked}
                             value={currentVal}
-                            onChange={(e) => handleQtyChange(key, pending, parseFloat(e.target.value) || 0)}
-                            className={`w-full text-right px-2 py-1.5 bg-white dark:bg-slate-900 border ${
-                              isUnlinked ? 'border-amber-300 bg-amber-50/50 text-slate-400' : 'border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white'
-                            } rounded-lg font-mono font-bold focus:ring-2 focus:ring-emerald-500 focus:outline-none`}
+                            onChange={(val) => handleQtyChange(key, pending, val)}
+                            ariaLabel={`Quantity to receive for ${item.productName}`}
                           />
                         </td>
                       </tr>

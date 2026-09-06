@@ -21,6 +21,8 @@ import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { supabaseAuthService } from '../../services/supabaseAuth';
 import { showToast } from '../Toast';
 import { QuickAddProductModal } from './QuickAddProductModal';
+import { QuantityInput } from '../QuantityInput';
+import { GstRateInput } from '../GstRateInput';
 
 interface PurchaseOrderCreateModalProps {
   isOpen: boolean;
@@ -859,14 +861,13 @@ export const PurchaseOrderCreateModal: React.FC<PurchaseOrderCreateModalProps> =
                           </td>
 
                           {/* Quantity */}
-                          <td className="p-3 text-right">
-                            <input
-                              type="number"
-                              min="0.001"
-                              step="any"
+                          <td className="p-3 text-center">
+                            <QuantityInput
+                              size="sm"
+                              min={1}
                               value={item.quantity}
-                              onChange={(e) => handleUpdateLine(idx, 'quantity', parseFloat(e.target.value) || 0)}
-                              className="w-full text-right px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded font-mono font-bold"
+                              onChange={(val) => handleUpdateLine(idx, 'quantity', val)}
+                              ariaLabel={`Quantity for ${item.productName}`}
                             />
                           </td>
 
@@ -965,14 +966,12 @@ export const PurchaseOrderCreateModal: React.FC<PurchaseOrderCreateModalProps> =
                           </td>
 
                           {/* GST % */}
-                          <td className="p-3 text-right">
-                            <input
-                              type="number"
-                              min="0"
-                              step="any"
+                          <td className="p-3 text-center">
+                            <GstRateInput
+                              size="sm"
                               value={item.taxRate || 0}
-                              onChange={(e) => handleUpdateLine(idx, 'taxRate', parseFloat(e.target.value) || 0)}
-                              className="w-full text-right px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded font-mono"
+                              onChange={(rate) => handleUpdateLine(idx, 'taxRate', rate)}
+                              ariaLabel={`GST Rate for ${item.productName}`}
                             />
                           </td>
 

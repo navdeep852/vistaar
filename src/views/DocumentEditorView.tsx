@@ -32,6 +32,8 @@ import { customerService } from '../services/supabase/customerService';
 import { supabaseAuthService } from '../services/supabaseAuth';
 import { CustomerSelect } from '../components/CustomerSelect';
 import { PhoneInput } from '../components/PhoneInput';
+import { QuantityInput } from '../components/QuantityInput';
+import { GstRateInput } from '../components/GstRateInput';
 import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 import {
   DocumentType,
@@ -1343,24 +1345,22 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
 
                     <div className="grid grid-cols-4 gap-2">
                       <div>
-                        <label className="block text-[9px] font-bold uppercase text-slate-400 dark:text-slate-500">Qty</label>
-                        <input
-                          type="number"
+                        <label className="block text-[9px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">Qty</label>
+                        <QuantityInput
+                          size="sm"
                           min={1}
                           value={item.quantity}
-                          onChange={(e) => {
-                            const val = parseInt(e.target.value) || 1;
+                          onChange={(val) => {
                             setItems((prev) => {
                               const updated = [...prev];
                               updated[idx].quantity = val;
                               return updated;
                             });
                           }}
-                          className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-900 dark:text-slate-100"
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] font-bold uppercase text-slate-400 dark:text-slate-500">Price</label>
+                        <label className="block text-[9px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">Price</label>
                         <input
                           type="number"
                           value={item.sellingPrice}
@@ -1372,11 +1372,11 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
                               return updated;
                             });
                           }}
-                          className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-900 dark:text-slate-100"
+                          className="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-900 dark:text-slate-100"
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] font-bold uppercase text-slate-400 dark:text-slate-500">Disc ({settings.currency})</label>
+                        <label className="block text-[9px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">Disc ({settings.currency})</label>
                         <input
                           type="number"
                           value={item.discountAmount}
@@ -1388,23 +1388,21 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
                               return updated;
                             });
                           }}
-                          className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-900 dark:text-slate-100"
+                          className="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-900 dark:text-slate-100"
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] font-bold uppercase text-slate-400 dark:text-slate-500">Tax %</label>
-                        <input
-                          type="number"
+                        <label className="block text-[9px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">Tax %</label>
+                        <GstRateInput
+                          size="sm"
                           value={item.taxPercent}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value) || 0;
+                          onChange={(val) => {
                             setItems((prev) => {
                               const updated = [...prev];
                               updated[idx].taxPercent = val;
                               return updated;
                             });
                           }}
-                          className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-900 dark:text-slate-100"
                         />
                       </div>
                     </div>

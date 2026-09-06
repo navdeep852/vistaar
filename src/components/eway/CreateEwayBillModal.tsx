@@ -27,6 +27,7 @@ import {
 import { EwayBillEligibilityEngine } from '../../services/ewayBillEligibilityEngine';
 import { ewayBillApiService } from '../../services/ewayBillApiService';
 import { ewayBillService, businessSettingsService, locationService } from '../../services/supabase';
+import { QuantityInput } from '../QuantityInput';
 
 interface CreateEwayBillModalProps {
   isOpen: boolean;
@@ -680,17 +681,18 @@ export const CreateEwayBillModal: React.FC<CreateEwayBillModalProps> = ({
                         Qty & Unit
                       </label>
                       <div className="flex items-center gap-1">
-                        <input
-                          type="number"
+                        <QuantityInput
+                          size="sm"
+                          min={1}
                           value={item.quantity}
-                          onChange={(e) => {
+                          onChange={(val) => {
                             const updated = [...items];
-                            updated[idx].quantity = Number(e.target.value);
+                            updated[idx].quantity = val;
                             setItems(updated);
                           }}
-                          className="w-16 px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs"
+                          ariaLabel={`Quantity for ${item.productName}`}
                         />
-                        <span className="text-slate-500">{item.unit || 'Pcs'}</span>
+                        <span className="text-slate-500 text-xs">{item.unit || 'Pcs'}</span>
                       </div>
                     </div>
 
