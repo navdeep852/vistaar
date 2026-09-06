@@ -6,7 +6,7 @@ import { ErrorBoundary } from './components/ErrorBoundary.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ErrorBoundary fallbackTitle="VISTAAR Application Startup Error">
+    <ErrorBoundary fallbackTitle="Something went wrong">
       <App />
     </ErrorBoundary>
   </StrictMode>,

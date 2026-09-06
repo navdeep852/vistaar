@@ -71,14 +71,6 @@ export const CashbookView: React.FC = () => {
   const [newAccIFSC, setNewAccIFSC] = useState('');
   const [newAccOpeningBal, setNewAccOpeningBal] = useState('0');
 
-  // Manual Entry Form State
-  const [entryType, setEntryType] = useState<'RECEIPT' | 'PAYMENT'>('RECEIPT');
-  const [entryAmount, setEntryAmount] = useState('');
-  const [entryAccountId, setEntryAccountId] = useState('');
-  const [entryPartyName, setEntryPartyName] = useState('');
-  const [entryDescription, setEntryDescription] = useState('');
-  const [entryGstApplicable, setEntryGstApplicable] = useState(false);
-  const [entryGstin, setEntryGstin] = useState('');
 
   // Fetch initial data
   const loadData = async () => {

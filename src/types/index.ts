@@ -272,6 +272,53 @@ export interface CounterSale {
   status: CounterSaleStatus;
   items: CounterSaleItem[];
   notes?: string;
+  paymentMethod?: string;
+  amountReceived?: number;
+  balanceAmount?: number;
+  paymentReference?: string;
+  paymentNotes?: string;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccountingEntry {
+  id: string;
+  workspaceId: string;
+  entryDate: string;
+  entryNumber: string;
+  entryType: string;
+  sourceType: string;
+  sourceId?: string;
+  referenceNumber?: string;
+  description?: string;
+  customerId?: string;
+  supplierId?: string;
+  debitAccount?: string;
+  creditAccount?: string;
+  amount: number;
+  paymentMethod?: string;
+  notes?: string;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CashbookEntry {
+  id: string;
+  workspaceId: string;
+  entryDate: string;
+  entryNumber: string;
+  direction: 'IN' | 'OUT';
+  amount: number;
+  paymentMethod: string;
+  accountName: string;
+  sourceType: string;
+  sourceId?: string;
+  referenceNumber?: string;
+  partyName?: string;
+  description?: string;
+  notes?: string;
   createdBy?: string;
   createdAt: string;
   updatedAt: string;

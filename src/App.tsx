@@ -3,6 +3,7 @@ import { Sidebar } from './components/Sidebar';
 import { MobileNav } from './components/MobileNav';
 import { Header } from './components/Header';
 import { ToastContainer } from './components/Toast';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { supabaseAuthService } from './services/supabaseAuth';
 import { productService, followUpService, notificationService } from './services/supabase';
 
@@ -240,7 +241,13 @@ function MainAppContent() {
         )}
 
         <main className={`flex-1 ${isWorkspaceActive ? 'p-0 w-full max-w-full' : 'p-4 sm:p-8 max-w-7xl w-full mx-auto'}`}>
-          {renderActiveView()}
+          <ErrorBoundary
+            key={activeTab}
+            moduleName={activeTab.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+            onReset={() => setActiveTab('dashboard')}
+          >
+            {renderActiveView()}
+          </ErrorBoundary>
         </main>
       </div>
 

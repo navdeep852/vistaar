@@ -178,8 +178,25 @@ export class PaymentService {
           notes: payment.notes || undefined,
           transactionDate: payment.date || new Date().toISOString().split('T')[0],
         });
+
+        // Record Cashbook Entry (Money received)
+        const { cashbookService } = await import('./cashbookService');
+        await cashbookService.recordCashbookEntry({
+          sourceType: 'PAYMENT',
+          sourceId: createdId,
+          referenceNumber: payNum,
+          direction: 'IN',
+          amount: payment.amount || 0,
+          paymentMethod: payment.method || 'Cash',
+          partyName: payment.customerName || 'Customer',
+          description: `Payment Received #${payNum}`,
+          transactionDate: payment.date || new Date().toISOString().split('T')[0],
+        });
+
+        const { salesAnalyticsService } = await import('./salesAnalyticsService');
+        salesAnalyticsService.invalidateCache();
       } catch (dbErr) {
-        console.warn('Failed to record Daybook entry for payment:', dbErr);
+        console.warn('Failed to record Daybook/Cashbook entry for payment:', dbErr);
       }
 
       return { paymentId: createdId };

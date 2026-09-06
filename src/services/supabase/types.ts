@@ -517,9 +517,60 @@ export function fromDbCounterSale(row: any): CounterSale {
     status: (row.status as any) || 'COMPLETED',
     items: mappedItems,
     notes: row.notes || undefined,
+    paymentMethod: row.payment_method || row.paymentMethod || 'Cash',
+    amountReceived: row.amount_received !== undefined ? Number(row.amount_received) : (row.amountReceived !== undefined ? Number(row.amountReceived) : undefined),
+    balanceAmount: row.balance_amount !== undefined ? Number(row.balance_amount) : (row.balanceAmount !== undefined ? Number(row.balanceAmount) : undefined),
+    paymentReference: row.payment_reference || row.paymentReference || undefined,
+    paymentNotes: row.payment_notes || row.paymentNotes || undefined,
     createdBy: row.created_by || row.createdBy || undefined,
     createdAt: row.created_at || new Date().toISOString(),
     updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
+  };
+}
+
+export function fromDbAccountingEntry(row: any): any {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id || row.workspaceId,
+    entryDate: row.entry_date || row.entryDate || new Date().toISOString().split('T')[0],
+    entryNumber: row.entry_number || row.entryNumber || '',
+    entryType: row.entry_type || row.entryType || 'SALE',
+    sourceType: row.source_type || row.sourceType || 'MANUAL',
+    sourceId: row.source_id || row.sourceId || undefined,
+    referenceNumber: row.reference_number || row.referenceNumber || '',
+    description: row.description || '',
+    customerId: row.customer_id || row.customerId || undefined,
+    supplierId: row.supplier_id || row.supplierId || undefined,
+    debitAccount: row.debit_account || row.debitAccount || undefined,
+    creditAccount: row.credit_account || row.creditAccount || undefined,
+    amount: Number(row.amount) || 0,
+    paymentMethod: row.payment_method || row.paymentMethod || undefined,
+    notes: row.notes || undefined,
+    createdBy: row.created_by || row.createdBy || undefined,
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString(),
+  };
+}
+
+export function fromDbCashbookEntry(row: any): any {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id || row.workspaceId,
+    entryDate: row.entry_date || row.entryDate || new Date().toISOString().split('T')[0],
+    entryNumber: row.entry_number || row.entryNumber || '',
+    direction: row.direction || 'IN',
+    amount: Number(row.amount) || 0,
+    paymentMethod: row.payment_method || row.paymentMethod || 'Cash',
+    accountName: row.account_name || row.accountName || 'Cash Account',
+    sourceType: row.source_type || row.sourceType || 'MANUAL',
+    sourceId: row.source_id || row.sourceId || undefined,
+    referenceNumber: row.reference_number || row.referenceNumber || '',
+    partyName: row.party_name || row.partyName || '',
+    description: row.description || '',
+    notes: row.notes || undefined,
+    createdBy: row.created_by || row.createdBy || undefined,
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString(),
   };
 }
 

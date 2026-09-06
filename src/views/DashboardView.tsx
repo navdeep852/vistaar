@@ -16,7 +16,7 @@ import {
 import { store } from '../services/store';
 import { Customer, Product, Invoice, Quotation, FollowUp } from '../types';
 
-import { productService } from '../services/supabase';
+import { productService, salesAnalyticsService, SalesMetrics } from '../services/supabase';
 
 interface DashboardViewProps {
   setActiveTab: (tab: string) => void;
@@ -32,6 +32,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
+  const [salesMetrics, setSalesMetrics] = useState<SalesMetrics>({
+    totalSales: 0,
+    todaySales: 0,
+    thisMonthSales: 0,
+    invoiceSales: 0,
+    counterSales: 0,
+    paidSales: 0,
+    creditSales: 0,
+    cashSales: 0,
+    bankUpiSales: 0,
+    totalTransactions: 0,
+  });
   const settings = store.getSettings();
 
   useEffect(() => {
@@ -42,15 +54,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       setQuotations(store.getQuotations());
       setCustomers(store.getCustomers());
       setFollowUps(store.getFollowUps());
+
+      try {
+        const sm = await salesAnalyticsService.getSalesMetrics();
+        setSalesMetrics(sm);
+      } catch (e) {
+        console.warn('Failed to load sales metrics in dashboard:', e);
+      }
     };
     updateData();
     return store.subscribe(updateData);
   }, []);
 
   // Metrics
-  const plData = store.calculatePL();
-  const totalRevenue = plData.revenue;
-  
   const udhariMetrics = store.getUdhariMetrics();
   const totalOutstandingUdhari = udhariMetrics.outstanding;
 
@@ -65,7 +81,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     <div className="space-y-6 animate-fade-in pb-12">
       {/* Metric Cards Banner */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-        {/* Total Revenue */}
+        {/* Total Sales (Authoritative Invoices + Counter Sales) */}
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card shadow-card-hover flex flex-col justify-between transition-colors">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Total Sales</span>
@@ -75,12 +91,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="mt-4">
             <h3 className="text-2xl font-extrabold text-slate-900 dark:text-slate-100">
-              {settings.currency}{totalRevenue.toLocaleString()}
+              {settings.currency}{salesMetrics.totalSales.toLocaleString()}
             </h3>
-            <p className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1 mt-1">
-              <TrendingUp className="w-3.5 h-3.5" />
-              <span>Real-time transaction revenue</span>
-            </p>
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 space-y-0.5 font-medium">
+              <div className="flex justify-between">
+                <span>Today: <strong className="text-emerald-600 dark:text-emerald-400">{settings.currency}{salesMetrics.todaySales.toLocaleString()}</strong></span>
+                <span>Month: <strong className="text-blue-600 dark:text-blue-400">{settings.currency}{salesMetrics.thisMonthSales.toLocaleString()}</strong></span>
+              </div>
+              <div className="flex justify-between text-[10px] text-slate-400 pt-0.5 border-t border-slate-100 dark:border-slate-800">
+                <span>Inv: {settings.currency}{salesMetrics.invoiceSales.toLocaleString()}</span>
+                <span>Counter: {settings.currency}{salesMetrics.counterSales.toLocaleString()}</span>
+              </div>
+            </div>
           </div>
         </div>
 

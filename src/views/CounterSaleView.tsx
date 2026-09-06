@@ -95,6 +95,12 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   const [discountValue, setDiscountValue] = useState<string>('');
   const [notes, setNotes] = useState('');
 
+  // Payment Settlement State
+  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'UPI' | 'Bank Transfer' | 'Card' | 'Cheque' | 'Credit / Udhari' | 'Other'>('Cash');
+  const [amountReceivedStr, setAmountReceivedStr] = useState<string>('');
+  const [paymentRef, setPaymentRef] = useState<string>('');
+  const [paymentNotes, setPaymentNotes] = useState<string>('');
+
   // Line Items State
   const [lineItems, setLineItems] = useState<DraftSaleItem[]>([]);
   const [productSearch, setProductSearch] = useState('');
@@ -251,6 +257,15 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   }
   const finalTotal = Math.max(0, subtotal - discountAmount);
 
+  // Settlement Calculations
+  const isCredit = paymentMethod === 'Credit / Udhari';
+  const amountReceived = isCredit
+    ? 0
+    : amountReceivedStr === ''
+    ? finalTotal
+    : Math.max(0, parseFloat(amountReceivedStr) || 0);
+  const balanceAmount = Math.max(0, finalTotal - amountReceived);
+
   // Validation Check
   const validationErrors: string[] = [];
   if (!invoiceNumber.trim()) validationErrors.push('Invoice Number is required.');
@@ -272,6 +287,10 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
 
   if (discountAmount > subtotal) {
     validationErrors.push(`Discount (${formatCurrency(discountAmount)}) cannot exceed Subtotal.`);
+  }
+
+  if (!isCredit && amountReceived > finalTotal) {
+    validationErrors.push(`Amount received (${formatCurrency(amountReceived)}) cannot exceed Final Total (${formatCurrency(finalTotal)}).`);
   }
 
   // Open Pre-Submission Review Modal
@@ -312,6 +331,11 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
         discountAmount,
         subtotal,
         finalTotal,
+        paymentMethod,
+        amountReceived,
+        balanceAmount,
+        paymentReference: paymentRef,
+        paymentNotes,
         notes,
         items: lineItems.map((i) => ({
           productId: i.productId,
@@ -324,7 +348,13 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
 
       if (!res.success) throw new Error(res.error || 'Failed to record sale');
 
-      setCreatedSale(res.data);
+      // Defensive handling: ensure items is an array
+      const safeData = res.data ? {
+        ...res.data,
+        items: Array.isArray(res.data.items) ? res.data.items : [],
+      } : null;
+
+      setCreatedSale(safeData);
       setReviewModalOpen(false);
       setIsCreatingSale(false);
       setSuccessModalOpen(true);
@@ -837,6 +867,88 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
                 </div>
               </div>
 
+              {/* PAYMENT & SETTLEMENT SECTION */}
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200 uppercase tracking-wider block">
+                  Payment & Settlement
+                </span>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                  <div className="min-w-0">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                      Payment Method *
+                    </label>
+                    <select
+                      value={paymentMethod}
+                      onChange={(e) => {
+                        const val = e.target.value as any;
+                        setPaymentMethod(val);
+                        if (val === 'Credit / Udhari') {
+                          setAmountReceivedStr('0');
+                        } else if (amountReceivedStr === '0' || amountReceivedStr === '') {
+                          setAmountReceivedStr(String(finalTotal));
+                        }
+                      }}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-500"
+                    >
+                      <option value="Cash">Cash</option>
+                      <option value="UPI">UPI</option>
+                      <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="Card">Card</option>
+                      <option value="Cheque">Cheque</option>
+                      <option value="Credit / Udhari">Credit / Udhari</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+
+                  <div className="min-w-0">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                      Amount Received (₹)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max={finalTotal}
+                      step="0.01"
+                      disabled={paymentMethod === 'Credit / Udhari'}
+                      value={paymentMethod === 'Credit / Udhari' ? '0' : (amountReceivedStr === '' ? finalTotal : amountReceivedStr)}
+                      onChange={(e) => setAmountReceivedStr(e.target.value)}
+                      placeholder={String(finalTotal)}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-extrabold text-emerald-600 dark:text-emerald-400 focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                    />
+                    <span className="text-[10px] text-slate-400 block mt-0.5 font-semibold">
+                      {balanceAmount > 0 ? `Balance Due: ${formatCurrency(balanceAmount)}` : 'Fully Paid'}
+                    </span>
+                  </div>
+
+                  <div className="min-w-0">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                      Reference / Txn ID
+                    </label>
+                    <input
+                      type="text"
+                      value={paymentRef}
+                      onChange={(e) => setPaymentRef(e.target.value)}
+                      placeholder="e.g. UPI Ref / Cheque No."
+                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="min-w-0">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                      Payment Notes
+                    </label>
+                    <input
+                      type="text"
+                      value={paymentNotes}
+                      onChange={(e) => setPaymentNotes(e.target.value)}
+                      placeholder="e.g. GPay / Bank Remarks"
+                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
               {/* BOTTOM TOTALS BREAKDOWN AND COMPLETE SALE ACTION */}
               <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-end gap-6 w-full min-w-0">
                 {/* Validation errors inline notice if any */}
@@ -1253,6 +1365,20 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
               <span className="text-slate-500 dark:text-slate-400 font-bold">Sale Date:</span>
               <span className="font-bold text-slate-900 dark:text-slate-100">{formatDate(saleDate)}</span>
             </div>
+            <div className="flex justify-between pt-1 border-t border-slate-200 dark:border-slate-700">
+              <span className="text-slate-500 dark:text-slate-400 font-bold">Payment Method:</span>
+              <span className="font-bold text-blue-600 dark:text-blue-400">{paymentMethod}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500 dark:text-slate-400 font-bold">Amount Received:</span>
+              <span className="font-extrabold text-emerald-600 dark:text-emerald-400">{formatCurrency(amountReceived)}</span>
+            </div>
+            {balanceAmount > 0 && (
+              <div className="flex justify-between">
+                <span className="text-rose-600 dark:text-rose-400 font-bold">Balance Due:</span>
+                <span className="font-black text-rose-600 dark:text-rose-400">{formatCurrency(balanceAmount)}</span>
+              </div>
+            )}
           </div>
 
           {/* Stock Impact Summary */}
@@ -1315,22 +1441,50 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
             <div>
               <h3 className="text-lg font-black text-slate-900 dark:text-slate-100">✓ SALE COMPLETED</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Counter Sale: <strong className="text-blue-600 dark:text-blue-400 font-mono">{createdSale.saleNumber}</strong> • Invoice: <strong className="text-slate-900 dark:text-slate-100 font-mono">{createdSale.invoiceNumber}</strong>
+                Counter Sale: <strong className="text-blue-600 dark:text-blue-400 font-mono">{createdSale.saleNumber || 'CS-N/A'}</strong> • Invoice: <strong className="text-slate-900 dark:text-slate-100 font-mono">{createdSale.invoiceNumber || 'INV-N/A'}</strong>
+              </p>
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 font-semibold">
+                Customer: <strong className="text-slate-900 dark:text-slate-200">{createdSale.customerName || 'Walk-in Customer'}</strong>
               </p>
             </div>
 
+            {/* Financial Settlement Card */}
+            <div className="bg-slate-50 dark:bg-slate-800/50 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-1.5 text-xs text-left">
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400 font-bold">Total Amount:</span>
+                <span className="font-black text-slate-900 dark:text-slate-100">{formatCurrency(createdSale.finalTotal || 0)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400 font-bold">Payment Method:</span>
+                <span className="font-bold text-blue-600 dark:text-blue-400">{createdSale.paymentMethod || 'Cash'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400 font-bold">Amount Received:</span>
+                <span className="font-extrabold text-emerald-600 dark:text-emerald-400">
+                  {formatCurrency(createdSale.amountReceived !== undefined ? createdSale.amountReceived : (createdSale.finalTotal || 0))}
+                </span>
+              </div>
+              {(createdSale.balanceAmount || 0) > 0 && (
+                <div className="flex justify-between pt-1 border-t border-slate-200 dark:border-slate-700">
+                  <span className="text-rose-600 dark:text-rose-400 font-bold">Balance Due:</span>
+                  <span className="font-black text-rose-600 dark:text-rose-400">{formatCurrency(createdSale.balanceAmount || 0)}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Defensive Items Render */}
             <div className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2 text-left text-xs">
               <span className="font-extrabold text-slate-800 dark:text-slate-200 uppercase block text-[10px]">
                 Inventory Stock Updated:
               </span>
-              {createdSale.items.map((item) => {
+              {(Array.isArray(createdSale?.items) ? createdSale.items : []).map((item) => {
                 const p = products.find((prod) => prod.id === item.productId);
-                const availNow = p ? p.currentStock : 0;
+                const availNow = p ? (p.currentStock ?? (p as any).current_stock ?? 0) : 0;
                 return (
-                  <div key={item.id} className="flex justify-between items-center py-1 border-b border-slate-100 dark:border-slate-800 last:border-0">
+                  <div key={item.id || `${item.productId}-${item.quantity}`} className="flex justify-between items-center py-1 border-b border-slate-100 dark:border-slate-800 last:border-0">
                     <div>
-                      <span className="font-bold text-slate-900 dark:text-slate-100">{item.productNameSnapshot}</span>
-                      <span className="text-[10px] text-slate-400 dark:text-slate-500 block font-mono">Part #: {item.partNumberSnapshot}</span>
+                      <span className="font-bold text-slate-900 dark:text-slate-100">{item.productNameSnapshot || 'Product'}</span>
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 block font-mono">Part #: {item.partNumberSnapshot || 'N/A'}</span>
                     </div>
                     <div className="text-right">
                       <span className="font-bold text-rose-600 dark:text-rose-400">Sold: {item.quantity}</span>
@@ -1446,17 +1600,37 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
               </div>
             </div>
 
+            {/* Payment & Settlement Summary */}
+            <div className="bg-slate-50 dark:bg-slate-800/40 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 flex justify-between items-center text-xs">
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Payment Method</span>
+                <span className="font-bold text-slate-900 dark:text-slate-100">{activeSale.paymentMethod || 'Cash'}</span>
+              </div>
+              <div className="text-center">
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Amount Received</span>
+                <span className="font-extrabold text-emerald-600 dark:text-emerald-400">
+                  {formatCurrency(activeSale.amountReceived !== undefined ? activeSale.amountReceived : (activeSale.finalTotal || 0))}
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Balance Due</span>
+                <span className={`font-black ${activeSale.balanceAmount && activeSale.balanceAmount > 0 ? 'text-rose-600' : 'text-slate-500'}`}>
+                  {formatCurrency(activeSale.balanceAmount || 0)}
+                </span>
+              </div>
+            </div>
+
             <div className="space-y-2">
               <h4 className="font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[10px]">
-                Items Purchased ({activeSale.items.length})
+                Items Purchased ({(Array.isArray(activeSale?.items) ? activeSale.items : []).length})
               </h4>
               <div className="space-y-2">
-                {activeSale.items.map((item) => (
-                  <div key={item.id} className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center">
+                {(Array.isArray(activeSale?.items) ? activeSale.items : []).map((item) => (
+                  <div key={item.id || `${item.productId}-${item.quantity}`} className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center">
                     <div>
-                      <h5 className="font-extrabold text-slate-900 dark:text-slate-100">{item.productNameSnapshot}</h5>
+                      <h5 className="font-extrabold text-slate-900 dark:text-slate-100">{item.productNameSnapshot || 'Product'}</h5>
                       <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 font-bold">
-                        Part #: {item.partNumberSnapshot}
+                        Part #: {item.partNumberSnapshot || 'N/A'}
                       </span>
                     </div>
 
