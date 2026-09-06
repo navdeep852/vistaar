@@ -355,238 +355,87 @@ export class CounterSaleService {
       })),
     };
 
-    // 3. ATTEMPT SERVER-SIDE ATOMIC POSTGRESQL RPC EXECUTION
+    // 3. PRODUCTION SUPABASE MODE: STRICT SERVER-SIDE ATOMIC POSTGRESQL RPC EXECUTION
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
-      try {
-        const { data: rpcRes, error: rpcErr } = await supabase.rpc('finalize_counter_sale', {
-          p_sale: rpcPayload,
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('finalize_counter_sale', {
+        p_sale: rpcPayload,
+      });
+
+      if (!rpcErr && rpcRes && rpcRes.success && rpcRes.data) {
+        // Update local store stock for instant UI reactivity
+        items.forEach((item: any) => {
+          const pId = item.productId || item.product_id;
+          if (pId) store.adjustStock(pId, 'Sale', -Math.abs(item.quantity), `Counter Sale #${invoiceNumber}`, invoiceNumber);
         });
 
-        if (!rpcErr && rpcRes && rpcRes.success && rpcRes.data) {
-          console.log('[createCounterSale] Atomic RPC finalize_counter_sale succeeded:', rpcRes.data);
+        // Invalidate caches
+        productService.invalidateCache();
+        salesAnalyticsService.invalidateCache();
 
-          // Update local store stock for instant UI reactivity
-          items.forEach((item: any) => {
-            const pId = item.productId || item.product_id;
-            if (pId) store.adjustStock(pId, 'Sale', -Math.abs(item.quantity), `Counter Sale #${invoiceNumber}`, invoiceNumber);
-          });
-
-          // Invalidate caches
-          productService.invalidateCache();
-          salesAnalyticsService.invalidateCache();
-
-          const completeSale = fromDbCounterSale(rpcRes.data);
-          return { success: true, data: completeSale };
-        }
-
-        if (rpcErr) {
-          const errCode = (rpcErr as any).code || '';
-          const errMsg = (rpcErr as any).message || '';
-          const isFunctionMissing =
-            errCode === 'PGRST202' ||
-            errMsg.includes('Could not find the function') ||
-            errMsg.includes('does not exist');
-
-          if (!isFunctionMissing) {
-            // This is a genuine business failure (e.g. INSUFFICIENT_STOCK)
-            console.error('[createCounterSale] Atomic RPC rejected transaction:', rpcErr);
-            return { success: false, error: errMsg || 'Counter sale transaction failed.' };
-          }
-
-          console.warn('[createCounterSale] RPC not found in schema, executing client transactional fallback');
-        }
-      } catch (rpcEx: any) {
-        console.warn('[createCounterSale] RPC invocation error:', rpcEx);
+        const completeSale = fromDbCounterSale(rpcRes.data);
+        return { success: true, data: completeSale };
       }
-    }
 
-    // 4. FALLBACK TRANSACTIONAL PIPELINE (Guarantees atomic stock deduction, accounting & full object return)
-    try {
-      let saleId = sale.id;
-      let insertedSaleRow: any = null;
+      if (rpcErr) {
+        const errCode = (rpcErr as any).code || '';
+        const errMsg = (rpcErr as any).message || '';
+        const isFunctionMissing =
+          errCode === 'PGRST202' ||
+          errMsg.includes('Could not find the function') ||
+          errMsg.includes('does not exist');
 
-      if (isSupabaseConfigured() && isValidUuid(wsId)) {
-        // A. Insert Parent
-        const parentPayload: any = {
-          workspace_id: wsId,
-          customer_id: sale.customerId || null,
-          sale_number: saleNumber,
-          invoice_number: invoiceNumber,
-          customer_name: sale.customerName || 'Walk-in Customer',
-          phone_number: sale.phoneNumber || '',
-          sale_date: sale.saleDate || new Date().toISOString().split('T')[0],
-          estimate_reference: sale.estimateReference || null,
-          subtotal: sale.subtotal || 0,
-          discount_type: sale.discountType || 'fixed',
-          discount_value: sale.discountValue || 0,
-          discount_amount: sale.discountAmount || 0,
-          final_total: finalTotal,
-          status: 'COMPLETED',
-          notes: sale.notes || null,
-          payment_method: paymentMethod,
-          amount_received: amountReceived,
-          balance_amount: balanceAmount,
-          payment_reference: sale.paymentReference || null,
-          payment_notes: sale.paymentNotes || null,
+        if (isFunctionMissing) {
+          return {
+            success: false,
+            error: 'Counter Sale service is not fully deployed. Please contact administrator.',
+          };
+        }
+
+        return {
+          success: false,
+          error: errMsg || 'Counter sale transaction failed.',
         };
-
-        const { data: parent, error: parentErr } = await supabase
-          .from('counter_sales')
-          .insert([parentPayload])
-          .select()
-          .single();
-
-        if (parentErr) {
-          // If column payment_method doesn't exist yet on live DB, retry with base columns
-          if ((parentErr as any).message?.includes('payment_method')) {
-            delete parentPayload.payment_method;
-            delete parentPayload.amount_received;
-            delete parentPayload.balance_amount;
-            delete parentPayload.payment_reference;
-            delete parentPayload.payment_notes;
-
-            const { data: retryParent, error: retryErr } = await supabase
-              .from('counter_sales')
-              .insert([parentPayload])
-              .select()
-              .single();
-
-            if (retryErr) {
-              return { success: false, error: handleSupabaseError(retryErr, 'createCounterSale.parent') };
-            }
-            insertedSaleRow = retryParent;
-          } else {
-            return { success: false, error: handleSupabaseError(parentErr, 'createCounterSale.parent') };
-          }
-        } else {
-          insertedSaleRow = parent;
-        }
-
-        saleId = insertedSaleRow.id;
-
-        // B. Insert Line Items
-        const itemRows = items.map((item: any) => ({
-          workspace_id: wsId,
-          counter_sale_id: saleId,
-          product_id: item.productId || item.product_id,
-          product_name_snapshot: item.productName || item.productNameSnapshot || item.product_name_snapshot || '',
-          part_number_snapshot: item.partNumber || item.partNumberSnapshot || item.part_number_snapshot || '',
-          quantity: Math.abs(Number(item.quantity) || 0),
-          rate: Number(item.rate) || 0,
-          amount: (Math.abs(Number(item.quantity) || 0)) * (Number(item.rate) || 0),
-          buy_price_snapshot: Number(item.buyPriceSnapshot || item.buy_price_snapshot || 0),
-        }));
-
-        const { error: itemsErr } = await supabase.from('counter_sale_items').insert(itemRows);
-        if (itemsErr) {
-          // Rollback parent row
-          await supabase.from('counter_sales').delete().eq('id', saleId);
-          return { success: false, error: handleSupabaseError(itemsErr, 'createCounterSale.items') };
-        }
-
-        // C. Perform Deductions
-        try {
-          await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate);
-        } catch (stockErr: any) {
-          // Rollback parent and items if stock deduction fails
-          await supabase.from('counter_sale_items').delete().eq('counter_sale_id', saleId);
-          await supabase.from('counter_sales').delete().eq('id', saleId);
-          return { success: false, error: `Stock deduction failed: ${stockErr.message || 'Unknown error'}` };
-        }
-
-        // D. Record Daybook & Cashbook Entries
-        try {
-          const { daybookService } = await import('./daybookService');
-          await daybookService.recordFinancialTransaction({
-            referenceType: 'COUNTER_SALE',
-            referenceId: saleId,
-            referenceNumber: invoiceNumber,
-            transactionType: 'SALE',
-            direction: 'IN',
-            amount: finalTotal,
-            paymentMode: paymentMethod as any,
-            partyType: 'customer',
-            partyId: sale.customerId || undefined,
-            partyName: sale.customerName || 'Walk-in Customer',
-            description: `Counter Sale #${invoiceNumber}`,
-            transactionDate: sale.saleDate || new Date().toISOString().split('T')[0],
-          });
-        } catch (dbErr) {
-          console.warn('[createCounterSale] Daybook recording notice:', dbErr);
-        }
-
-        // E. If money received, record Cashbook entry
-        if (amountReceived > 0 && !isCredit) {
-          try {
-            const { cashbookService } = await import('./cashbookService');
-            await cashbookService.recordCashbookEntry({
-              sourceType: 'COUNTER_SALE',
-              sourceId: saleId,
-              referenceNumber: invoiceNumber,
-              direction: 'IN',
-              amount: amountReceived,
-              paymentMethod: paymentMethod,
-              partyName: sale.customerName || 'Walk-in Customer',
-              description: `Receipt for Counter Sale #${invoiceNumber}`,
-              transactionDate: sale.saleDate || new Date().toISOString().split('T')[0],
-            });
-          } catch (cbErr) {
-            console.warn('[createCounterSale] Cashbook recording notice:', cbErr);
-          }
-        }
-
-        // F. Fetch Complete Domain Object Joined with Items
-        const { data: completeData, error: fetchErr } = await supabase
-          .from('counter_sales')
-          .select('*, counter_sale_items(*)')
-          .eq('workspace_id', wsId)
-          .eq('id', saleId)
-          .single();
-
-        if (completeData && !fetchErr) {
-          productService.invalidateCache();
-          salesAnalyticsService.invalidateCache();
-          const completeSale = fromDbCounterSale(completeData);
-          return { success: true, data: completeSale };
-        }
       }
 
-      // Offline / Local Mode fallback
-      const offlineSale = {
-        id: saleId || `cs-${Date.now()}`,
-        sale_number: saleNumber,
-        invoice_number: invoiceNumber,
-        payment_method: paymentMethod,
-        amount_received: amountReceived,
-        balance_amount: balanceAmount,
-        ...sale,
-        items: items.map((i: any) => ({
-          id: `csi-${Date.now()}-${Math.random()}`,
-          counterSaleId: saleId || `cs-${Date.now()}`,
-          productId: i.productId || i.product_id,
-          productNameSnapshot: i.productName || i.productNameSnapshot || 'Product',
-          partNumberSnapshot: i.partNumber || i.partNumberSnapshot || '',
-          quantity: Math.abs(Number(i.quantity) || 0),
-          rate: Number(i.rate) || 0,
-          amount: (Math.abs(Number(i.quantity) || 0)) * (Number(i.rate) || 0),
-          createdAt: new Date().toISOString(),
-        })),
-        createdAt: new Date().toISOString(),
+      return {
+        success: false,
+        error: rpcRes?.message || 'Counter sale transaction failed.',
       };
-
-      const local = safeStorageGet(LOCAL_SALES_KEY);
-      local.unshift(offlineSale);
-      safeStorageSave(LOCAL_SALES_KEY, local);
-
-      await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate);
-      productService.invalidateCache();
-      salesAnalyticsService.invalidateCache();
-
-      return { success: true, data: fromDbCounterSale(offlineSale) };
-    } catch (e: any) {
-      const errStr = handleSupabaseError(e, 'createCounterSale');
-      return { success: false, error: errStr };
     }
+
+    // 4. PURE OFFLINE / LOCAL MODE (Only when Supabase is not configured)
+    const saleId = sale.id || `cs-${Date.now()}`;
+    const offlineSale = {
+      id: saleId,
+      sale_number: saleNumber,
+      invoice_number: invoiceNumber,
+      payment_method: paymentMethod,
+      amount_received: amountReceived,
+      balance_amount: balanceAmount,
+      ...sale,
+      items: items.map((i: any) => ({
+        id: `csi-${Date.now()}-${Math.random()}`,
+        counterSaleId: saleId,
+        productId: i.productId || i.product_id,
+        productNameSnapshot: i.productName || i.productNameSnapshot || 'Product',
+        partNumberSnapshot: i.partNumber || i.partNumberSnapshot || '',
+        quantity: Math.abs(Number(i.quantity) || 0),
+        rate: Number(i.rate) || 0,
+        amount: (Math.abs(Number(i.quantity) || 0)) * (Number(i.rate) || 0),
+        createdAt: new Date().toISOString(),
+      })),
+      createdAt: new Date().toISOString(),
+    };
+
+    const local = safeStorageGet(LOCAL_SALES_KEY);
+    local.unshift(offlineSale);
+    safeStorageSave(LOCAL_SALES_KEY, local);
+
+    await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate);
+    productService.invalidateCache();
+    salesAnalyticsService.invalidateCache();
+
+    return { success: true, data: fromDbCounterSale(offlineSale) };
   }
 
   public async cancelCounterSale(saleId: string): Promise<{ success: boolean; error?: string }> {

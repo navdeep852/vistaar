@@ -1416,9 +1416,12 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
               <button
                 type="button"
                 onClick={handleConfirmAndCompleteSale}
-                className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold shadow-md shadow-emerald-600/20 cursor-pointer"
+                disabled={isSubmitting}
+                className={`px-6 py-2.5 rounded-xl text-white font-extrabold shadow-md shadow-emerald-600/20 transition-all ${
+                  isSubmitting ? 'bg-emerald-800 opacity-60 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 cursor-pointer'
+                }`}
               >
-                CONFIRM & COMPLETE SALE
+                {isSubmitting ? 'PROCESSING SALE...' : 'CONFIRM & COMPLETE SALE'}
               </button>
             </div>
           </div>
