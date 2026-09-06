@@ -1222,6 +1222,7 @@ class StoreService {
     supplierId?: string;
     supplierName?: string;
     hsnSac?: string;
+    location?: string;
     gstRate?: number;
     description?: string;
     notes?: string;
@@ -1338,6 +1339,7 @@ class StoreService {
       currentStock: initialQty,
       taxPercent: Number(productData.gstRate) || 18,
       hsnSac: productData.hsnSac?.trim() || '',
+      location: productData.location?.trim() || '',
       gstRate: Number(productData.gstRate) || 18,
       supplierId: productData.supplierId,
       description: productData.description?.trim() || '',
@@ -1604,6 +1606,7 @@ class StoreService {
         purchaseOrderNumber: row.purchaseOrder,
         supplierName: row.supplier,
         hsnSac: row.hsnSac,
+        location: row.location,
         gstRate: row.gstRate,
         minimumStock: row.minimumStock,
         notes: row.notes,

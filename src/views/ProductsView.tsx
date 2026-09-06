@@ -24,9 +24,11 @@ import {
   Barcode,
   Tag,
   Boxes,
+  Edit2,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { productService, inventoryService } from '../services/supabase';
+import { store } from '../services/store';
 import { supabaseAuthService } from '../services/supabaseAuth';
 import { PasswordInput } from '../components/PasswordInput';
 import {
@@ -131,6 +133,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
   const [addPoNumber, setAddPoNumber] = useState('');
   const [addSupplierName, setAddSupplierName] = useState('');
   const [addHsnSac, setAddHsnSac] = useState('');
+  const [addLocation, setAddLocation] = useState('');
   const [addGstRate, setAddGstRate] = useState('18');
   const [addNotes, setAddNotes] = useState('');
 
@@ -235,7 +238,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
       const matchCode = (p.productCode || '').toLowerCase().includes(q);
       const matchSku = p.sku.toLowerCase().includes(q);
       const matchBrand = (p.brand || '').toLowerCase().includes(q);
-      if (!matchName && !matchPartNo && !matchCode && !matchSku && !matchBrand) return false;
+      const matchHsn = (p.hsnSac || '').toLowerCase().includes(q);
+      const matchLoc = (p.location || '').toLowerCase().includes(q);
+      if (!matchName && !matchPartNo && !matchCode && !matchSku && !matchBrand && !matchHsn && !matchLoc) return false;
     }
     return true;
   }).sort((a: Product, b: Product) => {
@@ -271,6 +276,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
 
   // Handlers: Open Add Product Modal
   const handleOpenAddProduct = () => {
+    setActiveProductId('');
     setAddName('');
     setAddPartNo('');
     setAddCategory(categories.length > 0 ? categories[0].name : 'General');
@@ -285,12 +291,37 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
     setAddPoNumber('');
     setAddSupplierName('');
     setAddHsnSac('');
+    setAddLocation('');
     setAddGstRate('18');
     setAddNotes('');
     setAddProductModalOpen(true);
   };
 
-  // Submit Add Product Form
+  // Handlers: Open Edit Product Modal
+  const handleOpenEditProduct = (prod: Product) => {
+    setActiveProductId(prod.id);
+    setAddName(prod.productName || prod.name || '');
+    setAddPartNo(prod.partNumber || prod.productCode || prod.sku || '');
+    setAddCategory(prod.category || 'General');
+    setAddBrand(prod.brand || '');
+    setAddUnit(COMMON_UNITS.includes(prod.unit) ? prod.unit : 'Custom');
+    if (!COMMON_UNITS.includes(prod.unit)) {
+      setCustomUnitInput(prod.unit);
+    } else {
+      setCustomUnitInput('');
+    }
+    setAddBuyPrice(String(prod.currentBuyPrice || prod.buyPrice || ''));
+    setAddSellPrice(String(prod.currentSellPrice || prod.sellingPrice || ''));
+    setAddInitialStock(String(prod.currentStock || '0'));
+    setAddMinStock(String(prod.minimumStock || '5'));
+    setAddHsnSac(prod.hsnSac || '');
+    setAddLocation(prod.location || '');
+    setAddGstRate(String(prod.gstRate || prod.taxPercent || '18'));
+    setAddNotes(prod.notes || prod.description || '');
+    setAddProductModalOpen(true);
+  };
+
+  // Submit Add / Edit Product Form
   const handleAddProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!addName.trim()) {
@@ -318,35 +349,64 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
     const finalUnit = addUnit === 'Custom' ? (customUnitInput.trim() || 'Pcs') : addUnit;
 
     try {
-      const res = await productService.addProduct({
-        name: addName,
-        partNumber: addPartNo,
-        productCode: addPartNo,
-        sku: addPartNo || undefined,
-        category: addCategory,
-        brand: addBrand,
-        unit: finalUnit,
-        buyPrice,
-        sellingPrice: sellPrice,
-        currentStock: parseInt(addInitialStock) || 0,
-        receivedDate: addReceivedDate,
-        purchaseOrderNumber: addPoNumber,
-        supplierName: addSupplierName,
-        hsnSac: addHsnSac,
-        gstRate: parseFloat(addGstRate) || 18,
-        minimumStock: parseInt(addMinStock) || 5,
-        notes: addNotes,
-      } as any);
+      if (activeProductId) {
+        const res = await productService.updateProduct(activeProductId, {
+          name: addName.trim(),
+          partNumber: addPartNo.trim() || undefined,
+          productCode: addPartNo.trim() || undefined,
+          sku: addPartNo.trim() || undefined,
+          category: addCategory,
+          brand: addBrand,
+          unit: finalUnit,
+          buyPrice,
+          sellingPrice: sellPrice,
+          hsnSac: addHsnSac.trim() || undefined,
+          location: addLocation.trim() || undefined,
+          gstRate: parseFloat(addGstRate) || 18,
+          minimumStock: parseInt(addMinStock) || 5,
+          notes: addNotes,
+        });
 
-      if (res.success && res.data) {
-        showToast(`Product ${res.data.name} saved! Available Stock: ${res.data.currentStock} ${res.data.unit}`, 'success');
-        setAddProductModalOpen(false);
-        refreshData();
+        if (res.product) {
+          showToast(`Product ${res.product.name} updated successfully!`, 'success');
+          setAddProductModalOpen(false);
+          setActiveProductId('');
+          refreshData();
+        } else {
+          showToast(res.error || 'Failed to update product', 'error');
+        }
       } else {
-        showToast(res.error || 'Failed to add product', 'error');
+        const res = await productService.addProduct({
+          name: addName.trim(),
+          partNumber: addPartNo.trim() || undefined,
+          productCode: addPartNo.trim() || undefined,
+          sku: addPartNo.trim() || undefined,
+          category: addCategory,
+          brand: addBrand,
+          unit: finalUnit,
+          buyPrice,
+          sellingPrice: sellPrice,
+          currentStock: parseInt(addInitialStock) || 0,
+          receivedDate: addReceivedDate,
+          purchaseOrderNumber: addPoNumber,
+          supplierName: addSupplierName,
+          hsnSac: addHsnSac.trim() || undefined,
+          location: addLocation.trim() || undefined,
+          gstRate: parseFloat(addGstRate) || 18,
+          minimumStock: parseInt(addMinStock) || 5,
+          notes: addNotes,
+        } as any);
+
+        if (res.success && res.data) {
+          showToast(`Product ${res.data.name} saved! Available Stock: ${res.data.currentStock} ${res.data.unit}`, 'success');
+          setAddProductModalOpen(false);
+          refreshData();
+        } else {
+          showToast(res.error || 'Failed to add product', 'error');
+        }
       }
     } catch (err: any) {
-      showToast(err.message || 'Failed to add product', 'error');
+      showToast(err.message || 'Failed to save product', 'error');
     }
   };
 
@@ -491,6 +551,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
       'Purchase Order',
       'Supplier',
       'HSN/SAC',
+      'Location / Rack No.',
       'GST Rate',
       'Minimum Stock',
       'Notes',
@@ -512,6 +573,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
         'PO-2026-001',
         'National Wholesale',
         '8482',
+        'Rack A-01',
         18,
         10,
         'First batch purchase',
@@ -531,6 +593,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
         'PO-2026-008',
         'National Wholesale',
         '8482',
+        'Rack A-01',
         18,
         10,
         'Second batch purchase (New Stock Receipt)',
@@ -550,6 +613,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
         'PO-2026-012',
         'Apex Electronics',
         '8471',
+        'Rack B-12',
         18,
         5,
         'Bulk shipment',
@@ -632,6 +696,12 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
             autoMappings[h] = 'Unit';
           } else if (['minstock', 'minimumstock'].some((k) => hLower.includes(k))) {
             autoMappings[h] = 'Minimum Stock';
+          } else if (['hsnsac', 'hsn', 'sac', 'hsncode', 'saccode'].some((k) => hLower.includes(k))) {
+            autoMappings[h] = 'HSN/SAC';
+          } else if (['location', 'locationrackno', 'rack', 'rackno', 'racknumber', 'storagelocation', 'shelf', 'shelfno'].some((k) => hLower.includes(k))) {
+            autoMappings[h] = 'Location / Rack No.';
+          } else if (['gstrate', 'gstpercent', 'taxpercent', 'gst'].some((k) => hLower.includes(k))) {
+            autoMappings[h] = 'GST Rate';
           }
         });
 
@@ -678,6 +748,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
       const purchaseOrder = getVal('Purchase Order') || 'IMP-PO';
       const supplier = getVal('Supplier') || '';
       const hsnSac = getVal('HSN/SAC') || '';
+      const location = getVal('Location / Rack No.') || getVal('Location') || getVal('Rack') || '';
       const rawGstRate = getVal('GST Rate');
       const parsedGstRate = rawGstRate !== '' ? parseFloat(rawGstRate) : 18;
       const gstRate = isNaN(parsedGstRate) ? 18 : parsedGstRate;
@@ -755,6 +826,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
         purchaseOrder,
         supplier,
         hsnSac,
+        location,
         gstRate,
         minimumStock,
         notes,
@@ -811,7 +883,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
   };
 
   // Step 4: Final Confirmation & Commit (Sections 41-43)
-  const handleConfirmImport = () => {
+  const handleConfirmImport = async () => {
     const errorCount = stagedImportRows.filter((r: ImportRowData) => r.status === 'ERROR').length;
     if (errorCount > 0) {
       showToast(`Cannot import. Please resolve the ${errorCount} error row(s) first.`, 'error');
@@ -831,14 +903,114 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
       columnMappings,
     };
     try {
-      const result = { newProducts: session.totalRows, updatedProducts: 0, receiptsCreated: session.totalRows, totalUnits: session.totalRows };
+      let createdCount = 0;
+      let updatedCount = 0;
+      let totalUnits = 0;
+
+      for (const row of stagedImportRows) {
+        if (row.status === 'ERROR') continue;
+        if (row.isExistingProduct && row.matchedProductId) {
+          await inventoryService.addStockReceipt({
+            productId: row.matchedProductId,
+            quantityReceived: row.quantity,
+            buyPrice: row.buyPrice,
+            receivedDate: row.receivedDate,
+            purchaseOrderNumber: row.purchaseOrder,
+            supplierName: row.supplier,
+            notes: row.notes || 'Bulk Import Stock Receipt',
+          });
+          updatedCount++;
+        } else {
+          await productService.addProduct({
+            name: row.productName,
+            partNumber: row.partNumber,
+            productCode: row.productCode,
+            sku: row.sku || row.partNumber,
+            category: row.category,
+            brand: row.brand,
+            unit: row.unit,
+            buyPrice: row.buyPrice,
+            sellingPrice: row.sellPrice,
+            currentStock: row.quantity,
+            receivedDate: row.receivedDate,
+            purchaseOrderNumber: row.purchaseOrder,
+            supplierName: row.supplier,
+            hsnSac: row.hsnSac,
+            location: row.location,
+            gstRate: row.gstRate,
+            minimumStock: row.minimumStock,
+            notes: row.notes,
+          } as any);
+          createdCount++;
+        }
+        totalUnits += row.quantity;
+      }
+
+      store.importInventorySession(session);
+      const result = { newProducts: createdCount, updatedProducts: updatedCount, receiptsCreated: createdCount + updatedCount, totalUnits };
       setImportSessionResult(result);
       setImportStep(4); // Show Final Results
-      showToast(`Successfully processed import session!`, 'success');
+      showToast(`Successfully processed import session! Added ${createdCount} new product(s), updated ${updatedCount}.`, 'success');
       refreshData();
     } catch (err: any) {
       showToast(err.message || 'Import failed', 'error');
     }
+  };
+
+  // Export Entire Product Catalog with HSN/SAC and Location
+  const handleExportCatalog = (format: 'xlsx' | 'csv' = 'xlsx') => {
+    if (products.length === 0) {
+      showToast('No products available to export.', 'error');
+      return;
+    }
+
+    const headers = [
+      'Product Name',
+      'Part Number / Code',
+      'HSN/SAC',
+      'Location / Rack No.',
+      'Category',
+      'Brand',
+      'Unit',
+      'Available Stock',
+      'Buy Price',
+      'Sell Price',
+      'Stock Value',
+      'Status',
+    ];
+
+    const dataRows = products.map((p) => {
+      const avail = p.currentStock;
+      const buyP = p.currentBuyPrice || p.buyPrice || 0;
+      const sellP = p.currentSellPrice || p.sellingPrice || 0;
+      const status = avail <= 0 ? 'Out of Stock' : avail <= p.minimumStock ? 'Low Stock' : 'In Stock';
+      return [
+        p.productName || p.name,
+        p.partNumber || p.productCode || p.sku || '',
+        p.hsnSac || '',
+        p.location || '',
+        p.category || 'General',
+        p.brand || '',
+        p.unit || 'Pcs',
+        avail,
+        buyP,
+        sellP,
+        avail * buyP,
+        status,
+      ];
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Product Catalog');
+
+    const fileName = `VISTAAR_Products_${new Date().toISOString().split('T')[0]}.${format}`;
+    if (format === 'csv') {
+      XLSX.writeFile(wb, fileName, { bookType: 'csv' });
+    } else {
+      XLSX.writeFile(wb, fileName, { bookType: 'xlsx' });
+    }
+    showToast(`Exported ${products.length} products to ${fileName}`, 'success');
   };
 
   return (
@@ -886,6 +1058,15 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
           >
             <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
             <span>+ Import Stock</span>
+          </button>
+
+          <button
+            onClick={() => handleExportCatalog('xlsx')}
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs shadow-md transition-colors cursor-pointer"
+            title="Export catalog with HSN/SAC and Rack Location to Excel"
+          >
+            <Download className="w-4 h-4 text-blue-400" />
+            <span>Export Catalog</span>
           </button>
 
           <button
@@ -1021,7 +1202,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by Part Number, Product Name, Product Code or SKU..."
+              placeholder="Search by Part Number, Product Name, HSN/SAC, Location / Rack No. or SKU..."
               className="w-full pl-10 pr-9 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-500"
             />
             {search && (
@@ -1177,6 +1358,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                       <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                         <th className="p-4">Product Name</th>
                         <th className="p-4">Part Number / Code</th>
+                        <th className="p-4">HSN/SAC</th>
+                        <th className="p-4">Location / Rack No.</th>
                         <th className="p-4">Category</th>
                         <th className="p-4 text-right">Available Stock</th>
                         <th className="p-4 text-right">Buy Price</th>
@@ -1201,6 +1384,18 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                             </td>
                             <td className="p-4 font-mono font-bold text-blue-600 dark:text-blue-400">
                               {p.partNumber || p.productCode || p.sku}
+                            </td>
+                            <td className="p-4 font-mono font-semibold text-slate-700 dark:text-slate-300">
+                              {p.hsnSac || '—'}
+                            </td>
+                            <td className="p-4 font-medium text-slate-800 dark:text-slate-200">
+                              {p.location ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                                  {p.location}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 dark:text-slate-600">—</span>
+                              )}
                             </td>
                             <td className="p-4 text-slate-600 dark:text-slate-400">{p.category || 'General'}</td>
                             <td className="p-4 text-right font-black text-slate-900 dark:text-slate-100 text-sm">
@@ -1236,6 +1431,13 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                                 >
                                   <Eye className="w-3.5 h-3.5" />
                                   <span>Details</span>
+                                </button>
+                                <button
+                                  onClick={() => handleOpenEditProduct(p)}
+                                  className="p-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-400 transition-colors cursor-pointer"
+                                  title="Edit Product"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
                                 </button>
                                 <button
                                   onClick={() => handleOpenReceiveStock(p.id)}
@@ -1281,6 +1483,11 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                           <p className="text-xs font-mono font-bold text-blue-600 dark:text-blue-400 mt-0.5">
                             Part #: {p.partNumber || p.productCode || p.sku}
                           </p>
+                          <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                            <span>HSN: <strong className="text-slate-700 dark:text-slate-200 font-mono">{p.hsnSac || '—'}</strong></span>
+                            <span>•</span>
+                            <span>Loc: <strong className="text-slate-700 dark:text-slate-200">{p.location || '—'}</strong></span>
+                          </div>
                         </div>
                         <span
                           className={`px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider ${
@@ -1317,6 +1524,12 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                           className="flex-1 py-2 px-3 rounded-xl bg-blue-600 text-white font-bold text-xs hover:bg-blue-500 text-center cursor-pointer"
                         >
                           View Details
+                        </button>
+                        <button
+                          onClick={() => handleOpenEditProduct(p)}
+                          className="py-2 px-3 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 font-bold text-xs hover:bg-amber-100 cursor-pointer"
+                        >
+                          Edit
                         </button>
                         <button
                           onClick={() => handleOpenReceiveStock(p.id)}
@@ -1693,6 +1906,24 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                 />
               </div>
 
+              {/* Location / Rack No. */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                  Location / Rack No.
+                </label>
+                <input
+                  type="text"
+                  value={addLocation}
+                  onChange={(e) => setAddLocation(e.target.value)}
+                  placeholder="e.g. Rack A-03"
+                  maxLength={100}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
+                />
+                <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 block">
+                  Physical rack/shelf location where this product is stored
+                </span>
+              </div>
+
               {/* GST Rate */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
@@ -1734,7 +1965,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                 type="submit"
                 className="px-6 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs hover:bg-amber-400 shadow-md shadow-amber-500/20 cursor-pointer"
               >
-                Save Product
+                {activeProductId ? 'Update Product' : 'Save Product'}
               </button>
             </div>
           </form>
@@ -1891,13 +2122,18 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                 <div className="bg-slate-900 text-white p-6 rounded-3xl space-y-4 shadow-xl">
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-[10px] text-amber-400 font-mono font-black uppercase px-2 py-0.5 bg-amber-400/10 rounded-md border border-amber-400/20">
                           Part #: {p.partNumber || p.productCode || p.sku}
                         </span>
                         {p.hsnSac && (
-                          <span className="text-[10px] text-slate-400 font-mono">
+                          <span className="text-[10px] text-slate-300 font-mono px-2 py-0.5 bg-slate-800 rounded-md border border-slate-700">
                             HSN: {p.hsnSac}
+                          </span>
+                        )}
+                        {p.location && (
+                          <span className="text-[10px] text-cyan-300 font-semibold px-2 py-0.5 bg-cyan-950/60 rounded-md border border-cyan-800/60">
+                            Location: {p.location}
                           </span>
                         )}
                       </div>
@@ -1971,19 +2207,26 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                 {/* Stock Receipt History */}
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Boxes className="w-4 h-4 text-blue-500" />
-                      <span>Stock Receipt History ({stockReceiptsList.length} Batches)</span>
-                    </h3>
-                    <button
-                      onClick={() => {
-                        setDetailsDrawerOpen(false);
-                        handleOpenReceiveStock(p.id);
-                      }}
-                      className="text-xs text-blue-600 dark:text-blue-400 font-bold hover:underline cursor-pointer"
-                    >
-                      + Add Receipt Batch
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => {
+                          setDetailsDrawerOpen(false);
+                          handleOpenEditProduct(p);
+                        }}
+                        className="text-xs text-amber-600 dark:text-amber-400 font-bold hover:underline cursor-pointer"
+                      >
+                        Edit Product Details
+                      </button>
+                      <button
+                        onClick={() => {
+                          setDetailsDrawerOpen(false);
+                          handleOpenReceiveStock(p.id);
+                        }}
+                        className="text-xs text-blue-600 dark:text-blue-400 font-bold hover:underline cursor-pointer"
+                      >
+                        + Add Receipt Batch
+                      </button>
+                    </div>
                   </div>
 
                   <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
@@ -2251,6 +2494,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                       <option value="Received Date" className="bg-white dark:bg-slate-900">Received Date</option>
                       <option value="Purchase Order" className="bg-white dark:bg-slate-900">Purchase Order / Ref</option>
                       <option value="Supplier" className="bg-white dark:bg-slate-900">Supplier</option>
+                      <option value="HSN/SAC" className="bg-white dark:bg-slate-900">HSN/SAC Code</option>
+                      <option value="Location / Rack No." className="bg-white dark:bg-slate-900">Location / Rack No.</option>
+                      <option value="GST Rate" className="bg-white dark:bg-slate-900">GST Rate (%)</option>
                       <option value="Minimum Stock" className="bg-white dark:bg-slate-900">Minimum Stock</option>
                     </select>
                   </div>

@@ -85,7 +85,9 @@ export class ProductService {
           (p) =>
             p.name.toLowerCase().includes(s) ||
             p.sku.toLowerCase().includes(s) ||
-            (p.partNumber && p.partNumber.toLowerCase().includes(s))
+            (p.partNumber && p.partNumber.toLowerCase().includes(s)) ||
+            (p.hsnSac && p.hsnSac.toLowerCase().includes(s)) ||
+            (p.location && p.location.toLowerCase().includes(s))
         );
       }
       if (options?.categoryId) {
@@ -95,21 +97,42 @@ export class ProductService {
     }
 
     wsId = await this.getOrFetchWorkspaceId();
-    const SELECT_FIELDS = 'id, workspace_id, name, sku, part_number, product_code, category_id, categories(name), brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, gst_rate, tax_percent, active, created_at, updated_at';
+    const SELECT_FIELDS = 'id, workspace_id, name, sku, part_number, product_code, category_id, categories(name), brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, location, gst_rate, tax_percent, active, created_at, updated_at';
+    const SELECT_FIELDS_FALLBACK = 'id, workspace_id, name, sku, part_number, product_code, category_id, categories(name), brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, gst_rate, tax_percent, active, created_at, updated_at';
 
-    let query = supabase
-      .from('products')
-      .select(SELECT_FIELDS, { count: 'exact' })
-      .eq('active', true);
+    const buildQuery = (fields: string, includeLocationSearch: boolean) => {
+      let q = supabase
+        .from('products')
+        .select(fields, { count: 'exact' })
+        .eq('active', true);
 
-    if (isValidUuid(wsId)) {
-      query = query.eq('workspace_id', wsId);
-    }
+      if (isValidUuid(wsId)) {
+        q = q.eq('workspace_id', wsId);
+      }
 
-    if (options?.search) {
-      const s = `%${options.search}%`;
-      query = query.or(`name.ilike.${s},sku.ilike.${s},part_number.ilike.${s}`);
-    }
+      if (options?.search) {
+        const s = `%${options.search}%`;
+        if (includeLocationSearch) {
+          q = q.or(`name.ilike.${s},sku.ilike.${s},part_number.ilike.${s},hsn_sac.ilike.${s},location.ilike.${s}`);
+        } else {
+          q = q.or(`name.ilike.${s},sku.ilike.${s},part_number.ilike.${s},hsn_sac.ilike.${s}`);
+        }
+      }
+
+      if (options?.categoryId) {
+        q = q.eq('category_id', options.categoryId);
+      }
+
+      if (options?.page && options?.pageSize) {
+        const from = (options.page - 1) * options.pageSize;
+        const to = from + options.pageSize - 1;
+        q = q.range(from, to);
+      }
+
+      return q.order('name', { ascending: true });
+    };
+
+    let query = buildQuery(SELECT_FIELDS, true);
 
     if (options?.categoryId) {
       query = query.eq('category_id', options.categoryId);
@@ -124,7 +147,15 @@ export class ProductService {
     query = query.order('name', { ascending: true });
 
     try {
-      const { data, count, error } = await query;
+      let { data, count, error } = await query;
+      if (error && (error.code === '42703' || error.message?.includes('location'))) {
+        console.warn('[PRODUCT_QUERY_FALLBACK] products.location column not yet present in schema, retrying with fallback fields...');
+        const fallbackRes = await buildQuery(SELECT_FIELDS_FALLBACK, false);
+        data = fallbackRes.data;
+        count = fallbackRes.count;
+        error = fallbackRes.error;
+      }
+
       if (error) {
         const errStr = handleSupabaseError(error, 'getProducts');
         return { data: [], count: 0, error: errStr };
@@ -182,25 +213,39 @@ export class ProductService {
     const wsId = await this.getOrFetchWorkspaceId();
 
     try {
-      const SELECT_FIELDS = 'id, workspace_id, name, sku, part_number, product_code, barcode, category_id, categories(name), brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, gst_rate, tax_percent, active, created_at, updated_at';
+      const SELECT_FIELDS = 'id, workspace_id, name, sku, part_number, product_code, barcode, category_id, categories(name), brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, location, gst_rate, tax_percent, active, created_at, updated_at';
+      const SELECT_FIELDS_FALLBACK = 'id, workspace_id, name, sku, part_number, product_code, barcode, category_id, categories(name), brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, gst_rate, tax_percent, active, created_at, updated_at';
 
-      let query = supabase
-        .from('products')
-        .select(SELECT_FIELDS)
-        .eq('active', true);
+      const buildSearchQuery = (fields: string, includeLocation: boolean) => {
+        let q = supabase
+          .from('products')
+          .select(fields)
+          .eq('active', true);
 
-      if (isValidUuid(wsId)) {
-        query = query.eq('workspace_id', wsId);
+        if (isValidUuid(wsId)) {
+          q = q.eq('workspace_id', wsId);
+        }
+
+        if (s.length > 0) {
+          const pattern = `%${s}%`;
+          if (includeLocation) {
+            q = q.or(`name.ilike.${pattern},sku.ilike.${pattern},part_number.ilike.${pattern},barcode.ilike.${pattern},product_code.ilike.${pattern},hsn_sac.ilike.${pattern},location.ilike.${pattern}`);
+          } else {
+            q = q.or(`name.ilike.${pattern},sku.ilike.${pattern},part_number.ilike.${pattern},barcode.ilike.${pattern},product_code.ilike.${pattern},hsn_sac.ilike.${pattern}`);
+          }
+        }
+
+        return q.order('name', { ascending: true }).limit(limit);
+      };
+
+      let { data, error } = await buildSearchQuery(SELECT_FIELDS, true);
+
+      if (error && (error.code === '42703' || error.message?.includes('location'))) {
+        console.warn('[SEARCH_PRODUCTS_FALLBACK] products.location column not yet present in schema, retrying without location column...');
+        const fallbackRes = await buildSearchQuery(SELECT_FIELDS_FALLBACK, false);
+        data = fallbackRes.data;
+        error = fallbackRes.error;
       }
-
-      if (s.length > 0) {
-        const pattern = `%${s}%`;
-        query = query.or(`name.ilike.${pattern},sku.ilike.${pattern},part_number.ilike.${pattern},barcode.ilike.${pattern},product_code.ilike.${pattern}`);
-      }
-
-      const { data, error } = await query
-        .order('name', { ascending: true })
-        .limit(limit);
 
       if (error) {
         const errStr = handleSupabaseError(error, 'searchProducts');
@@ -211,7 +256,9 @@ export class ProductService {
             (p.name && p.name.toLowerCase().includes(q)) ||
             (p.sku && p.sku.toLowerCase().includes(q)) ||
             (p.partNumber && p.partNumber.toLowerCase().includes(q)) ||
-            ((p as any).barcode && (p as any).barcode.toLowerCase().includes(q))
+            ((p as any).barcode && (p as any).barcode.toLowerCase().includes(q)) ||
+            (p.hsnSac && p.hsnSac.toLowerCase().includes(q)) ||
+            (p.location && p.location.toLowerCase().includes(q))
         ).slice(0, limit);
         return { data: matched, error: errStr };
       }
@@ -228,7 +275,9 @@ export class ProductService {
           (p.name && p.name.toLowerCase().includes(q)) ||
           (p.sku && p.sku.toLowerCase().includes(q)) ||
           (p.partNumber && p.partNumber.toLowerCase().includes(q)) ||
-          ((p as any).barcode && (p as any).barcode.toLowerCase().includes(q))
+          ((p as any).barcode && (p as any).barcode.toLowerCase().includes(q)) ||
+          (p.hsnSac && p.hsnSac.toLowerCase().includes(q)) ||
+          (p.location && p.location.toLowerCase().includes(q))
       ).slice(0, limit);
       return { data: matched, error: errStr };
     }
@@ -257,6 +306,7 @@ export class ProductService {
         currentStock: initialStock,
         minimumStock: Number(product.minimumStock) || 5,
         hsnSac: product.hsnSac || '',
+        location: product.location || '',
         gstRate: Number(product.gstRate) || 18,
         notes: product.notes || '',
         categoryId: product.categoryId || '',
@@ -342,11 +392,24 @@ export class ProductService {
     });
 
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('products')
         .insert([payload])
         .select()
         .single();
+
+      if (error && (error.code === '42703' || error.message?.includes('location'))) {
+        console.warn('[CREATE_PRODUCT_FALLBACK] products.location column not in schema, retrying insert without location...');
+        const fallbackPayload = { ...payload };
+        delete (fallbackPayload as any).location;
+        const retryRes = await supabase
+          .from('products')
+          .insert([fallbackPayload])
+          .select()
+          .single();
+        data = retryRes.data;
+        error = retryRes.error;
+      }
 
       if (error) {
         const errStr = handleSupabaseError(error, 'createProduct');
@@ -664,13 +727,28 @@ export class ProductService {
     const payload = toDbProduct(product, wsId);
 
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('products')
         .update(payload)
         .eq('workspace_id', wsId)
         .eq('id', id)
         .select()
         .single();
+
+      if (error && (error.code === '42703' || error.message?.includes('location'))) {
+        console.warn('[UPDATE_PRODUCT_FALLBACK] products.location column not in schema, retrying update without location...');
+        const fallbackPayload = { ...payload };
+        delete (fallbackPayload as any).location;
+        const retryRes = await supabase
+          .from('products')
+          .update(fallbackPayload)
+          .eq('workspace_id', wsId)
+          .eq('id', id)
+          .select()
+          .single();
+        data = retryRes.data;
+        error = retryRes.error;
+      }
 
       if (error) {
         const errStr = handleSupabaseError(error, 'updateProduct');

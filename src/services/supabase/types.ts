@@ -128,6 +128,7 @@ export interface DbProduct {
   minimum_stock: number;
   tax_percent: number;
   hsn_sac?: string;
+  location?: string;
   description?: string;
   categories?: { name: string } | { name: string }[] | null;
   created_at?: string;
@@ -329,6 +330,7 @@ export function fromDbProduct(row: DbProduct): Product {
     currentStock: Number((row as any).current_stock ?? 0),
     taxPercent: Number(row.tax_percent) || 0,
     hsnSac: row.hsn_sac,
+    location: row.location,
     description: row.description,
     createdAt: row.created_at || new Date().toISOString(),
     updatedAt: row.updated_at || new Date().toISOString(),
@@ -354,6 +356,7 @@ export function toDbProduct(prod: Partial<Product>, workspaceId: string): Partia
     current_stock: Number(prod.currentStock) || 0,
     tax_percent: Number(prod.taxPercent) || Number(prod.gstRate) || 0,
     hsn_sac: prod.hsnSac || undefined,
+    location: prod.location ? prod.location.trim() : undefined,
     description: prod.description || prod.notes || undefined,
   };
 

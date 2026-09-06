@@ -241,6 +241,14 @@ export const ProductAutocomplete: React.FC<ProductAutocompleteProps> = ({
                         <span>
                           Part No: <strong className="text-slate-700 dark:text-slate-300">{partNo}</strong>
                         </span>
+                        {prod.location && (
+                          <>
+                            <span>•</span>
+                            <span>
+                              Loc: <strong className="text-slate-700 dark:text-slate-300">{prod.location}</strong>
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
 

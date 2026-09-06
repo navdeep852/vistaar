@@ -137,6 +137,7 @@ export interface Product {
   currentStock: number; // Derived dynamically from active StockReceipt records
   taxPercent: number;
   hsnSac?: string;
+  location?: string;
   gstRate?: number;
   supplierId?: string;
   supplier?: string;
@@ -208,6 +209,7 @@ export interface ImportRowData {
   purchaseOrder: string;
   supplier: string;
   hsnSac: string;
+  location?: string;
   gstRate: number;
   minimumStock: number;
   notes: string;
