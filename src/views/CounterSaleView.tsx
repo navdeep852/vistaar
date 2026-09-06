@@ -169,7 +169,7 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   // Handlers: Add Product to Line Items
   const handleSelectProduct = async (p: Product) => {
     const fetchedAvail = await productService.getProductAvailableStock(p.id);
-    const avail = fetchedAvail > 0 ? fetchedAvail : Math.max(0, Number(p.currentStock) || 0);
+    const avail = fetchedAvail;
     if (avail <= 0) {
       showToast(`"${p.name}" is currently OUT OF STOCK and cannot be added.`, 'error');
       return;

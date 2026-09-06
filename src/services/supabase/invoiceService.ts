@@ -18,25 +18,33 @@ export class InvoiceService {
   }
 
   public async getOrFetchWorkspaceId(): Promise<string> {
+    if (!isSupabaseConfigured()) {
+      return this.getWorkspaceId();
+    }
     try {
-      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
+      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId(true);
       if (authWsId && isValidUuid(authWsId)) {
         return authWsId;
       }
     } catch (e) {
-      console.warn('Failed to get authoritative workspace ID in invoiceService:', e);
+      console.error('Failed to get authoritative workspace ID in invoiceService:', e);
+      throw e;
     }
-    return '';
+    throw new Error('[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined in invoiceService.');
   }
 
   public async getInvoices(options?: {
     search?: string;
+    customerId?: string;
     status?: string;
     page?: number;
     pageSize?: number;
   }): Promise<{ data: any[]; count: number; error?: string }> {
-    const wsId = this.getWorkspaceId();
-    let query = supabase.from('invoices').select('*, invoice_items(*)', { count: 'exact' }).eq('workspace_id', wsId);
+    const wsId = await this.getOrFetchWorkspaceId();
+    let query = supabase.from('invoices').select('*, invoice_items(*)', { count: 'exact' });
+    if (isValidUuid(wsId)) {
+      query = query.eq('workspace_id', wsId);
+    }
 
     if (options?.search) {
       const s = `%${options.search}%`;
@@ -71,14 +79,18 @@ export class InvoiceService {
   }
 
   public async getInvoiceById(id: string): Promise<{ invoice?: any; error?: string }> {
-    const wsId = this.getWorkspaceId();
+    const wsId = await this.getOrFetchWorkspaceId();
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('invoices')
         .select('*, invoice_items(*)')
-        .eq('workspace_id', wsId)
-        .eq('id', id)
-        .single();
+        .eq('id', id);
+
+      if (isValidUuid(wsId)) {
+        query = query.eq('workspace_id', wsId);
+      }
+
+      const { data, error } = await query.single();
 
       if (error) {
         const errStr = handleSupabaseError(error, 'getInvoiceById');
@@ -96,11 +108,14 @@ export class InvoiceService {
   }
 
   public async createInvoice(invoice: Partial<Invoice>, items: any[]): Promise<{ invoiceId?: string; error?: string }> {
-    const wsId = this.getWorkspaceId();
+    const wsId = await this.getOrFetchWorkspaceId();
     const invNumber = invoice.invoiceNumber || `INV-${Date.now()}`;
+    const isFinalized = invoice.status === 'Issued' || invoice.status === 'Paid' || invoice.status === 'Partially Paid';
 
     try {
-      // Step 1: Insert Parent Invoice
+      // Step 1: Insert Parent Invoice (insert as 'Draft' if finalizing via RPC to ensure stock finalization executes)
+      const initialStatus = isFinalized ? 'Draft' : (invoice.status || 'Draft');
+
       const { data: parent, error: parentErr } = await supabase
         .from('invoices')
         .insert([{
@@ -110,7 +125,7 @@ export class InvoiceService {
           customer_name: invoice.customerName || 'Walk-in Customer',
           customer_phone: invoice.customerPhone || '',
           customer_email: invoice.customerEmail || '',
-          status: invoice.status || 'Issued',
+          status: initialStatus,
           date: invoice.date || new Date().toISOString().split('T')[0],
           due_date: invoice.dueDate || new Date().toISOString().split('T')[0],
           subtotal: invoice.subtotal || 0,
@@ -163,8 +178,7 @@ export class InvoiceService {
         }
       }
 
-      // Step 3: If invoice status is Issued, Paid, or Partially Paid (Finalized), execute atomic stock deduction
-      const isFinalized = invoice.status === 'Issued' || invoice.status === 'Paid' || invoice.status === 'Partially Paid';
+      // Step 3: If invoice status is Finalized, execute atomic stock deduction via finalizeInvoice
       if (isFinalized) {
         const finRes = await this.finalizeInvoice(invoiceId);
         if (!finRes.success) {
@@ -172,6 +186,15 @@ export class InvoiceService {
           await supabase.from('invoice_items').delete().eq('invoice_id', invoiceId);
           await supabase.from('invoices').delete().eq('id', invoiceId);
           return { error: finRes.error || 'Invoice finalization failed due to insufficient stock.' };
+        }
+
+        // If desired final status is Paid or Partially Paid, update status from Issued to target
+        if (invoice.status && invoice.status !== 'Issued' && invoice.status !== 'Draft') {
+          await supabase
+            .from('invoices')
+            .update({ status: invoice.status, updated_at: new Date().toISOString() })
+            .eq('id', invoiceId)
+            .eq('workspace_id', wsId);
         }
       }
 
@@ -188,13 +211,28 @@ export class InvoiceService {
   }
 
   public async finalizeInvoice(invoiceId: string): Promise<{ success: boolean; error?: string }> {
-    const wsId = this.getWorkspaceId();
+    const wsId = await this.getOrFetchWorkspaceId();
 
     try {
       // Step 1: Try executing PostgreSQL RPC function on Supabase if available
       const { data, error } = await supabase.rpc('finalize_invoice_stock', { p_invoice_id: invoiceId });
 
       if (!error && data && data.success) {
+        console.log('[finalizeInvoice] RPC finalize_invoice_stock succeeded:', data);
+        // Sync local store product stock without performing duplicate stock deduction
+        try {
+          const { invoice } = await this.getInvoiceById(invoiceId);
+          const items = invoice?.invoice_items || invoice?.items || [];
+          for (const item of items) {
+            const pId = item.product_id || item.productId;
+            if (pId) {
+              const liveStock = await productService.getProductAvailableStock(pId);
+              store.syncProductStock(pId, liveStock);
+            }
+          }
+        } catch (syncErr) {
+          console.warn('[finalizeInvoice] Post-finalization local store sync warning:', syncErr);
+        }
         return { success: true };
       }
 

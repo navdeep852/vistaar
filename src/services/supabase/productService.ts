@@ -23,15 +23,19 @@ export class ProductService {
   }
 
   public async getOrFetchWorkspaceId(): Promise<string> {
+    if (!isSupabaseConfigured()) {
+      return this.getWorkspaceId();
+    }
     try {
-      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
+      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId(true);
       if (authWsId && isValidUuid(authWsId)) {
         return authWsId;
       }
     } catch (e) {
-      console.warn('Failed to get authoritative workspace ID in productService:', e);
+      console.error('[WORKSPACE RESOLUTION FAILED] in productService:', e);
+      throw e;
     }
-    return '';
+    throw new Error('[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined.');
   }
 
   public invalidateCache(): void {
@@ -409,78 +413,120 @@ export class ProductService {
 
   /**
    * Resolves the canonical database Product record for an item.
-   * Prevents identity mismatches where productId points to a different product than productName.
+   * Priority:
+   * 1. Valid Supabase product UUID + workspace
+   * 2. Exact SKU + workspace
+   * 3. Exact part number + workspace
+   * 4. Exact normalized product name + workspace
+   * Fails closed with an explicit duplicate-product error if multiple matches exist.
    */
   public async resolveCanonicalProduct(item: { productId?: string; productName?: string; sku?: string; partNumber?: string }): Promise<Product | null> {
+    if (!isSupabaseConfigured()) {
+      const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+      const p = local.find((prod) => prod.id === item.productId) || store.getProducts().find((prod) => prod.id === item.productId);
+      if (p) return p;
+      return null;
+    }
+
     const wsId = await this.getOrFetchWorkspaceId();
-    const cleanName = (item.productName || '').trim();
+    if (!isValidUuid(wsId)) {
+      throw new Error('[CANONICAL PRODUCT RESOLUTION] Authoritative workspace not resolved.');
+    }
+
     const cleanSku = (item.sku || '').trim();
     const cleanPartNo = (item.partNumber || '').trim();
+    const cleanName = (item.productName || '').trim();
 
-    // 1. Try matching by productId UUID first if valid (authoritative match)
+    // Priority 1: Valid Supabase product UUID + workspace
     if (item.productId && isValidUuid(item.productId)) {
-      if (isSupabaseConfigured()) {
-        let query = supabase.from('products').select('*, categories(name)').eq('id', item.productId);
-        if (isValidUuid(wsId)) {
-          query = query.eq('workspace_id', wsId);
-        }
-        const { data: prod } = await query.maybeSingle();
-        if (prod) {
-          return fromDbProduct(prod as DbProduct);
-        }
-      } else {
-        const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
-        const p = local.find((prod) => prod.id === item.productId) || store.getProducts().find((prod) => prod.id === item.productId);
-        if (p) return p;
+      const { data: prod, error } = await supabase
+        .from('products')
+        .select('*, categories(name)')
+        .eq('id', item.productId)
+        .eq('workspace_id', wsId)
+        .maybeSingle();
+
+      if (error) {
+        handleSupabaseError(error, 'resolveCanonicalProduct.uuid');
+        throw new Error(`[CANONICAL PRODUCT RESOLUTION] Error looking up product by UUID: ${error.message}`);
+      }
+
+      if (prod) {
+        return fromDbProduct(prod as DbProduct);
       }
     }
 
-    // 2. Fallback search by productName, SKU, or part number if productId was missing or did not resolve
-    if (isSupabaseConfigured() && (cleanName || cleanSku || cleanPartNo)) {
-      let query = supabase.from('products').select('*, categories(name)').eq('active', true);
-      if (isValidUuid(wsId)) {
-        query = query.eq('workspace_id', wsId);
+    // Priority 2: Exact SKU + workspace
+    if (cleanSku) {
+      const { data: skuMatched, error: skuErr } = await supabase
+        .from('products')
+        .select('*, categories(name)')
+        .eq('workspace_id', wsId)
+        .eq('sku', cleanSku);
+
+      if (skuErr) {
+        handleSupabaseError(skuErr, 'resolveCanonicalProduct.sku');
+        throw new Error(`[CANONICAL PRODUCT RESOLUTION] Error looking up product by SKU: ${skuErr.message}`);
       }
 
-      if (cleanName) {
-        query = query.ilike('name', cleanName);
-      } else if (cleanSku) {
-        query = query.ilike('sku', cleanSku);
-      } else if (cleanPartNo) {
-        query = query.ilike('part_number', cleanPartNo);
-      }
-
-      const { data: matched } = await query
-        .order('created_at', { ascending: true })
-        .limit(5);
-
-      if (matched && matched.length > 0) {
-        if (matched.length > 1) {
-          console.warn('[resolveCanonicalProduct] Duplicate product candidate rows detected:', {
-            searchedName: cleanName,
-            searchedSku: cleanSku,
-            searchedPartNo: cleanPartNo,
-            matchedProductIds: matched.map((m: any) => m.id),
-            selectedId: matched[0].id,
-          });
+      if (skuMatched && skuMatched.length > 0) {
+        if (skuMatched.length > 1) {
+          throw new Error(`[CANONICAL PRODUCT RESOLUTION] Duplicate products found matching SKU "${cleanSku}". Candidate row count: ${skuMatched.length}.`);
         }
-        return fromDbProduct(matched[0] as DbProduct);
+        return fromDbProduct(skuMatched[0] as DbProduct);
       }
     }
 
-    // 3. Check local store memory fallback
-    const storeProds = store.getProducts();
-    const matchStore = storeProds.find(
-      (p) =>
-        (item.productId && p.id === item.productId) ||
-        (cleanName && p.name.toLowerCase() === cleanName.toLowerCase()) ||
-        (cleanSku && p.sku.toLowerCase() === cleanSku.toLowerCase())
-    );
-    return matchStore || null;
+    // Priority 3: Exact part number + workspace
+    if (cleanPartNo) {
+      const { data: partMatched, error: partErr } = await supabase
+        .from('products')
+        .select('*, categories(name)')
+        .eq('workspace_id', wsId)
+        .eq('part_number', cleanPartNo);
+
+      if (partErr) {
+        handleSupabaseError(partErr, 'resolveCanonicalProduct.partNumber');
+        throw new Error(`[CANONICAL PRODUCT RESOLUTION] Error looking up product by part number: ${partErr.message}`);
+      }
+
+      if (partMatched && partMatched.length > 0) {
+        if (partMatched.length > 1) {
+          throw new Error(`[CANONICAL PRODUCT RESOLUTION] Duplicate products found matching part number "${cleanPartNo}". Candidate row count: ${partMatched.length}.`);
+        }
+        return fromDbProduct(partMatched[0] as DbProduct);
+      }
+    }
+
+    // Priority 4: Exact normalized product name + workspace
+    if (cleanName) {
+      const { data: nameMatched, error: nameErr } = await supabase
+        .from('products')
+        .select('*, categories(name)')
+        .eq('workspace_id', wsId)
+        .ilike('name', cleanName);
+
+      if (nameErr) {
+        handleSupabaseError(nameErr, 'resolveCanonicalProduct.name');
+        throw new Error(`[CANONICAL PRODUCT RESOLUTION] Error looking up product by name: ${nameErr.message}`);
+      }
+
+      if (nameMatched && nameMatched.length > 0) {
+        if (nameMatched.length > 1) {
+          throw new Error(`[CANONICAL PRODUCT RESOLUTION] Duplicate products found matching name "${cleanName}". Candidate row count: ${nameMatched.length}.`);
+        }
+        return fromDbProduct(nameMatched[0] as DbProduct);
+      }
+    }
+
+    return null;
   }
 
   public async getProductAvailableStock(productId: string): Promise<number> {
-    if (!productId) return 0;
+    if (!productId) {
+      console.warn('[STOCK AUTHORITY] Missing or empty productId provided to getProductAvailableStock.');
+      return 0;
+    }
 
     if (!isSupabaseConfigured()) {
       const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
@@ -491,95 +537,115 @@ export class ProductService {
         (r: any) => r.product_id === productId
       );
       if (receipts.length > 0) {
-        const batchSum = receipts.reduce((acc, row) => acc + (Number(row.quantity_remaining) || 0), 0);
-        return Math.max(prodStock, Math.max(0, batchSum));
+        const batchSum = receipts.reduce((acc, row) => acc + Math.max(0, Number(row.quantity_remaining) || 0), 0);
+        return Math.max(prodStock, batchSum);
       }
       return prodStock;
     }
 
-    let wsId = await this.getOrFetchWorkspaceId();
-    try {
-      const fetchProduct = async (workspaceId: string) => {
-        let prodQuery = supabase
-          .from('products')
-          .select('id, name, current_stock, workspace_id')
-          .eq('id', productId);
+    const wsId = await this.getOrFetchWorkspaceId();
+    if (!isValidUuid(wsId)) {
+      throw new Error('[WORKSPACE RESOLUTION] Failed to resolve authoritative workspace for stock lookup.');
+    }
 
-        if (isValidUuid(workspaceId)) {
-          prodQuery = prodQuery.eq('workspace_id', workspaceId);
-        }
+    // 1. Fetch current_stock directly from products table for authoritative workspace
+    const prodQuery = supabase
+      .from('products')
+      .select('id, name, sku, part_number, current_stock, workspace_id')
+      .eq('id', productId)
+      .eq('workspace_id', wsId);
 
-        const { data, error } = await prodQuery.maybeSingle();
+    const { data: prodData, error: prodErr } = await prodQuery.maybeSingle();
 
-        if (error) {
-          handleSupabaseError(error, 'getProductAvailableStock.products');
-          throw new Error(`Failed to query inventory stock: ${error.message}`);
-        }
+    if (prodErr) {
+      handleSupabaseError(prodErr, 'getProductAvailableStock.products');
+      throw new Error(`[STOCK AUTHORITY] Failed to query product stock: ${prodErr.message}`);
+    }
 
-        return data;
-      };
-
-      // 1. Fetch current_stock directly from products table (canonical inventory source)
-      let prodData = await fetchProduct(wsId);
-
-      // If no product row returned, force a fresh authoritative workspace ID lookup and retry once
-      if (!prodData && isSupabaseConfigured()) {
-        const staleWsId = wsId;
-        const freshWsId = await supabaseAuthService.getAuthoritativeWorkspaceId(true);
-        if (freshWsId && freshWsId !== staleWsId) {
-          wsId = freshWsId;
-          prodData = await fetchProduct(wsId);
-          console.warn('[getProductAvailableStock] Retried product lookup with fresh workspace_id due to mismatch:', {
-            productId,
-            staleWsId,
-            freshWsId,
-            found: !!prodData,
-          });
-        }
-      }
-
-      const prodStock = prodData ? Math.max(0, Number(prodData.current_stock) || 0) : 0;
-
-      // 2. Fetch stock_receipts sum if receipts are configured
-      let batchSum = 0;
-      let recQuery = supabase
-        .from('stock_receipts')
-        .select('quantity_remaining')
-        .eq('product_id', productId);
-
-      if (isValidUuid(wsId)) {
-        recQuery = recQuery.eq('workspace_id', wsId);
-      }
-
-      const { data: receipts, error: recErr } = await recQuery;
-
-      if (!recErr && receipts && receipts.length > 0) {
-        batchSum = receipts.reduce((acc: number, row: { quantity_remaining?: number | string | null }) => acc + (Number(row.quantity_remaining) || 0), 0);
-      }
-
-      // Return maximum between products table current_stock and active stock_receipts sum
-      const availableStock = receipts && receipts.length > 0 ? Math.max(prodStock, Math.max(0, batchSum)) : (prodData ? prodStock : 0);
-      const pStore = store.getProducts().find((prod) => prod.id === productId);
-      const finalStock = (prodData || (receipts && receipts.length > 0)) ? availableStock : Math.max(0, Number(pStore?.currentStock) || 0);
-
-      console.log('[AUTHORITATIVE STOCK CHECK]', {
+    // If product row not found by ID in authoritative workspace, attempt safe canonical resolution within SAME workspace
+    if (!prodData) {
+      console.warn('[CANONICAL PRODUCT RESOLUTION] Product ID not found in workspace, attempting safe fallback lookup within workspace:', {
         productId,
-        productName: prodData?.name || pStore?.name || 'Product',
         workspaceId: wsId,
-        storedCurrentStock: prodData?.current_stock,
-        batchSum: receipts && receipts.length > 0 ? batchSum : 'N/A',
-        finalAvailableStock: finalStock,
       });
 
-      return finalStock;
-    } catch (e: any) {
-      console.error('[getProductAvailableStock Error]', e);
-      const p = store.getProducts().find((prod) => prod.id === productId);
-      if (p && p.currentStock !== undefined) {
-        return Math.max(0, Number(p.currentStock) || 0);
+      const localCandidate = store.getProducts().find((p) => p.id === productId);
+      if (localCandidate) {
+        const canonical = await this.resolveCanonicalProduct({
+          productId,
+          sku: localCandidate.sku,
+          partNumber: localCandidate.partNumber,
+          productName: localCandidate.name || (localCandidate as any).productName,
+        });
+
+        if (canonical && canonical.id && canonical.id !== productId) {
+          console.log('[CANONICAL PRODUCT RESOLUTION] Redirecting stock lookup to canonical product ID:', {
+            originalProductId: productId,
+            canonicalProductId: canonical.id,
+            workspaceId: wsId,
+          });
+          return this.getProductAvailableStock(canonical.id);
+        }
       }
-      throw e;
+
+      console.error('[STOCK AUTHORITY] Product does not exist in authoritative workspace:', {
+        productId,
+        workspaceId: wsId,
+      });
+      return 0;
     }
+
+    const prodStock = Math.max(0, Number(prodData.current_stock) || 0);
+
+    // 2. Fetch active stock_receipts sum for the SAME product_id and workspace_id
+    const { data: receipts, error: recErr } = await supabase
+      .from('stock_receipts')
+      .select('quantity_remaining')
+      .eq('product_id', prodData.id)
+      .eq('workspace_id', wsId);
+
+    if (recErr) {
+      handleSupabaseError(recErr, 'getProductAvailableStock.stock_receipts');
+      throw new Error(`[STOCK AUTHORITY] Failed to query stock receipts: ${recErr.message}`);
+    }
+
+    let receiptStock = 0;
+    const hasReceipts = Boolean(receipts && receipts.length > 0);
+    if (hasReceipts && receipts) {
+      receiptStock = receipts.reduce(
+        (acc: number, row: { quantity_remaining?: number | string | null }) =>
+          acc + Math.max(0, Number(row.quantity_remaining) || 0),
+        0
+      );
+    }
+
+    // 3. Compare product.current_stock vs receiptStock
+    if (hasReceipts && prodStock !== receiptStock) {
+      console.warn('[STOCK RECONCILIATION MISMATCH]', {
+        productId: prodData.id,
+        productName: prodData.name,
+        workspaceId: wsId,
+        productCurrentStock: prodStock,
+        receiptStock,
+        difference: Math.abs(prodStock - receiptStock),
+      });
+    }
+
+    // Authoritative reconciled value:
+    // If receipts exist, return greatest to prevent 0 stock when products table holds real inventory
+    // If receipts do not exist, return products.current_stock
+    const finalStock = hasReceipts ? Math.max(prodStock, receiptStock) : prodStock;
+
+    console.log('[STOCK AUTHORITY]', {
+      productId: prodData.id,
+      productName: prodData.name,
+      workspaceId: wsId,
+      productCurrentStock: prodStock,
+      receiptStock: hasReceipts ? receiptStock : 'NO_RECEIPTS',
+      finalAvailableStock: finalStock,
+    });
+
+    return finalStock;
   }
 
   public async updateProduct(id: string, product: Partial<Product>): Promise<{ product?: Product; error?: string }> {

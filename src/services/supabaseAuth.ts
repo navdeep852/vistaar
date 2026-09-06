@@ -282,13 +282,6 @@ export class SupabaseAuthService {
    * Reconciles cached session & local storage automatically.
    */
   public async getAuthoritativeWorkspaceId(forceRefresh: boolean = false): Promise<string> {
-    if (!forceRefresh) {
-      const currentCid = this.getCurrentCompanyId();
-      if (currentCid && isValidUuid(currentCid) && currentCid !== this.currentProfile?.id) {
-        return currentCid;
-      }
-    }
-
     if (!isSupabaseConfigured()) {
       const cid = this.getCurrentCompanyId();
       return cid && isValidUuid(cid) && cid !== this.currentProfile?.id ? cid : '';
@@ -298,30 +291,40 @@ export class SupabaseAuthService {
       const { data: { session } } = await supabase.auth.getSession();
       const authUser = session?.user;
       if (!authUser) {
-        const cid = this.getCurrentCompanyId();
-        return cid && isValidUuid(cid) && cid !== this.currentProfile?.id ? cid : '';
+        if (!forceRefresh) {
+          const cid = this.getCurrentCompanyId();
+          if (cid && isValidUuid(cid) && cid !== this.currentProfile?.id) {
+            return cid;
+          }
+        }
+        return '';
       }
 
       const userId = authUser.id;
 
       // 1. Query database profile for workspace_id
-      const { data: profile } = await supabase
+      const { data: profile, error: profErr } = await supabase
         .from('profiles')
         .select('workspace_id, workspaces(company_name)')
         .eq('id', userId)
         .single();
 
-      let dbWsId = profile?.workspace_id;
+      if (profErr) {
+        console.error('[WORKSPACE RESOLUTION ERROR] Profile query failed:', profErr);
+        throw new Error(`[AUTH_WORKSPACE_RESOLUTION_FAILED] Profile query failed: ${profErr.message}`);
+      }
+
+      const dbWsId = profile?.workspace_id;
 
       if (!dbWsId || !isValidUuid(dbWsId) || dbWsId === userId) {
         console.error(`[WORKSPACE_RESOLVER_ERROR] Authoritative workspace_id could not be resolved for auth.uid=${userId}`);
-        throw new Error('Unable to determine workspace for authenticated user.');
+        throw new Error('[AUTH_WORKSPACE_RESOLUTION_FAILED] Unable to determine authoritative workspace for authenticated user.');
       }
 
-      // 3. Reconcile in-memory profile and localStorage session cache
+      // 2. Reconcile in-memory profile and localStorage session cache if stale
       if (this.currentProfile) {
         if (this.currentProfile.companyId !== dbWsId) {
-          console.log(`[SESSION_RECONCILIATION] Reconciled stale companyId (${this.currentProfile.companyId}) to database workspace_id (${dbWsId})`);
+          console.log(`[WORKSPACE RESOLUTION] Reconciled stale companyId (${this.currentProfile.companyId}) to database workspace_id (${dbWsId})`);
           this.currentProfile.companyId = dbWsId;
           if (profile?.workspaces?.company_name) {
             this.currentProfile.businessName = profile.workspaces.company_name;
@@ -339,13 +342,9 @@ export class SupabaseAuthService {
       }
 
       return dbWsId;
-    } catch (e) {
-      console.warn('getAuthoritativeWorkspaceId error:', e);
-      const cid = this.getCurrentCompanyId();
-      if (cid && isValidUuid(cid) && cid !== this.currentProfile?.id) {
-        return cid;
-      }
-      return '';
+    } catch (e: any) {
+      console.error('[WORKSPACE RESOLUTION EXCEPTION]', e);
+      throw e;
     }
   }
 

@@ -74,7 +74,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
   activeTab,
 }) => {
   const settings = store.getSettings();
-  const products = store.getProducts();
+  const [products, setProducts] = useState<Product[]>(() => store.getProducts());
 
   // Async customer state
   const [customersList, setCustomersList] = useState<Customer[]>(() => store.getCustomers() || []);
@@ -164,7 +164,11 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
 
   useEffect(() => {
     fetchCustomers();
-    productService.getProducts().catch((e) => console.warn('Failed to pre-fetch products in DocumentEditorView:', e));
+    productService.getProducts().then((res) => {
+      if (res && res.data && res.data.length > 0) {
+        setProducts(res.data);
+      }
+    }).catch((e) => console.warn('Failed to pre-fetch products in DocumentEditorView:', e));
     const unsub = store.subscribe(() => {
       const updated = store.getCustomers();
       if (updated) {
@@ -705,6 +709,30 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           }
         }
 
+        // Build freshly mapped items reflecting canonical corrections from validation loop
+        const invoiceItemsForSave: InvoiceItem[] = items.map((item, idx) => {
+          const prod = products.find((p) => p.id === item.productId);
+          const lineSubtotal = item.quantity * item.sellingPrice;
+          const afterDiscount = Math.max(0, lineSubtotal - item.discountAmount);
+          const taxAmount = (afterDiscount * item.taxPercent) / 100;
+          const total = afterDiscount + taxAmount;
+
+          return {
+            id: `item-${idx}`,
+            productId: item.productId,
+            productName: item.productName,
+            sku: item.sku,
+            unit: item.unit,
+            quantity: item.quantity,
+            buyPrice: prod ? prod.buyPrice : 0,
+            sellingPrice: item.sellingPrice,
+            discountAmount: item.discountAmount,
+            taxPercent: item.taxPercent,
+            taxAmount,
+            total,
+          };
+        });
+
         // Validation: Paid amount check
         if (paymentStatus === 'Partially Paid' && paidAmountInput > grandTotal) {
           showToast(`Paid amount (${settings.currency}${paidAmountInput}) cannot exceed grand total (${settings.currency}${grandTotal.toFixed(2)})`, 'error');
@@ -726,7 +754,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           status: computedInvoiceStatus,
           date,
           dueDate: dueDateOrValid,
-          items: calculatedItems as InvoiceItem[],
+          items: invoiceItemsForSave,
           subtotal,
           discountTotal,
           taxTotal,
@@ -761,14 +789,14 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           invoiceNumStr = updated.invoiceNumber;
 
           // Sync with Supabase
-          await invoiceService.createInvoice({ ...updated, id: initialDraftData.id }, calculatedItems);
+          await invoiceService.createInvoice({ ...updated, id: initialDraftData.id }, invoiceItemsForSave);
         } else {
           const inv = store.addInvoice(invoicePayload as any);
           targetInvoiceId = inv.id;
           invoiceNumStr = inv.invoiceNumber;
 
           // Sync with Supabase
-          const subRes = await invoiceService.createInvoice(inv, calculatedItems);
+          const subRes = await invoiceService.createInvoice(inv, invoiceItemsForSave);
           if (subRes.invoiceId) {
             targetInvoiceId = subRes.invoiceId;
           }

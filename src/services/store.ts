@@ -34,6 +34,7 @@ import { BrandingConfig, ThemeConfig, DocumentSnapshot } from '../types/template
 import { INVOICE_TEMPLATES } from '../templates/invoiceTemplates';
 import { QUOTATION_TEMPLATES } from '../templates/quotationTemplates';
 import { safeGetTenantItem, safeSaveTenantItem, clearTenantStorage } from './supabase/safeStorage';
+import { isSupabaseConfigured } from '../lib/supabase';
 
 
 export function calculateUdhariStatus(originalAmount: number, totalReceived: number, dueDate: string): UdhariStatus {
@@ -604,9 +605,10 @@ class StoreService {
     };
 
     // Deduct stock for linked product items ONLY if invoice is finalized (Issued / Paid / Partially Paid)
+    // When Supabase is configured, stock validation and atomic deduction are authoritatively handled by Supabase RPC
     const isFinalized = newInvoice.status === 'Issued' || newInvoice.status === 'Paid' || newInvoice.status === 'Partially Paid';
-    if (isFinalized) {
-      // Validate stock for ALL items before deducting stock for any item
+    if (isFinalized && !isSupabaseConfigured()) {
+      // Validate stock for ALL items before deducting stock for any item (offline/local mode only)
       for (const item of newInvoice.items) {
         if (item.productId) {
           const avail = this.getProductAvailableStock(item.productId);
@@ -665,7 +667,8 @@ class StoreService {
     const wasFinalized = existing.status === 'Issued' || existing.status === 'Paid' || existing.status === 'Partially Paid';
     const isFinalized = updatedInvoice.status === 'Issued' || updatedInvoice.status === 'Paid' || updatedInvoice.status === 'Partially Paid';
 
-    if (isFinalized && !wasFinalized) {
+    // When Supabase is configured, stock validation and atomic deduction are authoritatively handled by Supabase RPC
+    if (isFinalized && !wasFinalized && !isSupabaseConfigured()) {
       for (const item of updatedInvoice.items) {
         if (item.productId) {
           const avail = this.getProductAvailableStock(item.productId);
@@ -1145,12 +1148,24 @@ class StoreService {
   }
 
   public getProductAvailableStock(productId: string): number {
+    const prod = (this.state.products || []).find((p) => p.id === productId);
+    const prodStock = prod ? Math.max(0, Number(prod.currentStock) || 0) : 0;
     const receipts = (this.state.stockReceipts || []).filter((r) => r.productId === productId);
     if (receipts.length > 0) {
-      return receipts.reduce((acc, r) => acc + Math.max(0, r.quantityRemaining), 0);
+      const receiptSum = receipts.reduce((acc, r) => acc + Math.max(0, Number(r.quantityRemaining) || 0), 0);
+      return Math.max(prodStock, receiptSum);
     }
-    const prod = (this.state.products || []).find((p) => p.id === productId);
-    return prod ? Math.max(0, Number(prod.currentStock) || 0) : 0;
+    return prodStock;
+  }
+
+  public syncProductStock(productId: string, newStock: number): void {
+    if (!this.state.products) this.state.products = [];
+    const prod = this.state.products.find((p) => p.id === productId);
+    if (prod) {
+      prod.currentStock = Math.max(0, newStock);
+      prod.updatedAt = new Date().toISOString();
+      this.saveToStorage();
+    }
   }
 
 
