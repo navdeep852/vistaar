@@ -2,7 +2,6 @@ import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { Payment } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
-
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 
 const LOCAL_PAYMENTS_KEY = 'vistaar_local_payments_db';
@@ -12,24 +11,45 @@ export class PaymentService {
     return supabaseAuthService.getCurrentCompanyId();
   }
 
-  public async getPayments(): Promise<{ data: any[]; error?: string }> {
+  public async getPayments(): Promise<{ data: Payment[]; error?: string }> {
     const wsId = this.getWorkspaceId();
     try {
-      const { data, error } = await supabase
-        .from('payments')
-        .select('*')
-        .eq('workspace_id', wsId)
-        .order('created_at', { ascending: false });
+      if (isSupabaseConfigured() && isValidUuid(wsId)) {
+        const { data, error } = await supabase
+          .from('payments')
+          .select('*')
+          .eq('workspace_id', wsId)
+          .order('created_at', { ascending: false });
 
-      if (error) {
-        const errStr = handleSupabaseError(error, 'getPayments');
-        const fallback = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
-        return { data: fallback, error: errStr };
+        if (error) {
+          const errStr = handleSupabaseError(error, 'getPayments');
+          const fallback = safeGetTenantStorage<Payment>(LOCAL_PAYMENTS_KEY, []);
+          return { data: fallback, error: errStr };
+        }
+
+        const mapped: Payment[] = (data || []).map((p: any) => ({
+          id: p.id,
+          paymentNumber: p.payment_number || `PAY-${p.id.substring(0, 8)}`,
+          customerId: p.customer_id,
+          customerName: p.customer_name || 'Customer',
+          invoiceId: p.invoice_id,
+          invoiceNumber: p.invoice_number,
+          amount: Number(p.amount) || 0,
+          date: p.payment_date || (p.created_at ? p.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
+          method: p.method || 'Cash',
+          referenceNo: p.reference_no,
+          notes: p.notes,
+          createdAt: p.created_at,
+        }));
+
+        return { data: mapped };
       }
-      return { data: data || [] };
+
+      const fallback = safeGetTenantStorage<Payment>(LOCAL_PAYMENTS_KEY, []);
+      return { data: fallback };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getPayments');
-      const fallback = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
+      const fallback = safeGetTenantStorage<Payment>(LOCAL_PAYMENTS_KEY, []);
       return { data: fallback, error: errStr };
     }
   }
@@ -62,7 +82,7 @@ export class PaymentService {
             .from('payments')
             .update({ invoice_id: targetId })
             .is('invoice_id', null)
-            .eq('reference_number', invoiceNumber);
+            .eq('invoice_number', invoiceNumber);
           if (isValidUuid(wsId)) {
             linkQuery = linkQuery.eq('workspace_id', wsId);
           }
@@ -103,13 +123,17 @@ export class PaymentService {
       }
       await updateQuery;
     } catch (e) {
-      console.warn('syncInvoicePaymentTotals error:', e);
+      console.warn('[syncInvoicePaymentTotals] notice:', e);
     }
   }
 
   public async createPayment(payment: Partial<Payment>): Promise<{ paymentId?: string; error?: string }> {
     const wsId = this.getWorkspaceId();
     const payNum = payment.paymentNumber || `PAY-${Date.now()}`;
+    const amount = Number(payment.amount) || 0;
+    const method = payment.method || 'Cash';
+    const paymentDate = payment.date || new Date().toISOString().split('T')[0];
+    const customerName = payment.customerName || 'Customer';
 
     // Resolve canonical invoice database UUID if invoiceId or invoiceNumber is provided
     let resolvedInvoiceId: string | null = (payment.invoiceId && isValidUuid(payment.invoiceId)) ? payment.invoiceId : null;
@@ -124,43 +148,64 @@ export class PaymentService {
       }
     }
 
+    // Precise PostgreSQL column payload matching public.payments schema
     const payload = {
       workspace_id: wsId,
-      customer_id: payment.customerId || null,
+      customer_id: payment.customerId && isValidUuid(payment.customerId) ? payment.customerId : null,
       invoice_id: resolvedInvoiceId,
       payment_number: payNum,
-      amount: payment.amount || 0,
-      date: payment.date || new Date().toISOString().split('T')[0],
-      payment_method: payment.method || 'Cash',
-      reference_number: payment.referenceNo || payment.invoiceNumber || null,
+      customer_name: customerName,
+      invoice_number: payment.invoiceNumber || null,
+      amount: amount,
+      payment_date: paymentDate,
+      method: method,
+      reference_no: payment.referenceNo || null,
       notes: payment.notes || null,
     };
 
-    try {
-      const { data, error } = await supabase
-        .from('payments')
-        .insert([payload])
-        .select('id')
-        .single();
+    let createdId = `pay-${Date.now()}`;
+    let isPersistedToDb = false;
 
-      if (error) {
-        const errStr = handleSupabaseError(error, 'createPayment');
-        if (errStr.startsWith('Network Error')) {
-          const newId = `pay-${Date.now()}`;
-          const localPay = { id: newId, ...payload, createdAt: new Date().toISOString() };
-          const local = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
-          local.unshift(localPay);
-          safeSaveTenantStorage(LOCAL_PAYMENTS_KEY, local);
-          return { paymentId: newId };
+    if (isSupabaseConfigured() && isValidUuid(wsId)) {
+      try {
+        const { data, error } = await supabase
+          .from('payments')
+          .insert([payload])
+          .select('id')
+          .single();
+
+        if (!error && data) {
+          createdId = data.id;
+          isPersistedToDb = true;
+        } else if (error) {
+          const errStr = handleSupabaseError(error, 'createPayment');
+          console.warn('[PaymentService.createPayment] Supabase error:', errStr);
         }
-        return { error: errStr };
+      } catch (dbEx) {
+        console.warn('[PaymentService.createPayment] Exception:', dbEx);
       }
-      const createdId = data ? data.id : `pay-${Date.now()}`;
+    }
 
-      // Sync Supabase invoice paid_amount, balance_amount, status
+    // Fallback or local mirror for immediate offline reliability
+    const localPay = {
+      id: createdId,
+      ...payload,
+      createdAt: new Date().toISOString(),
+    };
+    const local = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
+    local.unshift(localPay);
+    safeSaveTenantStorage(LOCAL_PAYMENTS_KEY, local);
+
+    // Sync Supabase invoice paid_amount, balance_amount, status
+    if (isPersistedToDb && payload.invoice_id) {
       await this.syncInvoicePaymentTotals(payload.invoice_id, payment.invoiceNumber);
+    }
 
-      // Record Daybook Financial Transaction
+    // Authoritative Accounting Pipeline:
+    // Only when actual money is received (amount > 0 and non-credit)
+    const isCredit = (method as string) === 'Credit / Udhari' || (method as string) === 'Credit' || (method as string) === 'Udhari';
+    if (amount > 0 && !isCredit) {
+      // 1. Daybook Entry: CUSTOMER_PAYMENT (actual money received)
       try {
         const { daybookService } = await import('./daybookService');
         await daybookService.recordFinancialTransaction({
@@ -169,71 +214,48 @@ export class PaymentService {
           referenceNumber: payNum,
           transactionType: 'CUSTOMER_PAYMENT',
           direction: 'IN',
-          amount: payment.amount || 0,
-          paymentMode: (payment.method || 'Cash') as any,
+          amount: amount,
+          paymentMode: method as any,
           partyType: 'customer',
-          partyId: payment.customerId || undefined,
-          partyName: payment.customerName || 'Customer',
-          description: `Payment Received #${payNum}`,
-          notes: payment.notes || undefined,
-          transactionDate: payment.date || new Date().toISOString().split('T')[0],
+          partyId: payload.customer_id || undefined,
+          partyName: customerName,
+          description: `Payment Received #${payNum} for Invoice #${payment.invoiceNumber || ''}`.trim(),
+          notes: payment.referenceNo ? `Ref: ${payment.referenceNo}` : payment.notes || undefined,
+          transactionDate: paymentDate,
         });
+      } catch (dbErr) {
+        console.warn('Failed to record Daybook entry for payment:', dbErr);
+      }
 
-        // Record Cashbook Entry (Money received)
+      // 2. Cashbook Entry: INVOICE_PAYMENT (actual liquidity receipt)
+      try {
         const { cashbookService } = await import('./cashbookService');
         await cashbookService.recordCashbookEntry({
-          sourceType: 'PAYMENT',
+          sourceType: 'INVOICE_PAYMENT',
           sourceId: createdId,
-          referenceNumber: payNum,
+          referenceNumber: payment.invoiceNumber || payNum,
           direction: 'IN',
-          amount: payment.amount || 0,
-          paymentMethod: payment.method || 'Cash',
-          partyName: payment.customerName || 'Customer',
-          description: `Payment Received #${payNum}`,
-          transactionDate: payment.date || new Date().toISOString().split('T')[0],
+          amount: amount,
+          paymentMethod: method, // Preserves actual method: UPI, Card, Bank Transfer, Cash, etc.
+          partyName: customerName,
+          description: `Payment received for Invoice #${payment.invoiceNumber || payNum}`,
+          notes: payment.referenceNo ? `Ref: ${payment.referenceNo}` : payment.notes || undefined,
+          transactionDate: paymentDate,
         });
-
-        const { salesAnalyticsService } = await import('./salesAnalyticsService');
-        salesAnalyticsService.invalidateCache();
-      } catch (dbErr) {
-        console.warn('Failed to record Daybook/Cashbook entry for payment:', dbErr);
+      } catch (cbErr) {
+        console.warn('Failed to record Cashbook entry for payment:', cbErr);
       }
-
-      return { paymentId: createdId };
-    } catch (e: any) {
-      const errStr = handleSupabaseError(e, 'createPayment');
-      const newId = `pay-${Date.now()}`;
-      const localPay = { id: newId, ...payload, createdAt: new Date().toISOString() };
-      const local = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
-      local.unshift(localPay);
-      safeSaveTenantStorage(LOCAL_PAYMENTS_KEY, local);
-
-      // Record Daybook Financial Transaction (offline)
-      try {
-        const { daybookService } = await import('./daybookService');
-        await daybookService.recordFinancialTransaction({
-          referenceType: 'PAYMENT',
-          referenceId: newId,
-          referenceNumber: payNum,
-          transactionType: 'CUSTOMER_PAYMENT',
-          direction: 'IN',
-          amount: payment.amount || 0,
-          paymentMode: (payment.method || 'Cash') as any,
-          partyType: 'customer',
-          partyId: payment.customerId || undefined,
-          partyName: payment.customerName || 'Customer',
-          description: `Payment Received #${payNum}`,
-          notes: payment.notes || undefined,
-          transactionDate: payment.date || new Date().toISOString().split('T')[0],
-        });
-      } catch (dbErr) {
-        // ignore
-      }
-
-      return { paymentId: newId };
     }
-  }
 
+    try {
+      const { salesAnalyticsService } = await import('./salesAnalyticsService');
+      salesAnalyticsService.invalidateCache();
+    } catch (e) {
+      // ignore
+    }
+
+    return { paymentId: createdId };
+  }
 }
 
 export const paymentService = new PaymentService();

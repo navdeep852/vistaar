@@ -19,6 +19,7 @@ import {
   FileText,
   HelpCircle,
   Settings2,
+  RefreshCw,
 } from 'lucide-react';
 import { cashbookService } from '../services/supabase/cashbookService';
 import { financialAccountService } from '../services/supabase/financialAccountService';
@@ -48,9 +49,11 @@ export const CashbookView: React.FC = () => {
   const [selectedAccountId, setSelectedAccountId] = useState<string>('ALL');
   const [selectedFY, setSelectedFY] = useState<string>('CURRENT_FY');
   const [dateRangePreset, setDateRangePreset] = useState<string>('all');
+  const [paymentModeFilter, setPaymentModeFilter] = useState<string>('ALL');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isReconciling, setIsReconciling] = useState(false);
 
   // Modals State
   const [transferModalOpen, setTransferModalOpen] = useState(false);
@@ -89,6 +92,7 @@ export const CashbookView: React.FC = () => {
       const options: CashbookFilterOptions = {
         financialAccountId: selectedAccountId,
         financialYear: selectedFY,
+        paymentMode: paymentModeFilter !== 'ALL' ? paymentModeFilter : undefined,
         dateRange: dateRangePreset as any,
         startDate: startDate || undefined,
         endDate: endDate || undefined,
@@ -109,7 +113,7 @@ export const CashbookView: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, [selectedAccountId, selectedFY, dateRangePreset, startDate, endDate, searchQuery]);
+  }, [selectedAccountId, selectedFY, dateRangePreset, paymentModeFilter, startDate, endDate, searchQuery]);
 
   // Compute Indian Financial Year Label
   const fyInfo = useMemo(() => {
@@ -192,6 +196,24 @@ export const CashbookView: React.FC = () => {
     }
   };
 
+  // Handle Historical Payment Reconciliation with Cashbook
+  const handleReconcile = async () => {
+    setIsReconciling(true);
+    try {
+      const res = await cashbookService.reconcileInvoicePaymentsWithCashbook();
+      if (res.reconciledCount > 0) {
+        showToast(`Reconciliation complete: Synced ${res.reconciledCount} missing invoice payment(s) to Cashbook!`, 'success');
+      } else {
+        showToast(`Cashbook fully reconciled with all payments (0 missing).`, 'info');
+      }
+      loadData();
+    } catch (e: any) {
+      showToast(e.message || 'Reconciliation failed', 'error');
+    } finally {
+      setIsReconciling(false);
+    }
+  };
+
   return (
     <div className="space-y-6 animate-fade-in pb-16">
       {/* Top Banner & Main Actions */}
@@ -214,8 +236,18 @@ export const CashbookView: React.FC = () => {
 
         <div className="flex flex-wrap items-center gap-3">
           <button
+            onClick={handleReconcile}
+            disabled={isReconciling}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600/80 hover:bg-emerald-600 text-white font-bold text-xs border border-emerald-500/30 transition-colors disabled:opacity-50 cursor-pointer"
+            title="Scan and reconcile all invoice payments with Cashbook"
+          >
+            <RefreshCw className={`w-4 h-4 text-white ${isReconciling ? 'animate-spin' : ''}`} />
+            <span>{isReconciling ? 'Reconciling...' : 'Reconcile Payments'}</span>
+          </button>
+
+          <button
             onClick={() => setTransferModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs border border-white/10 transition-colors"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs border border-white/10 transition-colors cursor-pointer"
           >
             <ArrowRightLeft className="w-4 h-4 text-amber-400" />
             <span>⇄ Transfer Funds</span>
@@ -223,7 +255,7 @@ export const CashbookView: React.FC = () => {
 
           <button
             onClick={() => setAccountManageModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs border border-white/10 transition-colors"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs border border-white/10 transition-colors cursor-pointer"
           >
             <Settings2 className="w-4 h-4 text-blue-400" />
             <span>Manage Accounts</span>
@@ -318,7 +350,7 @@ export const CashbookView: React.FC = () => {
         </div>
 
         {/* Filter Controls Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
           {/* Indian Financial Year Selector */}
           <div>
             <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 uppercase mb-1">
@@ -352,6 +384,25 @@ export const CashbookView: React.FC = () => {
               <option value="month">This Month</option>
               <option value="last_month">Last Month</option>
               <option value="custom">Custom Range</option>
+            </select>
+          </div>
+
+          {/* Payment Mode Selector */}
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 uppercase mb-1">
+              Payment Mode
+            </label>
+            <select
+              value={paymentModeFilter}
+              onChange={(e) => setPaymentModeFilter(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-medium text-slate-900 dark:text-slate-100"
+            >
+              <option value="ALL">All Modes</option>
+              <option value="Cash">Cash</option>
+              <option value="UPI">UPI</option>
+              <option value="Card">Card</option>
+              <option value="Bank Transfer">Bank Transfer</option>
+              <option value="Cheque">Cheque</option>
             </select>
           </div>
 
@@ -423,7 +474,19 @@ export const CashbookView: React.FC = () => {
                       </td>
 
                       <td className="p-3.5 font-bold text-slate-800 dark:text-slate-200">
-                        {acc ? acc.name : tx.paymentMode || 'Cash'}
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-extrabold ${
+                          (tx.paymentMode || '').toLowerCase().includes('upi')
+                            ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                            : (tx.paymentMode || '').toLowerCase().includes('card')
+                            ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                            : (tx.paymentMode || '').toLowerCase().includes('bank')
+                            ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
+                            : (tx.paymentMode || '').toLowerCase().includes('cheque')
+                            ? 'bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800'
+                            : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                        }`}>
+                          {tx.paymentMode || (acc ? acc.name : 'Cash')}
+                        </span>
                       </td>
 
                       <td className="p-3.5">

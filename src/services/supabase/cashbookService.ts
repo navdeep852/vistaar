@@ -84,11 +84,10 @@ export class CashbookService {
     return {};
   }
 
-  private mapPaymentMethodToAccount(method: string): string {
+  public mapPaymentMethodToAccount(method: string): string {
     const m = (method || '').toLowerCase();
-    if (m.includes('cash')) return 'Cash Account';
     if (m.includes('upi')) return 'UPI Clearing';
-    if (m.includes('bank')) return 'Bank Account';
+    if (m.includes('bank') || m.includes('neft') || m.includes('rtgs') || m.includes('imps')) return 'Bank Account';
     if (m.includes('card')) return 'Card Settlement';
     if (m.includes('cheque')) return 'Cheques in Hand';
     return 'Cash Account';
@@ -96,21 +95,21 @@ export class CashbookService {
 
   /**
    * Record an Authoritative Cashbook Entry.
-   * STRICT CASHBOOK RULE:
-   * Only created when actual money is received or paid (amount > 0 and non-credit).
+   * STRICT ACCOUNTING RULE:
+   * Only recorded when actual money is received or paid (amount > 0 and non-credit).
    */
   public async recordCashbookEntry(params: {
     sourceType: string;
     sourceId?: string;
     referenceNumber?: string;
-    direction: 'IN' | 'OUT';
+    direction: 'IN' | 'OUT' | 'NON_CASH';
     amount: number;
     paymentMethod: string;
     partyName?: string;
     description?: string;
     notes?: string;
     transactionDate?: string;
-  }): Promise<{ success: boolean; id?: string }> {
+  }): Promise<{ success: boolean; id?: string; error?: string }> {
     const amount = Number(params.amount) || 0;
     const method = params.paymentMethod || 'Cash';
 
@@ -124,24 +123,27 @@ export class CashbookService {
     const entryNumber = `CB-${params.referenceNumber || Date.now()}`;
     const accountName = this.mapPaymentMethodToAccount(method);
 
+    const payload: any = {
+      workspace_id: wsId,
+      entry_date: entryDate,
+      entry_number: entryNumber,
+      direction: params.direction,
+      amount: amount,
+      payment_method: method,
+      account_name: accountName,
+      source_type: params.sourceType,
+      source_id: params.sourceId || null,
+      reference_number: params.referenceNumber || null,
+      party_name: params.partyName || null,
+      description: params.description || `Payment receipt for #${params.referenceNumber || ''}`.trim(),
+      notes: params.notes || null,
+    };
+
+    let createdId = `cb-${Date.now()}`;
+    let isPersistedToDb = false;
+
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
       try {
-        const payload: any = {
-          workspace_id: wsId,
-          entry_date: entryDate,
-          entry_number: entryNumber,
-          direction: params.direction,
-          amount: amount,
-          payment_method: method,
-          account_name: accountName,
-          source_type: params.sourceType,
-          source_id: isValidUuid(params.sourceId) ? params.sourceId : null,
-          reference_number: params.referenceNumber || null,
-          party_name: params.partyName || null,
-          description: params.description || `Cash receipt for #${params.referenceNumber || ''}`,
-          notes: params.notes || null,
-        };
-
         const { data, error } = await supabase
           .from('cashbook_entries')
           .insert([payload])
@@ -149,15 +151,23 @@ export class CashbookService {
           .single();
 
         if (!error && data) {
-          return { success: true, id: data.id };
+          createdId = data.id;
+          isPersistedToDb = true;
+        } else if (error) {
+          // Check for unique conflict (idempotency)
+          if (error.code === '23505') {
+            return { success: true };
+          }
+          console.warn('[recordCashbookEntry] Supabase write notice:', error.message);
         }
       } catch (err) {
-        // Fall through to local fallback
+        console.warn('[recordCashbookEntry] Exception notice:', err);
       }
     }
 
+    // Local mirror for high resilience & offline support
     const localEntry = {
-      id: `cb-${Date.now()}`,
+      id: createdId,
       workspaceId: wsId,
       entryDate,
       entryNumber,
@@ -175,125 +185,160 @@ export class CashbookService {
     };
 
     const local = safeGetTenantStorage<any>(LOCAL_CASHBOOK_KEY, []);
-    local.unshift(localEntry);
-    safeSaveTenantStorage(LOCAL_CASHBOOK_KEY, local);
+    // Deduplicate in local storage
+    const exists = local.some((e: any) =>
+      params.sourceId && e.sourceType === params.sourceType && e.sourceId === params.sourceId && e.direction === params.direction
+    );
+    if (!exists) {
+      local.unshift(localEntry);
+      safeSaveTenantStorage(LOCAL_CASHBOOK_KEY, local);
+    }
 
-    return { success: true, id: localEntry.id };
+    return { success: true, id: createdId };
   }
 
   /**
-   * Fetch money-movement Cashbook transactions
+   * Fetch Authoritative Multi-Source Merged Cashbook Transactions.
+   * PHASE 10 COMPLIANCE:
+   * Merges cashbook_entries, payments, and completed counter_sales with deterministic deduplication
+   * so no payment is omitted even if cashbook_entries is missing records.
    */
   public async getTransactions(options?: CashbookFilterOptions): Promise<{ data: DaybookTransaction[]; count: number; error?: string }> {
     const wsId = await this.getWorkspaceId();
     const { start, end } = this.getCashbookDateBounds(options);
 
+    const mergedList: DaybookTransaction[] = [];
+    const seenKeys = new Set<string>();
+    const seenPaymentIds = new Set<string>();
+    const seenCounterSaleIds = new Set<string>();
+
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
+      // 1. Authoritative cashbook_entries from Supabase
       try {
-        // 1. Try querying cashbook_entries
-        let query = supabase
+        let cbQuery = supabase
           .from('cashbook_entries')
-          .select('*', { count: 'exact' })
+          .select('*')
           .eq('workspace_id', wsId);
 
-        if (start) query = query.gte('entry_date', start);
-        if (end) query = query.lte('entry_date', end);
+        if (start) cbQuery = cbQuery.gte('entry_date', start);
+        if (end) cbQuery = cbQuery.lte('entry_date', end);
 
-        if (options?.paymentMode && options.paymentMode !== 'ALL') {
-          query = query.eq('payment_method', options.paymentMode);
-        }
+        const { data: cbData, error: cbErr } = await cbQuery;
+        if (!cbErr && cbData) {
+          for (const row of cbData) {
+            const key = `${row.source_type || 'MANUAL'}:${row.source_id || row.id}:${row.direction || 'IN'}`;
+            seenKeys.add(key);
+            if (row.source_type === 'INVOICE_PAYMENT' && row.source_id) {
+              seenPaymentIds.add(String(row.source_id));
+            }
+            if (row.source_type === 'COUNTER_SALE' && row.source_id) {
+              seenCounterSaleIds.add(String(row.source_id));
+            }
 
-        query = query.order('entry_date', { ascending: false }).order('created_at', { ascending: false });
-
-        const { data, count, error } = await query;
-
-        if (!error && data && data.length > 0) {
-          const mapped: DaybookTransaction[] = data.map((row: any) => ({
-            id: row.id,
-            workspaceId: row.workspace_id,
-            transactionCode: row.entry_number,
-            transactionDate: row.entry_date,
-            transactionType: 'CUSTOMER_PAYMENT' as any,
-            direction: (row.direction || 'IN') as any,
-            amount: Number(row.amount) || 0,
-            paymentMode: row.payment_method as any,
-            partyName: row.party_name || 'Customer',
-            referenceType: row.source_type as any,
-            referenceId: row.source_id,
-            referenceNumber: row.reference_number,
-            description: row.description,
-            notes: row.notes,
-            status: 'COMPLETED',
-            createdAt: row.created_at,
-          }));
-
-          return { data: mapped, count: count || mapped.length };
+            mergedList.push({
+              id: row.id,
+              workspaceId: row.workspace_id,
+              transactionCode: row.entry_number,
+              transactionDate: row.entry_date,
+              transactionType: 'CUSTOMER_PAYMENT',
+              direction: (row.direction || 'IN') as any,
+              amount: Number(row.amount) || 0,
+              paymentMode: (row.payment_method || 'Cash') as any,
+              partyName: row.party_name || 'Customer',
+              referenceType: row.source_type as any,
+              referenceId: row.source_id,
+              referenceNumber: row.reference_number,
+              description: row.description,
+              notes: row.notes,
+              status: 'COMPLETED',
+              createdAt: row.created_at,
+            });
+          }
         }
       } catch (cbEx) {
-        // Fall through to synthesis
+        // Fall through to live tables
       }
 
-      // 2. Synthesize actual cash movements from payments and paid counter sales
-      const synthesized = await this.synthesizeCashbookFromLiveSources(wsId, options);
-      if (synthesized.length > 0) {
-        return { data: synthesized, count: synthesized.length };
+      // 2. Authoritative Payments table (public.payments)
+      try {
+        let payQuery = supabase
+          .from('payments')
+          .select('*')
+          .eq('workspace_id', wsId);
+
+        if (start) payQuery = payQuery.gte('payment_date', start);
+        if (end) payQuery = payQuery.lte('payment_date', end);
+
+        const { data: payData, error: payErr } = await payQuery;
+        if (!payErr && payData) {
+          for (const p of payData) {
+            const amt = Number(p.amount) || 0;
+            const method = p.method || 'Cash';
+            if (amt <= 0) continue;
+            if (method === 'Credit / Udhari' || method === 'Credit' || method === 'Udhari') continue;
+
+            const key = `INVOICE_PAYMENT:${p.id}:IN`;
+            if (seenPaymentIds.has(p.id) || seenKeys.has(key)) {
+              continue;
+            }
+
+            seenKeys.add(key);
+            seenPaymentIds.add(p.id);
+
+            const txDate = p.payment_date || (p.created_at ? p.created_at.split('T')[0] : new Date().toISOString().split('T')[0]);
+            mergedList.push({
+              id: `cb-pay-${p.id}`,
+              workspaceId: p.workspace_id,
+              transactionCode: p.payment_number || `PAY-${p.id.substring(0, 8)}`,
+              transactionDate: txDate,
+              transactionType: 'CUSTOMER_PAYMENT',
+              direction: 'IN',
+              amount: amt,
+              paymentMode: method as any,
+              partyName: p.customer_name || 'Customer',
+              referenceType: 'INVOICE_PAYMENT' as any,
+              referenceId: p.id,
+              referenceNumber: p.invoice_number || p.payment_number,
+              description: `Payment received for Invoice #${p.invoice_number || ''}`.trim(),
+              notes: p.reference_no ? `Ref: ${p.reference_no}` : p.notes || undefined,
+              status: 'COMPLETED',
+              createdAt: p.created_at,
+            });
+          }
+        }
+      } catch (payEx) {
+        console.warn('[getTransactions] payments query notice:', payEx);
       }
-    }
 
-    // Local Storage fallback
-    const local = safeGetTenantStorage<any>(LOCAL_CASHBOOK_KEY, []);
-    const filtered = local.filter((t: any) => {
-      if (start && t.entryDate < start) return false;
-      if (end && t.entryDate > end) return false;
-      return true;
-    }).map((t: any) => ({
-      id: t.id,
-      workspaceId: t.workspaceId,
-      transactionCode: t.entryNumber,
-      transactionDate: t.entryDate,
-      transactionType: 'CUSTOMER_PAYMENT' as any,
-      direction: t.direction as any,
-      amount: Number(t.amount) || 0,
-      paymentMode: t.paymentMethod as any,
-      partyName: t.partyName,
-      referenceType: t.sourceType as any,
-      referenceId: t.sourceId,
-      referenceNumber: t.referenceNumber,
-      description: t.description,
-      status: 'COMPLETED' as any,
-      createdAt: t.createdAt,
-    }));
+      // 3. Completed Counter Sales with actual money received
+      try {
+        let csQuery = supabase
+          .from('counter_sales')
+          .select('*')
+          .eq('workspace_id', wsId)
+          .eq('status', 'COMPLETED');
 
-    return { data: filtered, count: filtered.length };
-  }
+        if (start) csQuery = csQuery.gte('sale_date', start);
+        if (end) csQuery = csQuery.lte('sale_date', end);
 
-  /**
-   * Resilient synthesis of actual money movements from authoritative live tables
-   */
-  private async synthesizeCashbookFromLiveSources(wsId: string, options?: CashbookFilterOptions): Promise<DaybookTransaction[]> {
-    const list: DaybookTransaction[] = [];
-    const { start, end } = this.getCashbookDateBounds(options);
+        const { data: csData, error: csErr } = await csQuery;
+        if (!csErr && csData) {
+          for (const cs of csData) {
+            const method = cs.payment_method || 'Cash';
+            if (method === 'Credit' || method === 'Credit / Udhari' || method === 'Udhari') continue;
 
-    try {
-      // A. Counter Sales where actual money was received (amount_received > 0, non-credit)
-      let csQuery = supabase
-        .from('counter_sales')
-        .select('*')
-        .eq('workspace_id', wsId)
-        .eq('status', 'COMPLETED');
+            const rec = Number(cs.amount_received !== undefined ? cs.amount_received : cs.final_total) || 0;
+            if (rec <= 0) continue;
 
-      if (start) csQuery = csQuery.gte('sale_date', start);
-      if (end) csQuery = csQuery.lte('sale_date', end);
+            const key = `COUNTER_SALE:${cs.id}:IN`;
+            if (seenCounterSaleIds.has(cs.id) || seenKeys.has(key)) {
+              continue;
+            }
 
-      const { data: csList } = await csQuery;
-      if (csList) {
-        for (const cs of csList) {
-          const method = cs.payment_method || 'Cash';
-          if (method === 'Credit' || method === 'Credit / Udhari' || method === 'Udhari') continue;
+            seenKeys.add(key);
+            seenCounterSaleIds.add(cs.id);
 
-          const rec = Number(cs.amount_received !== undefined ? cs.amount_received : cs.final_total) || 0;
-          if (rec > 0) {
-            list.push({
+            mergedList.push({
               id: `cb-cs-${cs.id}`,
               workspaceId: cs.workspace_id,
               transactionCode: `CB-${cs.sale_number}`,
@@ -303,7 +348,7 @@ export class CashbookService {
               amount: rec,
               paymentMode: method as any,
               partyName: cs.customer_name || 'Walk-in Customer',
-              referenceType: 'COUNTER_SALE',
+              referenceType: 'COUNTER_SALE' as any,
               referenceId: cs.id,
               referenceNumber: cs.invoice_number || cs.sale_number,
               description: `Counter Sale Receipt #${cs.invoice_number || cs.sale_number}`,
@@ -312,86 +357,135 @@ export class CashbookService {
             });
           }
         }
+      } catch (csEx) {
+        console.warn('[getTransactions] counter_sales query notice:', csEx);
       }
-
-      // B. Payments recorded against invoices
-      let payQuery = supabase
-        .from('payments')
-        .select('*')
-        .eq('workspace_id', wsId);
-
-      if (start) payQuery = payQuery.gte('date', start);
-      if (end) payQuery = payQuery.lte('date', end);
-
-      const { data: payList } = await payQuery;
-      if (payList) {
-        for (const p of payList) {
-          const amt = Number(p.amount) || 0;
-          if (amt > 0) {
-            list.push({
-              id: `cb-pay-${p.id}`,
-              workspaceId: p.workspace_id,
-              transactionCode: p.payment_number || `PAY-${p.id.substring(0, 8)}`,
-              transactionDate: p.date,
-              transactionType: 'CUSTOMER_PAYMENT',
-              direction: 'IN',
-              amount: amt,
-              paymentMode: (p.payment_method || 'Cash') as any,
-              partyName: 'Customer',
-              referenceType: 'PAYMENT',
-              referenceId: p.id,
-              referenceNumber: p.reference_number || p.payment_number,
-              description: `Payment Received #${p.payment_number || ''}`,
-              status: 'COMPLETED',
-              createdAt: p.created_at,
-            });
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('[synthesizeCashbookFromLiveSources] notice:', e);
     }
 
-    list.sort((a, b) => (b.transactionDate > a.transactionDate ? 1 : -1));
-    return list;
+    // 4. Local Storage fallback / mirror check
+    const local = safeGetTenantStorage<any>(LOCAL_CASHBOOK_KEY, []);
+    for (const t of local) {
+      const key = `${t.sourceType || 'MANUAL'}:${t.sourceId || t.id}:${t.direction || 'IN'}`;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        mergedList.push({
+          id: t.id,
+          workspaceId: t.workspaceId,
+          transactionCode: t.entryNumber,
+          transactionDate: t.entryDate,
+          transactionType: 'CUSTOMER_PAYMENT',
+          direction: t.direction as any,
+          amount: Number(t.amount) || 0,
+          paymentMode: t.paymentMethod as any,
+          partyName: t.partyName || 'Customer',
+          referenceType: t.sourceType as any,
+          referenceId: t.sourceId,
+          referenceNumber: t.referenceNumber,
+          description: t.description,
+          notes: t.notes,
+          status: 'COMPLETED',
+          createdAt: t.createdAt,
+        });
+      }
+    }
+
+    // Filter by Date Range (exact boundary matching)
+    let filtered = mergedList.filter((tx) => {
+      if (start && tx.transactionDate < start) return false;
+      if (end && tx.transactionDate > end) return false;
+      return true;
+    });
+
+    // Filter by Payment Mode (UPI, Cash, Card, Bank Transfer, etc.)
+    if (options?.paymentMode && options.paymentMode !== 'ALL') {
+      const targetMode = options.paymentMode.toLowerCase();
+      filtered = filtered.filter((tx) => {
+        const mode = (tx.paymentMode || '').toLowerCase();
+        if (targetMode === 'bank' || targetMode === 'bank transfer') {
+          return mode.includes('bank') || mode.includes('neft') || mode.includes('rtgs') || mode.includes('imps');
+        }
+        return mode === targetMode || mode.includes(targetMode);
+      });
+    }
+
+    // Filter by Search Query
+    if (options?.search && options.search.trim() !== '') {
+      const q = options.search.toLowerCase().trim();
+      filtered = filtered.filter(
+        (tx) =>
+          (tx.partyName && tx.partyName.toLowerCase().includes(q)) ||
+          (tx.referenceNumber && tx.referenceNumber.toLowerCase().includes(q)) ||
+          (tx.transactionCode && tx.transactionCode.toLowerCase().includes(q)) ||
+          (tx.description && tx.description.toLowerCase().includes(q)) ||
+          (tx.paymentMode && String(tx.paymentMode).toLowerCase().includes(q))
+      );
+    }
+
+    // Deterministic Sort: Latest transactionDate first, then latest created
+    filtered.sort((a, b) => {
+      if (b.transactionDate !== a.transactionDate) {
+        return b.transactionDate.localeCompare(a.transactionDate);
+      }
+      return (b.createdAt || '').localeCompare(a.createdAt || '');
+    });
+
+    return { data: filtered, count: filtered.length };
   }
 
   /**
-   * Calculate Cashbook liquidity metrics
+   * Calculate Authoritative Cashbook Liquidity & Account Summaries.
+   * PHASE 18 COMPLIANCE:
+   * Separates Cash, UPI, Bank, Card, and Cheque accounts without combining UPI into physical cash.
    */
   public async getSummaryMetrics(options?: CashbookFilterOptions): Promise<CashbookSummaryMetrics> {
-    const { data: allTxs } = await this.getTransactions({ ...options, page: undefined, pageSize: undefined });
+    const { data: allTxs } = await this.getTransactions({ ...options, paymentMode: undefined });
 
     let totalReceipts = 0;
     let totalPayments = 0;
-    let cashBalance = 0;
-    let bankBalance = 0;
+
+    let cashReceipts = 0;
+    let upiReceipts = 0;
+    let bankReceipts = 0;
+    let cardReceipts = 0;
+    let chequeReceipts = 0;
+
+    let cashPayments = 0;
+    let upiPayments = 0;
+    let bankPayments = 0;
+    let cardPayments = 0;
+    let chequePayments = 0;
 
     for (const tx of allTxs) {
       const amt = Number(tx.amount) || 0;
       const mode = (tx.paymentMode || 'Cash').toLowerCase();
-      const isCash = mode.includes('cash');
+      const isReceipt = tx.direction === 'IN';
 
-      if (tx.direction === 'IN') {
+      if (isReceipt) {
         totalReceipts += amt;
-        if (isCash) cashBalance += amt;
-        else bankBalance += amt;
-      } else if (tx.direction === 'OUT') {
+        if (mode.includes('upi')) upiReceipts += amt;
+        else if (mode.includes('bank') || mode.includes('neft') || mode.includes('rtgs')) bankReceipts += amt;
+        else if (mode.includes('card')) cardReceipts += amt;
+        else if (mode.includes('cheque')) chequeReceipts += amt;
+        else cashReceipts += amt;
+      } else {
         totalPayments += amt;
-        if (isCash) cashBalance -= amt;
-        else bankBalance -= amt;
+        if (mode.includes('upi')) upiPayments += amt;
+        else if (mode.includes('bank') || mode.includes('neft') || mode.includes('rtgs')) bankPayments += amt;
+        else if (mode.includes('card')) cardPayments += amt;
+        else if (mode.includes('cheque')) chequePayments += amt;
+        else cashPayments += amt;
       }
     }
 
     const now = new Date().toISOString();
     const wsId = await this.getWorkspaceId();
 
-    const defaultAccounts: AccountBalanceSummary[] = [
+    const accountSummaries: AccountBalanceSummary[] = [
       {
         account: {
           id: 'acc-cash',
           workspaceId: wsId,
-          name: 'Cash In Hand',
+          name: 'Cash in Hand',
           accountType: 'CASH',
           openingBalance: 0,
           openingBalanceDate: new Date().toISOString().split('T')[0],
@@ -401,17 +495,37 @@ export class CashbookService {
           updatedAt: now,
         },
         openingBalance: 0,
-        totalReceipts: cashBalance,
-        totalPayments: 0,
+        totalReceipts: cashReceipts,
+        totalPayments: cashPayments,
         totalTransfersIn: 0,
         totalTransfersOut: 0,
-        closingBalance: cashBalance,
+        closingBalance: cashReceipts - cashPayments,
+      },
+      {
+        account: {
+          id: 'acc-upi',
+          workspaceId: wsId,
+          name: 'UPI Clearing',
+          accountType: 'UPI',
+          openingBalance: 0,
+          openingBalanceDate: new Date().toISOString().split('T')[0],
+          isDefault: false,
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+        },
+        openingBalance: 0,
+        totalReceipts: upiReceipts,
+        totalPayments: upiPayments,
+        totalTransfersIn: 0,
+        totalTransfersOut: 0,
+        closingBalance: upiReceipts - upiPayments,
       },
       {
         account: {
           id: 'acc-bank',
           workspaceId: wsId,
-          name: 'Bank & UPI Accounts',
+          name: 'Bank Accounts',
           accountType: 'BANK',
           openingBalance: 0,
           openingBalanceDate: new Date().toISOString().split('T')[0],
@@ -421,11 +535,51 @@ export class CashbookService {
           updatedAt: now,
         },
         openingBalance: 0,
-        totalReceipts: bankBalance,
-        totalPayments: 0,
+        totalReceipts: bankReceipts,
+        totalPayments: bankPayments,
         totalTransfersIn: 0,
         totalTransfersOut: 0,
-        closingBalance: bankBalance,
+        closingBalance: bankReceipts - bankPayments,
+      },
+      {
+        account: {
+          id: 'acc-card',
+          workspaceId: wsId,
+          name: 'Card Settlement',
+          accountType: 'CARD',
+          openingBalance: 0,
+          openingBalanceDate: new Date().toISOString().split('T')[0],
+          isDefault: false,
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+        },
+        openingBalance: 0,
+        totalReceipts: cardReceipts,
+        totalPayments: cardPayments,
+        totalTransfersIn: 0,
+        totalTransfersOut: 0,
+        closingBalance: cardReceipts - cardPayments,
+      },
+      {
+        account: {
+          id: 'acc-cheque',
+          workspaceId: wsId,
+          name: 'Cheques in Hand',
+          accountType: 'OTHER',
+          openingBalance: 0,
+          openingBalanceDate: new Date().toISOString().split('T')[0],
+          isDefault: false,
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+        },
+        openingBalance: 0,
+        totalReceipts: chequeReceipts,
+        totalPayments: chequePayments,
+        totalTransfersIn: 0,
+        totalTransfersOut: 0,
+        closingBalance: chequeReceipts - chequePayments,
       },
     ];
 
@@ -435,7 +589,7 @@ export class CashbookService {
       totalPayments,
       totalTransfers: 0,
       totalClosingBalance: totalReceipts - totalPayments,
-      accountSummaries: defaultAccounts,
+      accountSummaries,
     };
   }
 
@@ -472,6 +626,106 @@ export class CashbookService {
     } catch (e: any) {
       return { success: false, error: e.message || 'Transfer failed' };
     }
+  }
+
+  /**
+   * Diagnostic & Historical Reconciliation Tool.
+   * PHASE 11 & 22 COMPLIANCE:
+   * Reconciles all payments against cashbook entries idempotently without duplicating records.
+   */
+  public async reconcileInvoicePaymentsWithCashbook(): Promise<{
+    totalPayments: number;
+    existingCashbookEntries: number;
+    reconciledCount: number;
+    missingCount: number;
+    discrepancyAmount: number;
+    details: string[];
+  }> {
+    const wsId = await this.getWorkspaceId();
+    const details: string[] = [];
+
+    let paymentsList: any[] = [];
+    if (isSupabaseConfigured() && isValidUuid(wsId)) {
+      try {
+        const { data } = await supabase
+          .from('payments')
+          .select('*')
+          .eq('workspace_id', wsId);
+        if (data) paymentsList = data;
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    if (paymentsList.length === 0) {
+      paymentsList = safeGetTenantStorage<any>('vistaar_local_payments_db', []);
+    }
+
+    // Fetch existing cashbook entries
+    let existingCb: any[] = [];
+    if (isSupabaseConfigured() && isValidUuid(wsId)) {
+      try {
+        const { data } = await supabase
+          .from('cashbook_entries')
+          .select('*')
+          .eq('workspace_id', wsId);
+        if (data) existingCb = data;
+      } catch (e) {
+        // ignore
+      }
+    }
+    const localCb = safeGetTenantStorage<any>(LOCAL_CASHBOOK_KEY, []);
+    const existingIds = new Set<string>();
+
+    for (const cb of [...existingCb, ...localCb]) {
+      if (cb.sourceId) existingIds.add(String(cb.sourceId));
+      if (cb.source_id) existingIds.add(String(cb.source_id));
+    }
+
+    let reconciledCount = 0;
+    let missingCount = 0;
+    let discrepancyAmount = 0;
+
+    for (const p of paymentsList) {
+      const amt = Number(p.amount) || 0;
+      const method = p.method || p.payment_method || 'Cash';
+      if (amt <= 0) continue;
+      if (method === 'Credit / Udhari' || method === 'Credit' || method === 'Udhari') continue;
+
+      if (!existingIds.has(String(p.id))) {
+        missingCount++;
+        discrepancyAmount += amt;
+
+        // Idempotently create missing cashbook entry
+        const res = await this.recordCashbookEntry({
+          sourceType: 'INVOICE_PAYMENT',
+          sourceId: p.id,
+          referenceNumber: p.invoice_number || p.payment_number,
+          direction: 'IN',
+          amount: amt,
+          paymentMethod: method,
+          partyName: p.customer_name || 'Customer',
+          description: `Payment received for Invoice #${p.invoice_number || p.payment_number}`,
+          notes: p.reference_no ? `Ref: ${p.reference_no}` : undefined,
+          transactionDate: p.payment_date || (p.created_at ? p.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
+        });
+
+        if (res.success) {
+          reconciledCount++;
+          existingIds.add(String(p.id));
+          details.push(`Backfilled Payment #${p.payment_number || p.id} (₹${amt} via ${method})`);
+        }
+      }
+    }
+
+    return {
+      totalPayments: paymentsList.length,
+      existingCashbookEntries: existingCb.length + localCb.length,
+      reconciledCount,
+      missingCount,
+      discrepancyAmount,
+      details,
+    };
   }
 }
 

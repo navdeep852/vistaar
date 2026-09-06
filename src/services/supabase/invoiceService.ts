@@ -213,36 +213,6 @@ export class InvoiceService {
             description: `Invoice #${invNumber}`,
             transactionDate: invoice.date || new Date().toISOString().split('T')[0],
           });
-
-          const initialPaid = Number(invoice.paidAmount) || 0;
-          if (initialPaid > 0) {
-            await daybookService.recordFinancialTransaction({
-              referenceType: 'INVOICE',
-              referenceId: `${invoiceId}-receipt`,
-              referenceNumber: invNumber,
-              transactionType: 'CUSTOMER_PAYMENT',
-              direction: 'IN',
-              amount: initialPaid,
-              partyType: 'customer',
-              partyId: invoice.customerId || undefined,
-              partyName: invoice.customerName || 'Customer',
-              description: `Initial Receipt for Invoice #${invNumber}`,
-              transactionDate: invoice.date || new Date().toISOString().split('T')[0],
-            });
-
-            const { cashbookService } = await import('./cashbookService');
-            await cashbookService.recordCashbookEntry({
-              sourceType: 'INVOICE',
-              sourceId: invoiceId,
-              referenceNumber: invNumber,
-              direction: 'IN',
-              amount: initialPaid,
-              paymentMethod: 'Cash',
-              partyName: invoice.customerName || 'Customer',
-              description: `Initial payment for Invoice #${invNumber}`,
-              transactionDate: invoice.date || new Date().toISOString().split('T')[0],
-            });
-          }
         } catch (dbErr) {
           console.warn('[createInvoice] Accounting record notice:', dbErr);
         }
