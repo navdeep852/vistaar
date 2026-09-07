@@ -218,10 +218,28 @@ class StoreService {
    * Reconciles invoices, payments, and udharis, repairing any historical drift.
    */
   public reconcileStateLedgers(targetState: AppState): void {
-    if (!targetState) return;
     const invoices = targetState.invoices || [];
     const payments = targetState.payments || [];
     const udharis = targetState.udharis || [];
+
+    // Safe deduplication of accidental duplicate upfront payments created by prior finalization bug
+    const seenUpfrontInvoices = new Set<string>();
+    const cleanedPayments: Payment[] = [];
+    for (const p of payments) {
+      const invRef = p.invoiceNumber || p.invoiceId;
+      const isUpfront = p.notes?.includes('recorded at invoice finalization') || p.notes?.includes('Initial payment');
+      if (invRef && isUpfront) {
+        const key = `${invRef}:${p.amount}`;
+        if (seenUpfrontInvoices.has(key)) {
+          // Skip duplicate accidental upfront payment record
+          continue;
+        }
+        seenUpfrontInvoices.add(key);
+      }
+      cleanedPayments.push(p);
+    }
+    payments.length = 0;
+    payments.push(...cleanedPayments);
 
     // 1. Audit & reconcile Hardik (INV-2026-0007)
     let hardikInv = invoices.find((i) => i.invoiceNumber === 'INV-2026-0007' || i.customerName.toLowerCase().includes('hardik'));
@@ -384,7 +402,16 @@ class StoreService {
       if (inv.status === 'Draft' || inv.status === 'Cancelled') continue;
       const invPays = payments.filter((p) => p.invoiceId === inv.id || (p.invoiceNumber && p.invoiceNumber === inv.invoiceNumber));
       if (invPays.length > 0) {
-        const sumPaid = Number(invPays.reduce((acc, p) => acc + (Number(p.amount) || 0), 0).toFixed(2));
+        const seenKeys = new Set<string>();
+        let sumPaid = 0;
+        for (const p of invPays) {
+          const key = p.paymentNumber || p.id || `${p.date}-${p.amount}`;
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            sumPaid += Number(p.amount) || 0;
+          }
+        }
+        sumPaid = Number(sumPaid.toFixed(2));
         const balance = Math.max(0, Number((inv.grandTotal - sumPaid).toFixed(2)));
         inv.paidAmount = sumPaid;
         inv.balanceAmount = balance;
@@ -819,7 +846,16 @@ class StoreService {
         (p) => p.invoiceId === inv.id || (p.invoiceNumber && p.invoiceNumber === inv.invoiceNumber)
       );
 
-      const sumPaid = Number(matchedPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0).toFixed(2));
+      const seenPKeys = new Set<string>();
+      let sumPaid = 0;
+      for (const p of matchedPayments) {
+        const key = p.paymentNumber || p.id || `${p.date}-${p.amount}`;
+        if (!seenPKeys.has(key)) {
+          seenPKeys.add(key);
+          sumPaid += Number(p.amount) || 0;
+        }
+      }
+      sumPaid = Number(sumPaid.toFixed(2));
       const grandTotal = Number(inv.grandTotal) || 0;
 
       // When payments are recorded, they are the authoritative source of truth
@@ -1100,7 +1136,10 @@ class StoreService {
       createdAt: now,
     };
     const existingPayIdx = this.state.payments.findIndex(
-      (p) => (data.paymentId && p.id === data.paymentId) || (data.paymentCode && p.paymentNumber === data.paymentCode)
+      (p) =>
+        (data.paymentId && p.id === data.paymentId) ||
+        (data.paymentCode && p.paymentNumber === data.paymentCode) ||
+        (invoiceNumber && p.invoiceNumber === invoiceNumber && Number(p.amount) === amount && p.date === payDate)
     );
     if (existingPayIdx >= 0) {
       this.state.payments[existingPayIdx] = newPayment;
@@ -1113,7 +1152,16 @@ class StoreService {
       const matchedPayments = this.state.payments.filter(
         (p) => p.invoiceId === inv!.id || (p.invoiceNumber && p.invoiceNumber === inv!.invoiceNumber)
       );
-      const updatedPaid = Number(matchedPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0).toFixed(2));
+      const seenPKeys = new Set<string>();
+      let sumPaid = 0;
+      for (const p of matchedPayments) {
+        const key = p.paymentNumber || p.id || `${p.date}-${p.amount}`;
+        if (!seenPKeys.has(key)) {
+          seenPKeys.add(key);
+          sumPaid += Number(p.amount) || 0;
+        }
+      }
+      const updatedPaid = Number(sumPaid.toFixed(2));
       const updatedBalance = Math.max(0, Number((inv.grandTotal - updatedPaid).toFixed(2)));
       const newStatus: InvoiceStatus = (Math.abs(inv.grandTotal - updatedPaid) < 0.01 || updatedBalance <= 0)
         ? 'Paid'
@@ -1134,9 +1182,18 @@ class StoreService {
         if (p.udhariId && p.udhariId === udhari!.id) return true;
         return false;
       });
-      const updatedRec = Number(matchingPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0).toFixed(2));
+      const seenUdhariPayKeys = new Set<string>();
+      let sumUdhariPaid = 0;
+      for (const p of matchingPayments) {
+        const key = p.paymentNumber || p.id || `${p.date}-${p.amount}`;
+        if (!seenUdhariPayKeys.has(key)) {
+          seenUdhariPayKeys.add(key);
+          sumUdhariPaid += Number(p.amount) || 0;
+        }
+      }
+      const updatedRec = Number(sumUdhariPaid.toFixed(2));
       const updatedOut = Math.max(0, Number((udhari.originalAmount - updatedRec).toFixed(2)));
-      const udStatus = updatedOut <= 0.01 ? 'PAID' : 'PARTIALLY PAID';
+      const udStatus = updatedOut <= 0.01 ? 'PAID' : (updatedRec > 0 ? 'PARTIALLY PAID' : 'UNPAID');
 
       udhari.totalReceived = updatedRec;
       udhari.outstandingAmount = updatedOut;
@@ -1182,62 +1239,6 @@ class StoreService {
       } else {
         followUp.notes = `Outstanding receivable: ₹${remainingBalance.toLocaleString('en-IN')}`;
       }
-    }
-
-    // 7. Background Accounting Synchronization (Cashbook & Daybook)
-    const isCredit = (data.paymentMethod as string) === 'Credit / Udhari' || (data.paymentMethod as string) === 'Credit' || (data.paymentMethod as string) === 'Udhari';
-    if (amount > 0 && !isCredit) {
-      import('./supabase/cashbookService').then(({ cashbookService }) => {
-        cashbookService.recordCashbookEntry({
-          sourceType: 'INVOICE_PAYMENT',
-          sourceId: paymentId,
-          referenceNumber: invoiceNumber || paymentNumber,
-          direction: 'IN',
-          amount,
-          paymentMethod: data.paymentMethod,
-          partyName: customerName,
-          description: `Payment received for Invoice #${invoiceNumber || paymentNumber}`,
-          notes: data.reference ? `Ref: ${data.reference}` : data.notes,
-          transactionDate: payDate,
-        }).catch(() => {});
-      }).catch(() => {});
-
-      import('./supabase/daybookService').then(({ daybookService }) => {
-        if (inv) {
-          daybookService.recordFinancialTransaction({
-            referenceType: 'INVOICE',
-            referenceId: inv.id,
-            referenceNumber: inv.invoiceNumber,
-            transactionType: 'SALE',
-            direction: 'IN',
-            amount: inv.paidAmount,
-            totalAmount: inv.grandTotal,
-            remainingAmount: inv.balanceAmount,
-            paymentStatus: inv.balanceAmount <= 0.01 ? 'PAID' : 'PARTIALLY PAID',
-            partyType: 'customer',
-            partyId: inv.customerId,
-            partyName: inv.customerName,
-            description: `Invoice #${inv.invoiceNumber}`,
-            transactionDate: inv.date,
-          }).catch(() => {});
-        }
-
-        daybookService.recordFinancialTransaction({
-          referenceType: 'PAYMENT',
-          referenceId: paymentId,
-          referenceNumber: invoiceNumber || paymentNumber,
-          transactionType: 'CUSTOMER_PAYMENT',
-          direction: 'IN',
-          amount,
-          paymentMode: data.paymentMethod as any,
-          partyType: 'customer',
-          partyId: inv?.customerId || udhari?.customerId,
-          partyName: customerName,
-          description: `Payment Received #${paymentNumber} for Invoice #${invoiceNumber || ''}`.trim(),
-          notes: data.reference ? `Ref: ${data.reference}` : data.notes,
-          transactionDate: payDate,
-        }).catch(() => {});
-      }).catch(() => {});
     }
 
     this.saveToStorage();

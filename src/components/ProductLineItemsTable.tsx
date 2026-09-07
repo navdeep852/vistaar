@@ -12,6 +12,7 @@ import {
   getProductStock,
 } from '../lib/productHelpers';
 import { showToast } from './Toast';
+import { ALLOWED_TAX_RATES } from '../constants/tax';
 
 export interface LineItemRow {
   itemType?: 'product' | 'custom';
@@ -66,7 +67,7 @@ export const ProductLineItemsTable: React.FC<ProductLineItemsTableProps> = ({
   const partNumberInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({});
   const quantityInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({});
   const rateInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({});
-  const taxInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({});
+  const taxInputRefs = useRef<{ [key: number]: HTMLInputElement | HTMLSelectElement | null }>({});
 
   // When a new blank row is added, auto-focus its Part Number input
   const pendingFocusIndexRef = useRef<number | null>(null);
@@ -517,7 +518,6 @@ export const ProductLineItemsTable: React.FC<ProductLineItemsTableProps> = ({
                             e.preventDefault();
                             if (isInvoice) {
                               taxInputRefs.current[idx]?.focus();
-                              taxInputRefs.current[idx]?.select();
                             } else {
                               handleAddItem();
                             }
@@ -525,7 +525,6 @@ export const ProductLineItemsTable: React.FC<ProductLineItemsTableProps> = ({
                             if (isInvoice) {
                               e.preventDefault();
                               taxInputRefs.current[idx]?.focus();
-                              taxInputRefs.current[idx]?.select();
                             }
                           }
                         }}
@@ -538,28 +537,25 @@ export const ProductLineItemsTable: React.FC<ProductLineItemsTableProps> = ({
                   {/* Column 5: Tax (%) — INVOICE & QUOTATION */}
                   {isInvoice && (
                     <td className="py-2.5 px-3 align-top text-right">
-                      <div className="relative inline-block w-full max-w-[80px]">
-                        <input
+                      <div className="relative inline-block w-full max-w-[85px]">
+                        <select
                           ref={(el) => { taxInputRefs.current[idx] = el; }}
-                          type="number"
-                          step="0.1"
-                          min="0"
-                          max="100"
                           value={item.taxPercent ?? 18}
-                          onChange={(e) => handleTaxChange(idx, parseFloat(e.target.value) || 0)}
-                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => handleTaxChange(idx, parseInt(e.target.value, 10) || 0)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
                               e.preventDefault();
                               handleAddItem();
                             }
                           }}
-                          className="w-full pr-5 pl-2 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          placeholder="18"
-                        />
-                        <span className="absolute right-2 top-2 text-[11px] font-bold text-slate-400 pointer-events-none">
-                          %
-                        </span>
+                          className="w-full px-2 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 text-right focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                        >
+                          {ALLOWED_TAX_RATES.map((rate) => (
+                            <option key={rate} value={rate}>
+                              {rate}%
+                            </option>
+                          ))}
+                        </select>
                       </div>
                     </td>
                   )}
@@ -745,15 +741,17 @@ export const ProductLineItemsTable: React.FC<ProductLineItemsTableProps> = ({
                     <label className="block text-[10px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">
                       Tax (%)
                     </label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0"
+                    <select
                       value={item.taxPercent ?? 18}
-                      onChange={(e) => handleTaxChange(idx, parseFloat(e.target.value) || 0)}
-                      className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 text-right"
-                      placeholder="18"
-                    />
+                      onChange={(e) => handleTaxChange(idx, parseInt(e.target.value, 10) || 0)}
+                      className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 text-right cursor-pointer"
+                    >
+                      {ALLOWED_TAX_RATES.map((rate) => (
+                        <option key={rate} value={rate}>
+                          {rate}%
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="text-right flex flex-col justify-end">
@@ -919,15 +917,17 @@ export const ProductLineItemsTable: React.FC<ProductLineItemsTableProps> = ({
                 <label className="block text-[10px] font-bold uppercase text-slate-600 dark:text-slate-400 mb-1">
                   Tax Rate (%)
                 </label>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.1"
+                <select
                   value={customForm.taxPercent}
-                  onChange={(e) => setCustomForm({ ...customForm, taxPercent: Math.max(0, parseFloat(e.target.value) || 0) })}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 text-right"
-                />
+                  onChange={(e) => setCustomForm({ ...customForm, taxPercent: parseInt(e.target.value, 10) || 0 })}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 text-right cursor-pointer"
+                >
+                  {ALLOWED_TAX_RATES.map((rate) => (
+                    <option key={rate} value={rate}>
+                      {rate}%
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 

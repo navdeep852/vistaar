@@ -18,6 +18,7 @@ export interface CustomerPaymentPayload {
   paymentDate?: string;
   reference?: string;
   notes?: string;
+  isUpfrontInvoicePayment?: boolean;
 }
 
 export interface CustomerPaymentResult {
@@ -155,6 +156,7 @@ export class CustomerPaymentService {
         payment_code: paymentCode,
         reference: payload.reference || null,
         notes: payload.notes || null,
+        is_upfront_payment: !!payload.isUpfrontInvoicePayment,
       };
 
       try {
@@ -327,30 +329,34 @@ export class CustomerPaymentService {
             }
 
             // 6. Record Daybook Payment Event (strictly adhering to verified production columns)
-            try {
-              const dbTxId = crypto.randomUUID ? crypto.randomUUID() : undefined;
-              const dtPayload: any = {
-                workspace_id: wsId,
-                transaction_code: `ACC-${paymentCode}`,
-                transaction_date: paymentDate,
-                transaction_type: 'CUSTOMER_PAYMENT',
-                direction: 'IN',
-                amount,
-                payment_mode: paymentMethod,
-                reference_type: 'PAYMENT',
-                reference_id: paymentId,
-                reference_number: invoiceNumber || paymentCode,
-                party_type: 'customer',
-                party_id: resolvedCustomerId || null,
-                party_name: customerName,
-                description: `Payment Received #${paymentCode} for ${invoiceNumber || customerName}`,
-                notes: payload.reference ? `Ref: ${payload.reference}` : payload.notes,
-              };
-              if (dbTxId) dtPayload.id = dbTxId;
+            // Upfront invoice payments ALREADY have a SALE entry recording cash inflow.
+            // Only subsequent customer payments create a CUSTOMER_PAYMENT entry to avoid double counting.
+            if (!payload.isUpfrontInvoicePayment) {
+              try {
+                const dbTxId = crypto.randomUUID ? crypto.randomUUID() : undefined;
+                const dtPayload: any = {
+                  workspace_id: wsId,
+                  transaction_code: `ACC-${paymentCode}`,
+                  transaction_date: paymentDate,
+                  transaction_type: 'CUSTOMER_PAYMENT',
+                  direction: 'IN',
+                  amount,
+                  payment_mode: paymentMethod,
+                  reference_type: 'PAYMENT',
+                  reference_id: paymentId,
+                  reference_number: invoiceNumber || paymentCode,
+                  party_type: 'customer',
+                  party_id: resolvedCustomerId || null,
+                  party_name: customerName,
+                  description: `Payment Received #${paymentCode} for ${invoiceNumber || customerName}`,
+                  notes: payload.reference ? `Ref: ${payload.reference}` : payload.notes,
+                };
+                if (dbTxId) dtPayload.id = dbTxId;
 
-              await supabase.from('daybook_transactions').insert([dtPayload]);
-            } catch (dbErr) {
-              console.warn('[customerPaymentService] Daybook sync notice:', dbErr);
+                await supabase.from('daybook_transactions').insert([dtPayload]);
+              } catch (dbErr) {
+                console.warn('[customerPaymentService] Daybook sync notice:', dbErr);
+              }
             }
 
             // 7. Record Cashbook Entry (Liquidity movement with safe fallback if table absent)

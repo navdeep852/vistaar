@@ -170,7 +170,7 @@ export class PaymentService {
     }
   }
 
-  public async createPayment(payment: Partial<Payment>): Promise<{ paymentId?: string; error?: string }> {
+  public async createPayment(payment: Partial<Payment> & { isUpfrontInvoicePayment?: boolean }): Promise<{ paymentId?: string; error?: string }> {
     const amount = Number(payment.amount) || 0;
     if (isNaN(amount) || amount <= 0) {
       return { error: 'Payment amount must be greater than zero.' };
@@ -188,6 +188,7 @@ export class PaymentService {
         paymentDate: payment.date,
         reference: payment.referenceNo,
         notes: payment.notes,
+        isUpfrontInvoicePayment: payment.isUpfrontInvoicePayment,
       });
 
       if (!res.success) {

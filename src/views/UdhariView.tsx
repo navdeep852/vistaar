@@ -1321,7 +1321,8 @@ export const UdhariView: React.FC = () => {
               </label>
               <input
                 type="number"
-                step="0.01"
+                step="1"
+                min="1"
                 required
                 value={payAmount}
                 onChange={(e) => handlePayAmountChange(e.target.value)}

@@ -187,7 +187,8 @@ export class CashbookService {
     const local = safeGetTenantStorage<any>(LOCAL_CASHBOOK_KEY, []);
     // Deduplicate in local storage
     const exists = local.some((e: any) =>
-      params.sourceId && e.sourceType === params.sourceType && e.sourceId === params.sourceId && e.direction === params.direction
+      (params.sourceId && e.sourceType === params.sourceType && e.sourceId === params.sourceId && e.direction === params.direction) ||
+      (params.referenceNumber && e.referenceNumber === params.referenceNumber && Number(e.amount) === amount && e.entryDate === entryDate && e.direction === params.direction)
     );
     if (!exists) {
       local.unshift(localEntry);
@@ -209,6 +210,7 @@ export class CashbookService {
 
     const mergedList: DaybookTransaction[] = [];
     const seenKeys = new Set<string>();
+    const seenReceiptKeys = new Set<string>();
     const seenPaymentIds = new Set<string>();
     const seenCounterSaleIds = new Set<string>();
 
@@ -227,7 +229,10 @@ export class CashbookService {
         if (!cbErr && cbData) {
           for (const row of cbData) {
             const key = `${row.source_type || 'MANUAL'}:${row.source_id || row.id}:${row.direction || 'IN'}`;
+            const rRef = row.reference_number || row.party_name || '';
+            const receiptKey = `${row.direction || 'IN'}:${rRef}:${row.amount}:${row.entry_date}`;
             seenKeys.add(key);
+            if (rRef) seenReceiptKeys.add(receiptKey);
             if (row.source_type === 'INVOICE_PAYMENT' && row.source_id) {
               seenPaymentIds.add(String(row.source_id));
             }
@@ -277,15 +282,17 @@ export class CashbookService {
             if (amt <= 0) continue;
             if (method === 'Credit / Udhari' || method === 'Credit' || method === 'Udhari') continue;
 
+            const txDate = p.payment_date || (p.created_at ? p.created_at.split('T')[0] : new Date().toISOString().split('T')[0]);
             const key = `INVOICE_PAYMENT:${p.id}:IN`;
-            if (seenPaymentIds.has(p.id) || seenKeys.has(key)) {
+            const rRef = p.invoice_number || p.customer_name || '';
+            const receiptKey = `IN:${rRef}:${amt}:${txDate}`;
+            if (seenPaymentIds.has(p.id) || seenKeys.has(key) || (rRef && seenReceiptKeys.has(receiptKey))) {
               continue;
             }
 
             seenKeys.add(key);
+            if (rRef) seenReceiptKeys.add(receiptKey);
             seenPaymentIds.add(p.id);
-
-            const txDate = p.payment_date || (p.created_at ? p.created_at.split('T')[0] : new Date().toISOString().split('T')[0]);
             mergedList.push({
               id: `cb-pay-${p.id}`,
               workspaceId: p.workspace_id,
@@ -366,8 +373,11 @@ export class CashbookService {
     const local = safeGetTenantStorage<any>(LOCAL_CASHBOOK_KEY, []);
     for (const t of local) {
       const key = `${t.sourceType || 'MANUAL'}:${t.sourceId || t.id}:${t.direction || 'IN'}`;
-      if (!seenKeys.has(key)) {
+      const rRef = t.referenceNumber || t.partyName || '';
+      const receiptKey = `${t.direction || 'IN'}:${rRef}:${Number(t.amount) || 0}:${t.entryDate}`;
+      if (!seenKeys.has(key) && !(rRef && seenReceiptKeys.has(receiptKey))) {
         seenKeys.add(key);
+        if (rRef) seenReceiptKeys.add(receiptKey);
         mergedList.push({
           id: t.id,
           workspaceId: t.workspaceId,

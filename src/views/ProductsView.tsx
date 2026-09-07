@@ -781,7 +781,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
 
       if (rawGstRate !== '' && !GST_RATE_SLABS.includes(gstRate as any)) {
         status = 'ERROR';
-        messages.push(`Invalid GST Rate (${rawGstRate}%). Allowed GST rates: 0%, 5%, 12%, 18%, 28%.`);
+        messages.push(`Invalid GST Rate (${rawGstRate}%). Allowed GST rates: 0%, 5%, 12%, 18%, 40%.`);
       }
 
       // Check if product already exists (Section 37 & 38)
@@ -867,7 +867,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
 
       if (target.gstRate !== undefined && !GST_RATE_SLABS.includes(target.gstRate as any)) {
         status = 'ERROR';
-        messages.push(`Invalid GST Rate (${target.gstRate}%). Allowed GST rates: 0%, 5%, 12%, 18%, 28%.`);
+        messages.push(`Invalid GST Rate (${target.gstRate}%). Allowed GST rates: 0%, 5%, 12%, 18%, 40%.`);
       }
 
       if (target.isExistingProduct && status !== 'ERROR') {

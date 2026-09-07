@@ -769,6 +769,12 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         });
 
         // Validation: Paid amount check
+        if (paymentStatus === 'Partially Paid' && (paidAmountInput <= 0 || isNaN(paidAmountInput))) {
+          showToast('Payment amount must be greater than ₹0.', 'error');
+          setIsFinalizing(false);
+          return;
+        }
+
         if (paymentStatus === 'Partially Paid' && paidAmountInput > grandTotal) {
           showToast(`Paid amount (${settings.currency}${paidAmountInput}) cannot exceed grand total (${settings.currency}${grandTotal.toFixed(2)})`, 'error');
           setIsFinalizing(false);
@@ -882,8 +888,10 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
             referenceNo: paymentReference || undefined,
             notes: paymentNotes || `Payment recorded at invoice finalization`,
           };
-          store.recordPayment(payData);
-          await paymentService.createPayment(payData);
+          await paymentService.createPayment({
+            ...payData,
+            isUpfrontInvoicePayment: true,
+          } as any);
         }
 
         showToast(`Invoice ${invoiceNumStr} finalized & snapshot saved!`, 'success');
@@ -1405,17 +1413,19 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
                     type="number"
                     min={0}
                     max={grandTotal}
-                    step="0.01"
+                    step="1"
                     disabled={paymentStatus === 'Unpaid'}
-                    value={paymentStatus === 'Paid' ? grandTotal.toFixed(2) : paidAmountInput}
+                    value={paymentStatus === 'Paid' ? Math.round(grandTotal) : paidAmountInput}
                     onChange={(e) => {
-                      const val = parseFloat(e.target.value) || 0;
+                      const raw = e.target.value;
+                      const val = raw === '' ? 0 : Math.floor(parseFloat(raw) || 0);
                       if (val > grandTotal) {
                         showToast(`Paid amount cannot exceed grand total (${settings.currency}${grandTotal.toFixed(2)})`, 'info');
                       }
                       setPaidAmountInput(val);
-                      if (val <= 0 && paymentStatus !== 'Unpaid') setPaymentStatus('Unpaid');
-                      else if (val >= grandTotal && paymentStatus !== 'Paid') setPaymentStatus('Paid');
+                      if (val >= grandTotal && grandTotal > 0 && paymentStatus !== 'Paid') {
+                        setPaymentStatus('Paid');
+                      }
                     }}
                     className={`w-full px-3 py-2 border rounded-xl text-xs font-bold ${
                       paymentStatus === 'Unpaid'

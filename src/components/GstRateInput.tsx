@@ -1,8 +1,10 @@
 import React from 'react';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 
-export const GST_RATE_SLABS = [0, 5, 12, 18, 28] as const;
-export type GstRateSlab = (typeof GST_RATE_SLABS)[number];
+import { ALLOWED_TAX_RATES, AllowedTaxRate, normalizeToNearestAllowedTaxRate } from '../constants/tax';
+
+export const GST_RATE_SLABS = ALLOWED_TAX_RATES;
+export type GstRateSlab = AllowedTaxRate;
 
 export interface GstRateInputProps {
   value?: number;
@@ -16,22 +18,10 @@ export interface GstRateInputProps {
 }
 
 /**
- * Normalizes any number to the nearest legal Indian GST rate slab.
+ * Normalizes any number to the nearest legal Indian GST rate slab (0, 5, 12, 18, 40).
  */
 export function normalizeToNearestGstSlab(rate: number): GstRateSlab {
-  if ((GST_RATE_SLABS as readonly number[]).includes(rate)) {
-    return rate as GstRateSlab;
-  }
-  let closest: GstRateSlab = GST_RATE_SLABS[0];
-  let minDiff = Math.abs(rate - closest);
-  for (let i = 1; i < GST_RATE_SLABS.length; i++) {
-    const diff = Math.abs(rate - GST_RATE_SLABS[i]);
-    if (diff < minDiff) {
-      minDiff = diff;
-      closest = GST_RATE_SLABS[i];
-    }
-  }
-  return closest;
+  return normalizeToNearestAllowedTaxRate(rate);
 }
 
 export const GstRateInput: React.FC<GstRateInputProps> = ({

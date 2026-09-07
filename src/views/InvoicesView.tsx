@@ -402,10 +402,11 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Payment Amount ({settings.currency})</label>
               <input
                 type="number"
-                step="0.01"
+                step="1"
+                min="1"
                 required
-                value={payAmount}
-                onChange={(e) => setPayAmount(parseFloat(e.target.value) || 0)}
+                value={payAmount || ''}
+                onChange={(e) => setPayAmount(Math.floor(parseFloat(e.target.value) || 0))}
                 className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-bold text-slate-900 dark:text-slate-100"
               />
             </div>
