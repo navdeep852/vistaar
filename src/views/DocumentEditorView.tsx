@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { store } from '../services/store';
 import { invoiceService } from '../services/supabase/invoiceService';
+import { quotationService } from '../services/supabase/quotationService';
 import { paymentService } from '../services/supabase/paymentService';
 import { productService } from '../services/supabase/productService';
 import { customerService } from '../services/supabase/customerService';
@@ -417,8 +418,10 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
 
     return {
       id: `item-${idx}`,
+      itemType: (item as any).itemType || (item.productId ? 'product' : 'custom'),
       productId: item.productId,
       productName: item.productName,
+      description: (item as any).description,
       partNumber: item.partNumber,
       sku: item.sku || item.partNumber || '',
       unit: item.unit || 'Pcs',
@@ -914,7 +917,14 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           },
           customization,
         });
-        showToast(`Quotation ${qt.quotationNumber} finalized & snapshot saved!`, 'success');
+
+        // Sync quotation with Supabase
+        const qtRes = await quotationService.createQuotation(qt, calculatedItems as QuotationItem[]);
+        if (qtRes.error) {
+          console.warn('[DocumentEditorView] Quotation Supabase sync notice:', qtRes.error);
+        }
+
+        showToast(`Quotation ${qt.quotationNumber} finalized & saved!`, 'success');
       }
 
       setFinalizeConfirmOpen(false);
@@ -1332,7 +1342,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
               </div>
 
               <ProductLineItemsTable
-                mode="invoice"
+                mode={documentType === 'quotation' ? 'quotation' : 'invoice'}
                 items={items as any}
                 onChange={(newItems) => setItems(newItems as any)}
                 currency={settings.currency}
@@ -1982,7 +1992,14 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
               state={settings.state}
               pincode={settings.pincode}
               gstin={settings.gstin}
-              bankDetails={settings.bankDetails}
+              bankDetails={{
+                ...settings.bankDetails,
+                upiQrCodeUrl:
+                  (settings as any).upi_qr_url ||
+                  (settings as any).upiQrUrl ||
+                  (settings as any).upiQrCodeUrl ||
+                  settings.bankDetails?.upiQrCodeUrl,
+              }}
               customerName={customerName || 'Customer Name'}
               customerPhone={customerPhone}
               customerWhatsapp={customerWhatsapp}

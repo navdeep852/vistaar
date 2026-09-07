@@ -25,6 +25,7 @@ import {
   AlertTriangle,
   Camera,
   User,
+  QrCode,
 } from 'lucide-react';
 import { businessSettingsService } from '../services/supabase';
 import { supabaseAuthService as auth } from '../services/supabaseAuth';
@@ -91,6 +92,7 @@ export const SettingsView: React.FC = () => {
       ifscCode: '',
       branch: '',
       upiId: '',
+      upiQrCodeUrl: '',
     },
     bankDetails: {
       bankName: '',
@@ -99,7 +101,13 @@ export const SettingsView: React.FC = () => {
       ifscCode: '',
       branch: '',
       upiId: '',
+      upiQrCodeUrl: '',
     },
+    upi_qr_url: '',
+    upiQrUrl: '',
+    upiQrCodeUrl: '',
+    show_upi_qr_on_quotation: true,
+    showUpiQrOnQuotation: true,
     show_bank_on_invoice: true,
     showBankDetailsOnInvoice: true,
     show_bank_on_quotation: true,
@@ -242,6 +250,11 @@ export const SettingsView: React.FC = () => {
         stampScale: stScale,
         bank_details: bDetails,
         bankDetails: bDetails,
+        upi_qr_url: data.upi_qr_url ?? data.upiQrUrl ?? data.upiQrCodeUrl ?? bDetails?.upiQrCodeUrl ?? '',
+        upiQrUrl: data.upi_qr_url ?? data.upiQrUrl ?? data.upiQrCodeUrl ?? bDetails?.upiQrCodeUrl ?? '',
+        upiQrCodeUrl: data.upi_qr_url ?? data.upiQrUrl ?? data.upiQrCodeUrl ?? bDetails?.upiQrCodeUrl ?? '',
+        show_upi_qr_on_quotation: data.show_upi_qr_on_quotation ?? data.showUpiQrOnQuotation ?? true,
+        showUpiQrOnQuotation: data.show_upi_qr_on_quotation ?? data.showUpiQrOnQuotation ?? true,
         show_bank_on_invoice: showBankInv,
         showBankDetailsOnInvoice: showBankInv,
         show_bank_on_quotation: showBankQuot,
@@ -358,10 +371,16 @@ export const SettingsView: React.FC = () => {
   // Asset Upload with Format & Size Validation (<5MB)
   const handleAssetUpload = (
     e: React.ChangeEvent<HTMLInputElement>,
-    type: 'logo' | 'signature' | 'stamp'
+    type: 'logo' | 'signature' | 'stamp' | 'upiQr'
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!validTypes.includes(file.type.toLowerCase())) {
+      showToast('Please upload a valid image file (PNG, JPG, WEBP).', 'error');
+      return;
+    }
 
     if (file.size > 5 * 1024 * 1024) {
       showToast('File size must be under 5MB.', 'error');
@@ -377,17 +396,40 @@ export const SettingsView: React.FC = () => {
         setFormData((prev: any) => ({ ...prev, signature_url: url, signatureUrl: url }));
       } else if (type === 'stamp') {
         setFormData((prev: any) => ({ ...prev, stamp_url: url, stampUrl: url }));
+      } else if (type === 'upiQr') {
+        setFormData((prev: any) => ({
+          ...prev,
+          upi_qr_url: url,
+          upiQrUrl: url,
+          upiQrCodeUrl: url,
+          bankDetails: {
+            ...(prev.bankDetails || {}),
+            upiQrCodeUrl: url,
+          },
+        }));
       }
-      showToast(`${type.toUpperCase()} uploaded successfully! Remember to save settings.`, 'success');
+      showToast(`${type === 'upiQr' ? 'UPI QR' : type.toUpperCase()} uploaded successfully! Remember to save settings.`, 'success');
     };
     reader.readAsDataURL(file);
   };
 
-  const handleRemoveAsset = (type: 'logo' | 'signature' | 'stamp') => {
+  const handleRemoveAsset = (type: 'logo' | 'signature' | 'stamp' | 'upiQr') => {
     if (type === 'logo') setFormData((prev: any) => ({ ...prev, logo_url: '', logoUrl: '' }));
     if (type === 'signature') setFormData((prev: any) => ({ ...prev, signature_url: '', signatureUrl: '' }));
     if (type === 'stamp') setFormData((prev: any) => ({ ...prev, stamp_url: '', stampUrl: '' }));
-    showToast(`Removed business ${type}.`, 'info');
+    if (type === 'upiQr') {
+      setFormData((prev: any) => ({
+        ...prev,
+        upi_qr_url: '',
+        upiQrUrl: '',
+        upiQrCodeUrl: '',
+        bankDetails: {
+          ...(prev.bankDetails || {}),
+          upiQrCodeUrl: '',
+        },
+      }));
+    }
+    showToast(`Removed business ${type === 'upiQr' ? 'UPI QR code' : type}.`, 'info');
   };
 
   // Profile Photo Upload Handler with Format & Size Validation (< 5MB)
@@ -1343,6 +1385,70 @@ export const SettingsView: React.FC = () => {
               </div>
             </div>
 
+            {/* UPI QR Code Section */}
+            <div className="pt-5 border-t border-slate-100 dark:border-slate-800 space-y-3">
+              <div>
+                <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
+                  UPI QR Code (Scan to Pay)
+                </h4>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Upload your business UPI QR code (GPay, PhonePe, Paytm, or BHIM) to display on quotation payment sections.
+                </p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800">
+                {/* QR Thumbnail Preview */}
+                <div className="w-24 h-24 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 flex items-center justify-center overflow-hidden shrink-0">
+                  {(formData.upi_qr_url || formData.upiQrCodeUrl || formData.bankDetails?.upiQrCodeUrl) ? (
+                    <img
+                      src={formData.upi_qr_url || formData.upiQrCodeUrl || formData.bankDetails?.upiQrCodeUrl}
+                      alt="UPI QR Code Preview"
+                      className="w-full h-full object-contain p-1"
+                    />
+                  ) : (
+                    <div className="text-center p-2">
+                      <QrCode className="w-6 h-6 mx-auto text-slate-400 mb-1" />
+                      <span className="text-[9px] font-bold text-slate-400 block uppercase">No QR</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Upload & Management Actions */}
+                <div className="flex-1 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1.5 shadow-sm">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>
+                        {(formData.upi_qr_url || formData.upiQrCodeUrl || formData.bankDetails?.upiQrCodeUrl)
+                          ? 'Replace QR Code'
+                          : 'Upload UPI QR'}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg,image/webp"
+                        onChange={(e) => handleAssetUpload(e, 'upiQr')}
+                        className="hidden"
+                      />
+                    </label>
+
+                    {(formData.upi_qr_url || formData.upiQrCodeUrl || formData.bankDetails?.upiQrCodeUrl) && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveAsset('upiQr')}
+                        className="px-3 py-1.5 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/50 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Remove QR</span>
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                    PNG, JPG, or WEBP up to 5MB. Make sure the QR code is clear and sharp for reliable scanning.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-2">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -1362,6 +1468,22 @@ export const SettingsView: React.FC = () => {
                   className="w-4 h-4 rounded text-blue-600"
                 />
                 <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Show Bank Details on Quotations by default</span>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.show_upi_qr_on_quotation ?? formData.showUpiQrOnQuotation ?? true}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      show_upi_qr_on_quotation: e.target.checked,
+                      showUpiQrOnQuotation: e.target.checked,
+                    })
+                  }
+                  className="w-4 h-4 rounded text-blue-600"
+                />
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Show UPI QR Code on Quotations by default</span>
               </label>
             </div>
           </div>

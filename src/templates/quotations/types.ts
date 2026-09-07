@@ -37,7 +37,9 @@ export interface BusinessData {
     ifscCode?: string;
     branch?: string;
     upiId?: string;
+    upiQrCodeUrl?: string;
   };
+  upiQrCodeUrl?: string;
 }
 
 export interface CustomerData {

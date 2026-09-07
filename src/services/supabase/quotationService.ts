@@ -94,8 +94,11 @@ export class QuotationService {
         const itemRows = items.map((item) => ({
           workspace_id: wsId,
           quotation_id: quotationId,
+          item_type: item.itemType || (item.productId ? 'product' : 'custom'),
           product_id: item.productId || null,
           product_name: item.productName,
+          description: item.description || null,
+          part_number: item.partNumber || null,
           sku: item.sku || '',
           unit: item.unit || 'Pcs',
           quantity: item.quantity,

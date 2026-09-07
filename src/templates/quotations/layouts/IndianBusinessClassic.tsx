@@ -89,8 +89,15 @@ export const IndianBusinessClassic: React.FC<QuotationTemplateProps> = ({
             {quotation.items.map((item, idx) => (
               <tr key={idx}>
                 <td className="p-2 border-r border-slate-200 text-slate-500">{idx + 1}</td>
-                <td className="p-2 border-r border-slate-200 font-bold text-slate-900">{item.productName}</td>
-                <td className="p-2 border-r border-slate-200 text-center font-mono text-[10px]">{item.sku || '9983'}</td>
+                <td className="p-2 border-r border-slate-200 font-bold text-slate-900">
+                  <div>{item.productName}</div>
+                  {(item as any).description && (
+                    <div className="text-[10px] font-normal text-slate-500 mt-0.5 whitespace-pre-line">
+                      {(item as any).description}
+                    </div>
+                  )}
+                </td>
+                <td className="p-2 border-r border-slate-200 text-center font-mono text-[10px]">{item.sku || item.partNumber || '9983'}</td>
                 <td className="p-2 border-r border-slate-200 text-center">{item.quantity} {item.unit || 'Pcs'}</td>
                 <td className="p-2 border-r border-slate-200 text-right">{Number(item.sellingPrice).toLocaleString()}</td>
                 <td className="p-2 border-r border-slate-200 text-center">{item.taxPercent || 0}%</td>
@@ -112,6 +119,19 @@ export const IndianBusinessClassic: React.FC<QuotationTemplateProps> = ({
             <p className="text-slate-700">IFSC Code: <strong>{business.bankDetails.ifscCode}</strong></p>
             <p className="text-slate-700">Branch: {business.bankDetails.branch || 'Main Branch'}</p>
             {business.bankDetails.upiId && <p className="text-blue-700 font-bold">UPI ID: {business.bankDetails.upiId}</p>}
+            {business.bankDetails.upiQrCodeUrl && (
+              <div className="mt-2 pt-2 border-t border-slate-200 flex items-center gap-2">
+                <img
+                  src={business.bankDetails.upiQrCodeUrl}
+                  alt="Scan to Pay UPI QR"
+                  className="w-14 h-14 object-contain rounded border border-slate-200 bg-white p-0.5 shrink-0"
+                />
+                <div>
+                  <span className="text-[9px] font-bold text-slate-500 uppercase block">Scan to Pay</span>
+                  <span className="text-[10px] text-slate-600">Scan via GPay / PhonePe / Paytm</span>
+                </div>
+              </div>
+            )}
           </div>
         ) : <div />}
 

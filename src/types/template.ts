@@ -78,6 +78,7 @@ export interface DocumentCustomization {
   showHsnSac: boolean;
   showBankDetails: boolean;
   showUpi: boolean;
+  showUpiQr?: boolean;
   showSignature: boolean;
   showStamp: boolean;
   showTerms: boolean;
@@ -129,6 +130,7 @@ export interface DocumentSnapshot {
     ifscCode: string;
     branch: string;
     upiId: string;
+    upiQrCodeUrl?: string;
   };
   branding: BrandingConfig;
   theme: ThemeConfig;

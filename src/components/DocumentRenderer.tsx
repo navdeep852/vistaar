@@ -29,6 +29,7 @@ export interface DocumentRendererProps {
     ifscCode?: string;
     branch?: string;
     upiId?: string;
+    upiQrCodeUrl?: string;
   };
 
   // Customer details
@@ -544,8 +545,20 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
                 >
                   <td className="p-3 font-semibold text-slate-400">{idx + 1}</td>
                   <td className="p-3 font-bold text-slate-900">
-                    {item.productName || 'Item'}
-                    {item.sku && <span className="text-[10px] text-slate-400 font-normal ml-2">SKU: {item.sku}</span>}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span>{item.productName || 'Item'}</span>
+                      {item.sku && <span className="text-[10px] text-slate-400 font-normal">SKU: {item.sku}</span>}
+                      {(item as any).itemType === 'custom' && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold">
+                          Custom
+                        </span>
+                      )}
+                    </div>
+                    {(item as any).description && (
+                      <p className="text-[11px] text-slate-500 font-normal mt-0.5 whitespace-pre-line">
+                        {(item as any).description}
+                      </p>
+                    )}
                   </td>
                   <td className="p-3 text-center font-medium">{item.quantity || 1} {item.unit || 'Pcs'}</td>
                   <td className="p-3 text-right font-medium">{Number(item.sellingPrice || 0).toLocaleString()}</td>
@@ -560,7 +573,7 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
 
       {/* TOTALS & TERMS SECTION */}
       <div className="flex flex-row justify-between items-start gap-6 border-t pt-6 border-slate-200 break-inside-avoid">
-        {/* Left Column: Notes & Terms */}
+        {/* Left Column: Notes & Terms & Bank/UPI */}
         <div className="flex-1 space-y-4 text-xs text-slate-600">
           {showNotes && notes && (
             <div>
@@ -572,6 +585,32 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
             <div>
               <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Terms & Conditions:</span>
               <p className="bg-slate-50 p-3 rounded-lg border border-slate-100 whitespace-pre-line">{terms}</p>
+            </div>
+          )}
+          {showBankDetails && bankDetails && (bankDetails.bankName || bankDetails.upiId || (bankDetails as any).upiQrCodeUrl) && (
+            <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 space-y-2">
+              <span className="text-[10px] font-bold uppercase text-slate-400 block">Bank & Remittance Details:</span>
+              <div className="text-slate-700 text-[11px] space-y-0.5">
+                {bankDetails.bankName && <p className="font-bold text-slate-900">{bankDetails.bankName}</p>}
+                {bankDetails.accountNo && <p>Account No: <strong className="text-slate-900">{bankDetails.accountNo}</strong></p>}
+                {bankDetails.ifscCode && <p>IFSC Code: <strong className="text-slate-900">{bankDetails.ifscCode}</strong></p>}
+                {bankDetails.branch && <p>Branch: {bankDetails.branch}</p>}
+                {showUpi && bankDetails.upiId && <p className="text-blue-700 font-bold">UPI ID: {bankDetails.upiId}</p>}
+              </div>
+
+              {showUpi && (bankDetails as any).upiQrCodeUrl && (
+                <div className="mt-2 pt-2 border-t border-slate-200 flex items-center gap-3">
+                  <img
+                    src={(bankDetails as any).upiQrCodeUrl}
+                    alt="Scan to Pay UPI QR"
+                    className="w-16 h-16 object-contain rounded border border-slate-200 bg-white p-0.5 shrink-0"
+                  />
+                  <div>
+                    <span className="text-[9px] font-bold text-slate-500 uppercase block">Scan to Pay</span>
+                    <span className="text-[10px] text-slate-600">Scan via GPay, PhonePe, Paytm or BHIM</span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

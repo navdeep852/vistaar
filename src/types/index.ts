@@ -360,8 +360,10 @@ export type QuotationStatus =
 
 export interface QuotationItem {
   id: string;
+  itemType?: 'product' | 'custom';
   productId?: string;
   productName: string;
+  description?: string;
   partNumber?: string;
   sku?: string;
   unit: string;
@@ -418,8 +420,10 @@ export type InvoiceStatus =
 
 export interface InvoiceItem {
   id: string;
+  itemType?: 'product' | 'custom';
   productId?: string;
   productName: string;
+  description?: string;
   partNumber?: string;
   sku?: string;
   unit: string;
@@ -695,7 +699,10 @@ export interface BusinessSettings {
     ifscCode: string;
     branch: string;
     upiId: string;
+    upiQrCodeUrl?: string;
   };
+  upiQrCodeUrl?: string;
+  showUpiQrOnQuotation?: boolean;
   showBankDetailsOnInvoice?: boolean;
   showBankDetailsOnQuotation?: boolean;
 

@@ -39,6 +39,9 @@ const FIELD_ALIASES: Record<string, string> = {
   brandColor: 'brand_color',
   businessDescription: 'business_description',
   addressLine2: 'address_line_2',
+  upiQrUrl: 'upi_qr_url',
+  upiQrCodeUrl: 'upi_qr_url',
+  showUpiQrOnQuotation: 'show_upi_qr_on_quotation',
 };
 
 const VALID_COLUMNS = new Set([
@@ -49,8 +52,9 @@ const VALID_COLUMNS = new Set([
   'default_quotation_validity', 'default_tax_mode', 'email', 'gstin', 'invoice_prefix',
   'legal_name', 'logo_alignment', 'logo_scale', 'logo_url', 'owner_name', 'pan', 'phone',
   'pincode', 'quotation_prefix', 'reg_number', 'show_bank_on_invoice', 'show_bank_on_quotation',
-  'signature_alignment', 'signature_scale', 'signature_url', 'stamp_alignment', 'stamp_scale',
-  'stamp_url', 'state', 'terms_and_conditions', 'theme', 'website',
+  'show_upi_qr_on_quotation', 'signature_alignment', 'signature_scale', 'signature_url',
+  'stamp_alignment', 'stamp_scale', 'stamp_url', 'state', 'terms_and_conditions', 'theme',
+  'upi_qr_url', 'website',
 ]);
 
 function sanitizeSettingsPayload(settings: Record<string, any>): Record<string, any> {
