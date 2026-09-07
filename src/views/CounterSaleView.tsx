@@ -40,21 +40,10 @@ import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
 import { PhoneInput } from '../components/PhoneInput';
 import { QuantityInput } from '../components/QuantityInput';
 import { ProductAutocomplete } from '../components/ProductAutocomplete';
+import { ProductLineItemsTable, LineItemRow } from '../components/ProductLineItemsTable';
 import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 
 type DateFilterType = 'ALL' | 'TODAY' | 'WEEK' | 'MONTH';
-
-interface DraftSaleItem {
-  productId: string;
-  productName: string;
-  partNumber: string;
-  availableStock: number;
-  minimumStock: number;
-  quantity: number;
-  rate: number;
-  amount: number;
-  unit: string;
-}
 
 interface CounterSaleViewProps {
   onNavigateTab?: (tab: string) => void;
@@ -77,7 +66,6 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   const [dateFilter, setDateFilter] = useState<DateFilterType>('ALL');
 
   // Workspace Modals state
-  const [productSelectorOpen, setProductSelectorOpen] = useState(false);
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [successModalOpen, setSuccessModalOpen] = useState(false);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
@@ -103,7 +91,8 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   const [paymentNotes, setPaymentNotes] = useState<string>('');
 
   // Line Items State
-  const [lineItems, setLineItems] = useState<DraftSaleItem[]>([]);
+  const [lineItems, setLineItems] = useState<LineItemRow[]>([]);
+  const [usesPartNumber, setUsesPartNumber] = useState<boolean>(false);
   const [productSearch, setProductSearch] = useState('');
 
   // Active Target Records
@@ -112,14 +101,21 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   const [activeStockMovements, setActiveStockMovements] = useState<StockMovement[]>([]);
 
   const refreshData = async () => {
-    const saleRes = await counterSaleService.getCounterSales();
+    const [saleRes, prodRes, custRes, m, invRes] = await Promise.all([
+      counterSaleService.getCounterSales(),
+      productService.getProducts(),
+      customerService.getCustomers(),
+      counterSaleService.getCounterSaleMetrics(),
+      inventoryService.getInventorySettings(),
+    ]);
+
     setSales(saleRes.data || []);
-    const prodRes = await productService.getProducts();
     setProducts(prodRes.data || []);
-    const custRes = await customerService.getCustomers();
     setCustomers(custRes.data || []);
-    const m = await counterSaleService.getCounterSaleMetrics();
     setMetrics(m);
+    if (invRes.data?.usesPartNumber !== undefined && invRes.data?.usesPartNumber !== null) {
+      setUsesPartNumber(invRes.data.usesPartNumber);
+    }
   };
 
   useEffect(() => {
@@ -152,7 +148,19 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
     setDiscountType('fixed');
     setDiscountValue('');
     setNotes('');
-    setLineItems([]);
+    setLineItems([
+      {
+        productName: '',
+        partNumber: '',
+        sku: '',
+        unit: 'Pcs',
+        quantity: 1,
+        sellingPrice: 0,
+        taxPercent: 0,
+        discountAmount: 0,
+        availableStock: 0,
+      },
+    ]);
     setIsCreatingSale(true);
   };
 
@@ -173,82 +181,9 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
     }
   };
 
-  // Handlers: Add Product to Line Items
-  const handleSelectProduct = async (p: Product) => {
-    const fetchedAvail = await productService.getProductAvailableStock(p.id);
-    const avail = fetchedAvail;
-    if (avail <= 0) {
-      showToast(`"${p.name}" is currently OUT OF STOCK and cannot be added.`, 'error');
-      return;
-    }
-
-    const defaultRate = p.currentSellPrice || p.sellingPrice;
-
-    setLineItems((prev) => {
-      const existingIdx = prev.findIndex((item) => item.productId === p.id);
-      if (existingIdx > -1) {
-        const updated = [...prev];
-        const target = updated[existingIdx];
-        const newQty = Math.min(target.quantity + 1, avail);
-        updated[existingIdx] = {
-          ...target,
-          quantity: newQty,
-          amount: newQty * target.rate,
-        };
-        showToast(`Increased quantity for ${p.name} to ${newQty}`, 'info');
-        return updated;
-      } else {
-        return [
-          ...prev,
-          {
-            productId: p.id,
-            productName: p.productName || p.name,
-            partNumber: p.partNumber || p.sku,
-            availableStock: avail,
-            minimumStock: p.minimumStockLevel !== undefined ? p.minimumStockLevel : p.minimumStock,
-            quantity: 1,
-            rate: defaultRate,
-            amount: defaultRate,
-            unit: p.unit || 'Pcs',
-          },
-        ];
-      }
-    });
-
-    setProductSelectorOpen(false);
-  };
-
-  // Line Item Handlers
-  const handleUpdateItemQuantity = (index: number, qtyVal: number) => {
-    setLineItems((prev) => {
-      const next = [...prev];
-      const target = next[index];
-      const validQty = isNaN(qtyVal) ? 0 : qtyVal;
-      target.quantity = validQty;
-      target.amount = validQty * target.rate;
-      next[index] = target;
-      return next;
-    });
-  };
-
-  const handleUpdateItemRate = (index: number, rateVal: number) => {
-    setLineItems((prev) => {
-      const next = [...prev];
-      const target = next[index];
-      const validRate = isNaN(rateVal) || rateVal < 0 ? 0 : rateVal;
-      target.rate = validRate;
-      target.amount = target.quantity * validRate;
-      next[index] = target;
-      return next;
-    });
-  };
-
-  const handleRemoveItem = (index: number) => {
-    setLineItems((prev) => prev.filter((_, idx) => idx !== index));
-  };
 
   // Calculations
-  const subtotal = lineItems.reduce((acc, item) => acc + item.amount, 0);
+  const subtotal = lineItems.reduce((acc, item) => acc + ((item.quantity || 0) * (item.sellingPrice || 0)), 0);
   const rawDiscountVal = parseFloat(discountValue) || 0;
   let discountAmount = 0;
   if (discountType === 'percentage') {
@@ -273,13 +208,20 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   if (!counterSaleService.isInvoiceNumberUnique(invoiceNumber)) {
     validationErrors.push(`Invoice number "${invoiceNumber}" already exists.`);
   }
-  if (lineItems.length === 0) validationErrors.push('Select at least one product for the sale.');
 
-  lineItems.forEach((item) => {
-    if (item.quantity <= 0) {
+  const validItems = lineItems.filter((i) => i.productId && i.productName?.trim());
+  if (validItems.length === 0) {
+    validationErrors.push('Select at least one product for the sale.');
+  }
+
+  lineItems.forEach((item, idx) => {
+    if (!item.productId && item.productName?.trim()) {
+      validationErrors.push(`Row ${idx + 1} has not selected a valid catalog product.`);
+    }
+    if (item.productId && item.quantity <= 0) {
       validationErrors.push(`Quantity for "${item.productName}" must be greater than 0.`);
     }
-    if (item.quantity > item.availableStock) {
+    if (item.productId && item.availableStock !== undefined && item.quantity > item.availableStock) {
       validationErrors.push(
         `Insufficient stock for "${item.productName}". Requested ${item.quantity}, but only ${item.availableStock} units are available.`
       );
@@ -315,36 +257,36 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleConfirmAndCompleteSale = async () => {
-    if (isSubmitting) return;
     setIsSubmitting(true);
-
     try {
-      const cleanPhone = custPhone ? normalizeIndianPhoneNumber(custPhone) : '';
       const res = await counterSaleService.createCounterSale({
-        customerId: selectedCustomerId || undefined,
-        customerName: custName,
-        phoneNumber: cleanPhone,
-        saleDate,
         invoiceNumber,
-        estimateReference: estimateRef,
+        estimateRef: estimateRef || undefined,
+        customerName: custName,
+        customerPhone: custPhone ? normalizeIndianPhoneNumber(custPhone) : undefined,
+        customerId: selectedCustomerId || undefined,
+        saleDate,
+        subtotal,
         discountType,
         discountValue: rawDiscountVal,
         discountAmount,
-        subtotal,
         finalTotal,
+        status: 'COMPLETED',
         paymentMethod,
         amountReceived,
         balanceAmount,
-        paymentReference: paymentRef,
-        paymentNotes,
+        paymentReference: paymentRef || undefined,
+        paymentNotes: paymentNotes || undefined,
         notes,
-        items: lineItems.map((i) => ({
-          productId: i.productId,
-          productName: i.productName,
-          partNumber: i.partNumber,
-          quantity: i.quantity,
-          rate: i.rate,
-        })),
+        items: lineItems
+          .filter((i) => i.productId)
+          .map((i) => ({
+            productId: i.productId!,
+            productName: i.productName,
+            partNumber: i.partNumber || '',
+            quantity: i.quantity,
+            rate: i.sellingPrice,
+          })),
       });
 
       if (!res.success) throw new Error(res.error || 'Failed to record sale');
@@ -621,195 +563,26 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
 
             {/* SECTION 3: PRODUCTS & ITEMS */}
             <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-card space-y-4 w-full min-w-0 transition-colors">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
                 <div className="flex items-center gap-2">
                   <div className="w-7 h-7 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center font-black text-xs shrink-0">
                     3
                   </div>
-                  <h2 className="text-base font-extrabold text-slate-900 dark:text-slate-100">3. Products & Stock</h2>
+                  <h2 className="text-base font-extrabold text-slate-900 dark:text-slate-100">3. Products & Line Items</h2>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => setProductSelectorOpen(true)}
-                  className="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs inline-flex items-center gap-2 shadow-md shadow-indigo-600/20 cursor-pointer shrink-0"
-                >
-                  <Plus className="w-4 h-4 stroke-[3]" />
-                  <span>+ Browse Inventory Catalog</span>
-                </button>
+                <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500">
+                  {usesPartNumber ? 'Part Number Mode Active' : 'Part Number Optional'}
+                </span>
               </div>
 
-              {/* REAL-TIME PRODUCT AUTOCOMPLETE FIELD */}
-              <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2">
-                <label className="block text-xs font-extrabold text-slate-700 dark:text-slate-300 uppercase">
-                  Add Product (Search Name, SKU, Part #, or Barcode)
-                </label>
-                <ProductAutocomplete
-                  onSelectProduct={(p) => handleSelectProduct(p)}
-                  placeholder="Focus or type product name, SKU, part number, or barcode..."
-                  fallbackProducts={products}
-                />
-              </div>
-
-              {/* Validation Warning Inline if no products selected */}
-              {lineItems.length === 0 && (
-                <div className="p-3 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-900/60 rounded-2xl text-amber-800 dark:text-amber-300 text-xs font-semibold flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                  <span>Select at least one product for the sale using the search bar above or catalog browser.</span>
-                </div>
-              )}
-
-              {/* Line Items List */}
-              {lineItems.length === 0 ? (
-                <div className="p-10 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-3xl text-center space-y-3 bg-slate-50/50 dark:bg-slate-800/20 w-full min-w-0">
-                  <Boxes className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto" />
-                  <div>
-                    <p className="text-sm font-extrabold text-slate-700 dark:text-slate-300">No Products Selected</p>
-                    <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                      Click the <strong>+ Add Product from Inventory</strong> button above to add products.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3 w-full min-w-0">
-                  {/* DESKTOP TABLE VIEW */}
-                  <div className="hidden md:block overflow-x-auto w-full min-w-0">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                          <th className="p-3 min-w-[200px]">Product Name</th>
-                          <th className="p-3 min-w-[130px]">Part Number</th>
-                          <th className="p-3 min-w-[110px]">Available Stock</th>
-                          <th className="p-3 w-28 text-center">Quantity</th>
-                          <th className="p-3 w-32 text-right">Unit Price</th>
-                          <th className="p-3 w-32 text-right">Total</th>
-                          <th className="p-3 w-16 text-center">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {lineItems.map((item, idx) => {
-                          const isOverStock = item.quantity > item.availableStock;
-                          const remainingAfterSale = item.availableStock - item.quantity;
-                          const isLowAfterSale = remainingAfterSale <= item.minimumStock && !isOverStock;
-
-                          return (
-                            <tr key={item.productId} className={isOverStock ? 'bg-rose-50/60 dark:bg-rose-950/40' : isLowAfterSale ? 'bg-amber-50/40 dark:bg-amber-950/30' : ''}>
-                              <td className="p-3">
-                                <span className="font-extrabold text-slate-900 dark:text-slate-100 block">{item.productName}</span>
-                                {isOverStock && (
-                                  <span className="text-[10px] text-rose-600 dark:text-rose-400 font-bold block mt-0.5">
-                                    ⚠️ Insufficient stock! Only {item.availableStock} available.
-                                  </span>
-                                )}
-                                {isLowAfterSale && (
-                                  <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold block mt-0.5">
-                                    ⚠️ Only {remainingAfterSale} will remain after sale.
-                                  </span>
-                                )}
-                              </td>
-                              <td className="p-3 font-mono font-bold text-blue-600 dark:text-blue-400">{item.partNumber}</td>
-                              <td className="p-3 font-bold text-slate-700 dark:text-slate-300">
-                                <span className={`px-2.5 py-1 rounded-full text-[10px] font-black ${isOverStock ? 'bg-rose-200 dark:bg-rose-950 text-rose-900 dark:text-rose-200' : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'}`}>
-                                  {item.availableStock} {item.unit}
-                                </span>
-                              </td>
-                              <td className="p-3 text-center">
-                                <QuantityInput
-                                  size="sm"
-                                  min={1}
-                                  max={item.availableStock}
-                                  value={item.quantity}
-                                  onChange={(val) => handleUpdateItemQuantity(idx, val)}
-                                  ariaLabel={`Quantity for ${item.productName}`}
-                                />
-                              </td>
-                              <td className="p-3 text-right">
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  required
-                                  value={item.rate}
-                                  onChange={(e) => handleUpdateItemRate(idx, parseFloat(e.target.value) || 0)}
-                                  className="w-28 px-2 py-1.5 bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 text-right focus:outline-none focus:border-blue-500"
-                                />
-                              </td>
-                              <td className="p-3 text-right font-black text-slate-900 dark:text-slate-100 text-sm">
-                                {formatCurrency(item.amount)}
-                              </td>
-                              <td className="p-3 text-center">
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveItem(idx)}
-                                  className="p-1.5 text-rose-500 dark:text-rose-400 hover:text-rose-700 hover:bg-rose-100 dark:hover:bg-rose-950/60 rounded-lg transition-colors cursor-pointer"
-                                  title="Remove Product"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* MOBILE CARDS VIEW */}
-                  <div className="block md:hidden space-y-3 w-full min-w-0">
-                    {lineItems.map((item, idx) => {
-                      const isOverStock = item.quantity > item.availableStock;
-                      return (
-                        <div key={item.productId} className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3 text-xs w-full min-w-0">
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <h4 className="font-extrabold text-slate-900 dark:text-slate-100 text-sm">{item.productName}</h4>
-                              <span className="font-mono font-bold text-blue-600 dark:text-blue-400 text-xs">Part #: {item.partNumber}</span>
-                            </div>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300">
-                              Avail: {item.availableStock} {item.unit}
-                            </span>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-3 pt-1">
-                            <div>
-                              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Quantity</label>
-                              <QuantityInput
-                                size="md"
-                                min={1}
-                                max={item.availableStock}
-                                value={item.quantity}
-                                onChange={(val) => handleUpdateItemQuantity(idx, val)}
-                                ariaLabel={`Quantity for ${item.productName}`}
-                                className="w-full justify-between"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Selling Rate</label>
-                              <input
-                                type="number"
-                                value={item.rate}
-                                onChange={(e) => handleUpdateItemRate(idx, parseFloat(e.target.value) || 0)}
-                                className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl font-bold text-right text-slate-900 dark:text-slate-100"
-                              />
-                            </div>
-                          </div>
-
-                          <div className="flex justify-between items-center pt-2 border-t border-slate-200 dark:border-slate-800">
-                            <span className="font-black text-slate-900 dark:text-slate-100 text-sm">Amount: {formatCurrency(item.amount)}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveItem(idx)}
-                              className="px-3 py-1.5 bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/60 rounded-xl font-bold text-xs cursor-pointer"
-                            >
-                              Remove Product
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              <ProductLineItemsTable
+                mode="counterSale"
+                items={lineItems}
+                onChange={(newItems) => setLineItems(newItems)}
+                currency="₹"
+                fallbackProducts={products}
+                usesPartNumber={usesPartNumber}
+              />
             </div>
 
             {/* SECTION 4: DISCOUNT & SUMMARY */}
@@ -1319,25 +1092,6 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
 
       {/* --- ALL SHARED MODALS --- */}
 
-      {/* 1. SEARCHABLE PRODUCT SELECTOR MODAL */}
-      <Modal
-        isOpen={productSelectorOpen}
-        onClose={() => setProductSelectorOpen(false)}
-        title="Select Product from Inventory Catalog"
-        maxWidth="3xl"
-      >
-        <div className="space-y-4 py-2">
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Type to search by Product Name, SKU, Part Number, or Barcode:
-          </p>
-          <ProductAutocomplete
-            autoFocus
-            onSelectProduct={(p) => handleSelectProduct(p)}
-            placeholder="Search by Part Number, Product Name, Barcode, or SKU..."
-            fallbackProducts={products}
-          />
-        </div>
-      </Modal>
 
       {/* 2. PRE-SUBMISSION REVIEW MODAL */}
       <Modal
@@ -1386,16 +1140,16 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
           {/* Stock Impact Summary */}
           <div className="space-y-2">
             <span className="font-bold text-slate-500 dark:text-slate-400 uppercase block">Stock After Sale Breakdown:</span>
-            {lineItems.map((item) => (
-              <div key={item.productId} className="flex justify-between items-center p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+            {lineItems.filter((item) => item.productId).map((item, idx) => (
+              <div key={item.productId || idx} className="flex justify-between items-center p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
                 <div>
                   <span className="font-bold text-slate-900 dark:text-slate-100">{item.productName}</span>
-                  <span className="text-[10px] text-slate-400 dark:text-slate-500 block font-mono">Part #: {item.partNumber}</span>
+                  <span className="text-[10px] text-slate-400 dark:text-slate-500 block font-mono">Part #: {item.partNumber || 'N/A'}</span>
                 </div>
                 <div className="text-right">
-                  <span className="font-black text-rose-600 dark:text-rose-400">-{item.quantity} {item.unit}</span>
+                  <span className="font-black text-rose-600 dark:text-rose-400">-{item.quantity} {item.unit || 'Pcs'}</span>
                   <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold block">
-                    ({item.availableStock - item.quantity} units remaining)
+                    ({(item.availableStock ?? 0) - item.quantity} units remaining)
                   </span>
                 </div>
               </div>

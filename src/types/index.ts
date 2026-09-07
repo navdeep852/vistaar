@@ -362,6 +362,7 @@ export interface QuotationItem {
   id: string;
   productId?: string;
   productName: string;
+  partNumber?: string;
   sku?: string;
   unit: string;
   quantity: number;
@@ -419,6 +420,7 @@ export interface InvoiceItem {
   id: string;
   productId?: string;
   productName: string;
+  partNumber?: string;
   sku?: string;
   unit: string;
   quantity: number;

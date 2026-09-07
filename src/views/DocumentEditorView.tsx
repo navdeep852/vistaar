@@ -54,6 +54,8 @@ import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
 import { ProductAutocomplete } from '../components/ProductAutocomplete';
+import { ProductLineItemsTable } from '../components/ProductLineItemsTable';
+import { inventoryService } from '../services/supabase/inventoryService';
 
 
 interface DocumentEditorViewProps {
@@ -92,6 +94,8 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
       store.getLastUsedTemplate(documentType)
   );
   const [galleryOpen, setGalleryOpen] = useState(false);
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [usesPartNumber, setUsesPartNumber] = useState<boolean>(false);
   const [mobileTab, setMobileTab] = useState<'editor' | 'preview'>('editor');
   const [editorSection, setEditorSection] = useState<
     'customer' | 'items' | 'payment' | 'branding' | 'appearance' | 'layout' | 'terms'
@@ -166,6 +170,11 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
 
   useEffect(() => {
     fetchCustomers();
+    inventoryService.getInventorySettings().then((res) => {
+      if (res.data?.usesPartNumber !== undefined && res.data.usesPartNumber !== null) {
+        setUsesPartNumber(res.data.usesPartNumber);
+      }
+    }).catch(() => {});
     productService.getProducts().then((res) => {
       if (res && res.data && res.data.length > 0) {
         setProducts(res.data);
@@ -197,27 +206,29 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
     sku?: string;
     partNumber?: string;
     availableStock?: number;
-    unit: string;
+    unit?: string;
     quantity: number;
     sellingPrice: number;
-    discountAmount: number;
+    discountAmount?: number;
     taxPercent: number;
   }
 
-
   const [items, setItems] = useState<EditorItem[]>(
-    initialDraftData?.items || [
-      {
-        productId: products[0]?.id,
-        productName: products[0]?.name || 'Wireless Bluetooth Headset',
-        sku: products[0]?.sku || 'SKU-HEADSET-01',
-        unit: 'Pcs',
-        quantity: 2,
-        sellingPrice: products[0]?.sellingPrice || 1999,
-        discountAmount: 0,
-        taxPercent: 18,
-      },
-    ]
+    initialDraftData?.items && initialDraftData.items.length > 0
+      ? initialDraftData.items
+      : [
+          {
+            productName: '',
+            partNumber: '',
+            sku: '',
+            unit: 'Pcs',
+            quantity: 1,
+            sellingPrice: 0,
+            discountAmount: 0,
+            taxPercent: 18,
+            availableStock: 0,
+          },
+        ]
   );
 
   // 4. Branding Assets State (Auto-fetches workspace defaults)
@@ -400,7 +411,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
   const calculatedItems: (QuotationItem | InvoiceItem)[] = items.map((item, idx) => {
     const prod = products.find((p) => p.id === item.productId);
     const lineSubtotal = item.quantity * item.sellingPrice;
-    const afterDiscount = Math.max(0, lineSubtotal - item.discountAmount);
+    const afterDiscount = Math.max(0, lineSubtotal - (item.discountAmount || 0));
     const taxAmount = (afterDiscount * item.taxPercent) / 100;
     const total = afterDiscount + taxAmount;
 
@@ -408,12 +419,13 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
       id: `item-${idx}`,
       productId: item.productId,
       productName: item.productName,
-      sku: item.sku,
-      unit: item.unit,
+      partNumber: item.partNumber,
+      sku: item.sku || item.partNumber || '',
+      unit: item.unit || 'Pcs',
       quantity: item.quantity,
       buyPrice: prod ? prod.buyPrice : 0, // NEVER exposed
       sellingPrice: item.sellingPrice,
-      discountAmount: item.discountAmount,
+      discountAmount: item.discountAmount || 0,
       taxPercent: item.taxPercent,
       taxAmount,
       total,
@@ -632,6 +644,23 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         return;
       }
 
+      // Validate that every row has a product selected and quantity > 0
+      for (let idx = 0; idx < items.length; idx++) {
+        const itm = items[idx];
+        if (!itm.productId && !itm.productName?.trim()) {
+          showToast(`Please select a product for row ${idx + 1}.`, 'error');
+          setIsFinalizing(false);
+          setEditorSection('items');
+          return;
+        }
+        if (!itm.quantity || itm.quantity <= 0) {
+          showToast(`Quantity for row ${idx + 1} ("${itm.productName || 'Product'}") must be greater than 0.`, 'error');
+          setIsFinalizing(false);
+          setEditorSection('items');
+          return;
+        }
+      }
+
       const cleanPhone = customerPhone ? normalizeIndianPhoneNumber(customerPhone) : '';
       const cleanWhatsapp = customerWhatsapp ? normalizeIndianPhoneNumber(customerWhatsapp) : cleanPhone;
 
@@ -715,7 +744,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         const invoiceItemsForSave: InvoiceItem[] = items.map((item, idx) => {
           const prod = products.find((p) => p.id === item.productId);
           const lineSubtotal = item.quantity * item.sellingPrice;
-          const afterDiscount = Math.max(0, lineSubtotal - item.discountAmount);
+          const afterDiscount = Math.max(0, lineSubtotal - (item.discountAmount || 0));
           const taxAmount = (afterDiscount * item.taxPercent) / 100;
           const total = afterDiscount + taxAmount;
 
@@ -723,12 +752,13 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
             id: `item-${idx}`,
             productId: item.productId,
             productName: item.productName,
-            sku: item.sku,
-            unit: item.unit,
+            partNumber: item.partNumber,
+            sku: item.sku || item.partNumber || '',
+            unit: item.unit || 'Pcs',
             quantity: item.quantity,
             buyPrice: prod ? prod.buyPrice : 0,
             sellingPrice: item.sellingPrice,
-            discountAmount: item.discountAmount,
+            discountAmount: item.discountAmount || 0,
             taxPercent: item.taxPercent,
             taxAmount,
             total,
@@ -1017,6 +1047,15 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           </div>
 
           <button
+            type="button"
+            onClick={() => setPreviewModalOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-xs font-bold text-white shadow-md shadow-blue-600/30 transition-colors cursor-pointer"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            <span>Preview {documentType === 'invoice' ? 'Invoice' : 'Quotation'}</span>
+          </button>
+
+          <button
             onClick={handleSaveDraft}
             className="flex items-center gap-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-white transition-colors cursor-pointer"
           >
@@ -1035,14 +1074,8 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
       }
     >
 
-      {/* Main Split Screen Desktop / Mobile Toggle */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* LEFT PANE: EDITOR CONTROLS */}
-        <div
-          className={`lg:col-span-5 space-y-5 ${
-            mobileTab === 'preview' ? 'hidden lg:block' : 'block'
-          }`}
-        >
+      {/* Main Workspace Editor Container */}
+      <div className="w-full max-w-5xl mx-auto space-y-5">
           {/* Section Selector Tabs */}
           <div className="flex bg-white dark:bg-slate-900 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs justify-between overflow-x-auto scrollbar-none transition-colors">
             {[
@@ -1293,151 +1326,19 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
             <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card space-y-4 transition-colors">
               <div className="flex items-center justify-between border-b pb-2 border-slate-100 dark:border-slate-800">
                 <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">Line Items & Pricing</h3>
-                <button
-                  type="button"
-                  onClick={handleAddItem}
-                  className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex items-center gap-1"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Add Line Item</span>
-                </button>
+                <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500">
+                  {usesPartNumber ? 'Part Number Mode Active' : 'Part Number Optional'}
+                </span>
               </div>
 
-              <div className="space-y-4 max-h-[400px] overflow-y-auto pr-1">
-                {items.map((item, idx) => (
-                  <div key={idx} className="p-3.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3 relative">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Item #{idx + 1}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveItem(idx)}
-                        className="text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-950/60 p-1 rounded-lg"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">
-                        Search & Select Product from Catalog
-                      </label>
-                      <ProductAutocomplete
-                        onSelectProduct={(prod) => handleSelectProductForLine(idx, prod)}
-                        selectedProductId={item.productId}
-                        selectedProductName={item.productName}
-                        currency={settings.currency}
-                        fallbackProducts={products}
-                      />
-                      {item.productId && (
-                        <div className="flex items-center justify-between text-[10px] pt-1">
-                          <span className="font-bold text-slate-500 dark:text-slate-400">
-                            Available Stock:{' '}
-                            <strong
-                              className={
-                                (item.quantity || 0) > ((item as any).availableStock ?? 0)
-                                  ? 'text-rose-600 dark:text-rose-400'
-                                  : 'text-emerald-600 dark:text-emerald-400'
-                              }
-                            >
-                              {(item as any).availableStock ?? 0} {item.unit || 'Pcs'}
-                            </strong>
-                          </span>
-                          {documentType === 'invoice' && (item.quantity || 0) > ((item as any).availableStock ?? 0) && (
-                            <span className="font-extrabold text-rose-600 dark:text-rose-400 flex items-center gap-1">
-                              ⚠️ Insufficient stock for finalization
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">
-                        Item / Service Description *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={item.productName}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setItems((prev) => {
-                            const updated = [...prev];
-                            updated[idx].productName = val;
-                            return updated;
-                          });
-                        }}
-                        className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-900 dark:text-slate-100"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-4 gap-2">
-                      <div>
-                        <label className="block text-[9px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">Qty</label>
-                        <QuantityInput
-                          size="sm"
-                          min={1}
-                          value={item.quantity}
-                          onChange={(val) => {
-                            setItems((prev) => {
-                              const updated = [...prev];
-                              updated[idx].quantity = val;
-                              return updated;
-                            });
-                          }}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[9px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">Price</label>
-                        <input
-                          type="number"
-                          value={item.sellingPrice}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value) || 0;
-                            setItems((prev) => {
-                              const updated = [...prev];
-                              updated[idx].sellingPrice = val;
-                              return updated;
-                            });
-                          }}
-                          className="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-900 dark:text-slate-100"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[9px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">Disc ({settings.currency})</label>
-                        <input
-                          type="number"
-                          value={item.discountAmount}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value) || 0;
-                            setItems((prev) => {
-                              const updated = [...prev];
-                              updated[idx].discountAmount = val;
-                              return updated;
-                            });
-                          }}
-                          className="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-900 dark:text-slate-100"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[9px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">Tax %</label>
-                        <GstRateInput
-                          size="sm"
-                          value={item.taxPercent}
-                          onChange={(val) => {
-                            setItems((prev) => {
-                              const updated = [...prev];
-                              updated[idx].taxPercent = val;
-                              return updated;
-                            });
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <ProductLineItemsTable
+                mode="invoice"
+                items={items as any}
+                onChange={(newItems) => setItems(newItems as any)}
+                currency={settings.currency}
+                fallbackProducts={products}
+                usesPartNumber={usesPartNumber}
+              />
             </div>
           )}
 
@@ -2023,29 +1924,42 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           )}
         </div>
 
-        {/* RIGHT PANE: LIVE INTERACTIVE A4 DOCUMENT PREVIEW */}
-        <div
-          className={`lg:col-span-7 ${
-            mobileTab === 'editor' ? 'hidden lg:block' : 'block'
-          }`}
-        >
-          <div className="bg-slate-900 p-4 rounded-2xl shadow-xl flex justify-between items-center mb-3 no-print">
+      {/* AUTHORITATIVE PREVIEW MODAL */}
+      <Modal
+        isOpen={previewModalOpen}
+        onClose={() => setPreviewModalOpen(false)}
+        title={`Preview ${documentType === 'invoice' ? 'Invoice' : 'Quotation'}`}
+        subtitle="Print-ready document rendering snapshot"
+        maxWidth="4xl"
+      >
+        <div className="space-y-4">
+          <div className="bg-slate-900 p-3.5 rounded-2xl shadow-lg flex flex-wrap justify-between items-center gap-2 no-print">
             <span className="text-xs font-bold text-white flex items-center gap-1.5">
               <Eye className="w-4 h-4 text-blue-400" />
-              <span>Live A4 Document Preview</span>
+              <span>A4 Document Preview</span>
             </span>
 
             <div className="flex items-center gap-2">
               <button
+                type="button"
+                onClick={() => setGalleryOpen(true)}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-white flex items-center gap-1 transition-colors cursor-pointer"
+              >
+                <Palette className="w-3.5 h-3.5 text-blue-400" />
+                <span>Change Template</span>
+              </button>
+              <button
+                type="button"
                 onClick={handlePrintDocument}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-white flex items-center gap-1"
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-white flex items-center gap-1 transition-colors cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5" />
                 <span>PDF Print</span>
               </button>
               <button
+                type="button"
                 onClick={handleSendWhatsApp}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-white flex items-center gap-1"
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-white flex items-center gap-1 transition-colors cursor-pointer"
               >
                 <Share2 className="w-3.5 h-3.5" />
                 <span>WhatsApp</span>
@@ -2053,48 +1967,59 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
             </div>
           </div>
 
-          {/* Render A4 Document */}
-          <DocumentRenderer
-            templateId={templateId}
-            documentType={documentType}
-            documentNumber={documentType === 'invoice' ? 'INV-2026-0001' : 'QT-2026-0001'}
-            date={date}
-            dueDateOrValidUntil={dueDateOrValid}
-            businessName={settings.businessName}
-            phone={settings.phone}
-            email={settings.email}
-            address={settings.address}
-            city={settings.city}
-            state={settings.state}
-            pincode={settings.pincode}
-            gstin={settings.gstin}
-            bankDetails={settings.bankDetails}
-            customerName={customerName || 'Customer Name'}
-            customerPhone={customerPhone}
-            customerWhatsapp={customerWhatsapp}
-            customerEmail={customerEmail}
-            customerAddress={customerAddress}
-            customerGstin={customerGstin}
-            items={calculatedItems}
-            subtotal={subtotal}
-            discountTotal={discountTotal}
-            taxTotal={taxTotal}
-            grandTotal={grandTotal}
-            currency={settings.currency}
-            notes={notes}
-            terms={terms}
-            footerText={footerText}
-            branding={branding}
-            theme={{
-              primaryColor: customization.primaryColor,
-              secondaryColor: customization.secondaryColor,
-              textColor: customization.textColor,
-              fontFamily: customization.bodyFont,
-            }}
-            customization={customization}
-          />
+          <div className="max-h-[72vh] overflow-y-auto rounded-xl p-3 bg-slate-100 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 flex justify-center">
+            <DocumentRenderer
+              templateId={templateId}
+              documentType={documentType}
+              documentNumber={documentType === 'invoice' ? 'INV-2026-0001' : 'QT-2026-0001'}
+              date={date}
+              dueDateOrValidUntil={dueDateOrValid}
+              businessName={settings.businessName}
+              phone={settings.phone}
+              email={settings.email}
+              address={settings.address}
+              city={settings.city}
+              state={settings.state}
+              pincode={settings.pincode}
+              gstin={settings.gstin}
+              bankDetails={settings.bankDetails}
+              customerName={customerName || 'Customer Name'}
+              customerPhone={customerPhone}
+              customerWhatsapp={customerWhatsapp}
+              customerEmail={customerEmail}
+              customerAddress={customerAddress}
+              customerGstin={customerGstin}
+              items={calculatedItems}
+              subtotal={subtotal}
+              discountTotal={discountTotal}
+              taxTotal={taxTotal}
+              grandTotal={grandTotal}
+              currency={settings.currency}
+              notes={notes}
+              terms={terms}
+              footerText={footerText}
+              branding={branding}
+              theme={{
+                primaryColor: customization.primaryColor,
+                secondaryColor: customization.secondaryColor,
+                textColor: customization.textColor,
+                fontFamily: customization.bodyFont,
+              }}
+              customization={customization}
+            />
+          </div>
+
+          <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => setPreviewModalOpen(false)}
+              className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+            >
+              Close Preview
+            </button>
+          </div>
         </div>
-      </div>
+      </Modal>
 
       {/* FINALIZE CONFIRMATION MODAL */}
       <Modal

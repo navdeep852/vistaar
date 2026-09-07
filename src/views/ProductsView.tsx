@@ -1737,7 +1737,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
               {/* Part Number / Product Code */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                  Part Number / Product Code {inventorySettings.usesPartNumber ? '*' : '(Optional)'}
+                  Part Number {inventorySettings.usesPartNumber ? <span className="text-rose-500">*</span> : <span className="text-slate-400 font-normal lowercase">(optional)</span>}
                 </label>
                 <input
                   type="text"

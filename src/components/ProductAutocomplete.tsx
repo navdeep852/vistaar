@@ -1,31 +1,40 @@
-import React, { useState, useEffect, useRef, useId } from 'react';
-import { Search, X, Package, Check, AlertCircle, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef, useId, forwardRef, useImperativeHandle } from 'react';
+import { Search, X, Loader2 } from 'lucide-react';
 import { Product } from '../types';
 import { productService } from '../services/supabase/productService';
+import { rankProductSearchResults, getProductDisplayName, getProductPartNumber, getProductSellingPrice, getProductStock } from '../lib/productHelpers';
 
-interface ProductAutocompleteProps {
+export interface ProductAutocompleteProps {
   onSelectProduct: (product: Product) => void;
   selectedProductId?: string;
   selectedProductName?: string;
+  selectedPartNumber?: string;
   placeholder?: string;
   currency?: string;
   disabled?: boolean;
   autoFocus?: boolean;
   className?: string;
+  inputClassName?: string;
   fallbackProducts?: Product[];
+  prioritizePartNumber?: boolean;
+  onEnterWithoutSelection?: () => void;
 }
 
-export const ProductAutocomplete: React.FC<ProductAutocompleteProps> = ({
+export const ProductAutocomplete = forwardRef<HTMLInputElement, ProductAutocompleteProps>(({
   onSelectProduct,
   selectedProductId,
   selectedProductName,
-  placeholder = 'Search product name, part number, or code...',
+  selectedPartNumber,
+  placeholder = 'Search part number or product...',
   currency = '₹',
   disabled = false,
   autoFocus = false,
   className = '',
+  inputClassName = '',
   fallbackProducts = [],
-}) => {
+  prioritizePartNumber = true,
+  onEnterWithoutSelection,
+}, ref) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -35,51 +44,56 @@ export const ProductAutocomplete: React.FC<ProductAutocompleteProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const listboxId = useId();
 
+  useImperativeHandle(ref, () => inputRef.current as HTMLInputElement);
+
   // Perform search when search term changes or when dropdown opens
   useEffect(() => {
     let isMounted = true;
+    const trimmed = searchTerm.trim();
+
+    if (!isOpen && !trimmed) {
+      setResults([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
 
     const timer = setTimeout(async () => {
       try {
-        const trimmed = searchTerm.trim();
-        // Query Supabase / tenant search
-        const searchRes = await productService.searchProducts(trimmed);
-        if (!isMounted) return;
+        let rawProducts: Product[] = [];
 
-        let matched = searchRes.data || [];
-
-        // Fallback or merge with local fallbackProducts if available
-        if (matched.length === 0 && fallbackProducts.length > 0) {
-          const q = trimmed.toLowerCase();
-          matched = fallbackProducts.filter(
-            (p) =>
-              !q ||
-              (p.name && p.name.toLowerCase().includes(q)) ||
-              (p.productName && p.productName.toLowerCase().includes(q)) ||
-              (p.partNumber && p.partNumber.toLowerCase().includes(q)) ||
-              (p.sku && p.sku.toLowerCase().includes(q)) ||
-              ((p as any).barcode && (p as any).barcode.toLowerCase().includes(q))
-          );
+        // Check local fallback first for instant matching
+        if (fallbackProducts && fallbackProducts.length > 0) {
+          rawProducts = [...fallbackProducts];
         }
 
-        setResults(matched);
-        setHighlightedIndex(matched.length > 0 ? 0 : -1);
+        // Search via backend service
+        const searchRes = await productService.searchProducts(trimmed, 30);
+        if (searchRes.data && searchRes.data.length > 0) {
+          const remoteProds = searchRes.data;
+          const merged = [...remoteProds];
+          rawProducts.forEach((lp) => {
+            if (!merged.some((mp) => mp.id === lp.id)) {
+              merged.push(lp);
+            }
+          });
+          rawProducts = merged;
+        }
+
+        if (!isMounted) return;
+
+        // Rank search results with exact Part Number prioritization
+        const ranked = rankProductSearchResults(trimmed, rawProducts);
+
+        setResults(ranked.slice(0, 25));
+        setHighlightedIndex(ranked.length > 0 ? 0 : -1);
       } catch (err) {
         console.warn('Product autocomplete search error:', err);
-        const q = searchTerm.trim().toLowerCase();
-        const matched = fallbackProducts.filter(
-          (p) =>
-            !q ||
-            (p.name && p.name.toLowerCase().includes(q)) ||
-            (p.productName && p.productName.toLowerCase().includes(q)) ||
-            (p.partNumber && p.partNumber.toLowerCase().includes(q)) ||
-            (p.sku && p.sku.toLowerCase().includes(q)) ||
-            ((p as any).barcode && (p as any).barcode.toLowerCase().includes(q))
-        );
         if (isMounted) {
-          setResults(matched);
-          setHighlightedIndex(matched.length > 0 ? 0 : -1);
+          const ranked = rankProductSearchResults(trimmed, fallbackProducts);
+          setResults(ranked.slice(0, 25));
+          setHighlightedIndex(ranked.length > 0 ? 0 : -1);
         }
       } finally {
         if (isMounted) setLoading(false);
@@ -90,7 +104,7 @@ export const ProductAutocomplete: React.FC<ProductAutocompleteProps> = ({
       isMounted = false;
       clearTimeout(timer);
     };
-  }, [searchTerm, fallbackProducts]);
+  }, [searchTerm, isOpen, fallbackProducts]);
 
   // Click outside listener to close dropdown
   useEffect(() => {
@@ -111,34 +125,81 @@ export const ProductAutocomplete: React.FC<ProductAutocompleteProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!isOpen) {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!isOpen) {
         setIsOpen(true);
+      } else {
+        setHighlightedIndex((prev) => (prev < results.length - 1 ? prev + 1 : 0));
       }
       return;
     }
 
-    if (e.key === 'ArrowDown') {
+    if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setHighlightedIndex((prev) => (prev < results.length - 1 ? prev + 1 : 0));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setHighlightedIndex((prev) => (prev > 0 ? prev - 1 : results.length - 1));
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (highlightedIndex >= 0 && highlightedIndex < results.length) {
-        handleSelect(results[highlightedIndex]);
+      if (!isOpen) {
+        setIsOpen(true);
+      } else {
+        setHighlightedIndex((prev) => (prev > 0 ? prev - 1 : results.length - 1));
       }
-    } else if (e.key === 'Escape') {
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const trimmed = searchTerm.trim().toLowerCase();
+
+      // Check for exact Part Number match in local fallback or results first
+      if (trimmed) {
+        const pool = [...results, ...fallbackProducts];
+        const exactMatch = pool.find((p) => {
+          const pNo = getProductPartNumber(p).toLowerCase();
+          return pNo === trimmed;
+        });
+
+        if (exactMatch) {
+          handleSelect(exactMatch);
+          return;
+        }
+      }
+
+      // If a result is highlighted in dropdown
+      if (isOpen && highlightedIndex >= 0 && highlightedIndex < results.length) {
+        handleSelect(results[highlightedIndex]);
+        return;
+      }
+
+      // Otherwise, inform caller of Enter
+      onEnterWithoutSelection?.();
+      return;
+    }
+
+    if (e.key === 'Escape') {
       setIsOpen(false);
+      return;
+    }
+
+    if (e.key === 'Tab') {
+      // If user tabs while an item is highlighted and dropdown is open, auto-select it
+      if (isOpen && highlightedIndex >= 0 && highlightedIndex < results.length && searchTerm.trim().length > 0) {
+        handleSelect(results[highlightedIndex]);
+      } else {
+        setIsOpen(false);
+      }
     }
   };
+
+  const displayPlaceholder = selectedPartNumber
+    ? `${selectedPartNumber} — ${selectedProductName || 'Selected'}`
+    : selectedProductName
+    ? selectedProductName
+    : placeholder;
 
   return (
     <div ref={containerRef} className={`relative w-full ${className}`}>
       {/* Input container */}
       <div className="relative flex items-center">
-        <Search className="w-4 h-4 absolute left-3 text-slate-400 dark:text-slate-500 pointer-events-none" />
+        <Search className="w-3.5 h-3.5 absolute left-2.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
         <input
           ref={inputRef}
           type="text"
@@ -149,14 +210,16 @@ export const ProductAutocomplete: React.FC<ProductAutocompleteProps> = ({
             setSearchTerm(e.target.value);
             setIsOpen(true);
           }}
-          onFocus={() => setIsOpen(true)}
+          onFocus={() => {
+            setIsOpen(true);
+          }}
           onKeyDown={handleKeyDown}
-          placeholder={selectedProductName ? `Selected: ${selectedProductName}` : placeholder}
+          placeholder={displayPlaceholder}
           role="combobox"
           aria-expanded={isOpen}
           aria-autocomplete="list"
           aria-controls={listboxId}
-          className="w-full pl-9 pr-8 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors disabled:opacity-50"
+          className={`w-full pl-8 pr-7 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors disabled:opacity-50 ${inputClassName}`}
         />
         {searchTerm && (
           <button
@@ -165,9 +228,9 @@ export const ProductAutocomplete: React.FC<ProductAutocompleteProps> = ({
               setSearchTerm('');
               inputRef.current?.focus();
             }}
-            className="absolute right-2.5 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+            className="absolute right-2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-3 h-3" />
           </button>
         )}
       </div>
@@ -177,32 +240,28 @@ export const ProductAutocomplete: React.FC<ProductAutocompleteProps> = ({
         <div
           id={listboxId}
           role="listbox"
-          className="absolute z-50 left-0 right-0 mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 animate-in fade-in zoom-in-95 duration-100"
+          className="absolute z-50 left-0 right-0 mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 animate-in fade-in zoom-in-95 duration-100 min-w-[280px]"
         >
-          {loading ? (
-            <div className="p-4 text-center text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center justify-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+          {loading && results.length === 0 ? (
+            <div className="p-3 text-center text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center justify-center gap-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
               <span>Searching catalog...</span>
             </div>
-          ) : searchTerm.trim().length < 1 ? (
-            <div className="p-4 text-center text-xs text-slate-400 dark:text-slate-500">
-              Start typing at least 1 character to search products...
-            </div>
           ) : results.length === 0 ? (
-            <div className="p-4 text-center space-y-1">
+            <div className="p-3 text-center space-y-1">
               <p className="text-xs font-bold text-slate-600 dark:text-slate-400">No products found</p>
               <p className="text-[11px] text-slate-400 dark:text-slate-500">
-                No matching product name, part number, or code for "{searchTerm}".
+                No matching product for "{searchTerm}".
               </p>
             </div>
           ) : (
             results.map((prod, idx) => {
               const isSelected = prod.id === selectedProductId;
               const isHighlighted = idx === highlightedIndex;
-              const stock = Number(prod.currentStock ?? (prod as any).current_stock ?? 0);
-              const partNo = prod.partNumber || (prod as any).part_number || 'N/A';
-              const sku = prod.sku || (prod as any).product_code || 'N/A';
-              const price = prod.sellingPrice ?? (prod as any).selling_price ?? 0;
+              const stock = getProductStock(prod);
+              const partNo = getProductPartNumber(prod);
+              const name = getProductDisplayName(prod);
+              const price = getProductSellingPrice(prod);
               const unit = prod.unit || 'Pcs';
 
               return (
@@ -212,59 +271,40 @@ export const ProductAutocomplete: React.FC<ProductAutocompleteProps> = ({
                   aria-selected={isSelected}
                   onClick={() => handleSelect(prod)}
                   onMouseEnter={() => setHighlightedIndex(idx)}
-                  className={`p-3 cursor-pointer transition-colors ${
+                  className={`p-2.5 cursor-pointer transition-colors ${
                     isHighlighted
-                      ? 'bg-blue-50 dark:bg-slate-800/80'
+                      ? 'bg-blue-50 dark:bg-slate-800/80 ring-1 ring-inset ring-blue-500/30'
                       : isSelected
                       ? 'bg-slate-50 dark:bg-slate-800/40'
                       : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-extrabold text-slate-900 dark:text-slate-100 text-xs truncate">
-                          {prod.name || prod.productName}
-                        </span>
-                        {isSelected && (
-                          <span className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 text-[10px] font-bold">
-                            Selected
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {partNo && (
+                          <span className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-mono text-[11px] font-extrabold shrink-0 border border-blue-200 dark:border-blue-900/50">
+                            {partNo}
                           </span>
                         )}
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                        <span>
-                          Code: <strong className="text-slate-700 dark:text-slate-300">{sku}</strong>
+                        <span className="font-bold text-slate-900 dark:text-slate-100 text-xs truncate">
+                          {name}
                         </span>
-                        <span>•</span>
-                        <span>
-                          Part No: <strong className="text-slate-700 dark:text-slate-300">{partNo}</strong>
-                        </span>
-                        {prod.location && (
-                          <>
-                            <span>•</span>
-                            <span>
-                              Loc: <strong className="text-slate-700 dark:text-slate-300">{prod.location}</strong>
-                            </span>
-                          </>
-                        )}
                       </div>
                     </div>
 
-                    <div className="text-right shrink-0">
-                      <span className="font-black text-slate-900 dark:text-slate-100 text-xs block">
-                        {currency}
-                        {price.toLocaleString('en-IN')} / {unit}
+                    <div className="text-right shrink-0 flex items-center gap-3">
+                      <span className="font-extrabold text-slate-900 dark:text-slate-100 text-xs whitespace-nowrap">
+                        {currency}{price.toLocaleString('en-IN')}
                       </span>
                       <span
-                        className={`inline-block mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
                           stock > 0
                             ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
                             : 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300'
                         }`}
                       >
-                        Stock: {stock} {unit}
+                        Stock: {stock}
                       </span>
                     </div>
                   </div>
@@ -276,4 +316,8 @@ export const ProductAutocomplete: React.FC<ProductAutocompleteProps> = ({
       )}
     </div>
   );
-};
+});
+
+ProductAutocomplete.displayName = 'ProductAutocomplete';
+
+export default ProductAutocomplete;

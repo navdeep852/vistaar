@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { Minus, Plus } from 'lucide-react';
 
 export interface QuantityInputProps {
@@ -15,9 +15,13 @@ export interface QuantityInputProps {
   id?: string;
   name?: string;
   placeholder?: string;
+  selectOnFocus?: boolean;
+  autoFocus?: boolean;
+  onEnter?: () => void;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 }
 
-export const QuantityInput: React.FC<QuantityInputProps> = ({
+export const QuantityInput = forwardRef<HTMLInputElement, QuantityInputProps>(({
   value,
   onChange,
   min = 1,
@@ -31,13 +35,24 @@ export const QuantityInput: React.FC<QuantityInputProps> = ({
   id,
   name,
   placeholder,
-}) => {
-  const [draft, setDraft] = useState<string>(() => (value !== undefined && value !== null ? String(value) : ''));
-  const inputRef = useRef<HTMLInputElement>(null);
+  selectOnFocus = true,
+  autoFocus = false,
+  onEnter,
+  onKeyDown,
+}, ref) => {
+  const [draft, setDraft] = useState<string>(() => (value !== undefined && value !== null ? String(value) : '1'));
+  const internalInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync draft state with external value changes
+  useImperativeHandle(ref, () => internalInputRef.current as HTMLInputElement);
+
+  // Sync draft state when external value changes and input is not actively being edited to something different
   useEffect(() => {
-    setDraft(value !== undefined && value !== null ? String(value) : '');
+    if (value !== undefined && value !== null) {
+      const numDraft = parseInt(draft, 10);
+      if (numDraft !== value) {
+        setDraft(String(value));
+      }
+    }
   }, [value]);
 
   const commitValue = (valStr: string) => {
@@ -62,11 +77,20 @@ export const QuantityInput: React.FC<QuantityInputProps> = ({
     commitValue(draft);
   };
 
+  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    if (selectOnFocus) {
+      e.target.select();
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    onKeyDown?.(e);
+    if (e.defaultPrevented) return;
+
     if (e.key === 'Enter') {
       e.preventDefault();
       commitValue(draft);
-      inputRef.current?.blur();
+      onEnter?.();
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       handleIncrement();
@@ -78,9 +102,15 @@ export const QuantityInput: React.FC<QuantityInputProps> = ({
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const nextVal = e.target.value;
-    // Allow empty string or non-negative integers only
+    // Allow empty string or non-negative digits only
     if (/^\d*$/.test(nextVal)) {
       setDraft(nextVal);
+      if (nextVal !== '') {
+        const parsed = parseInt(nextVal, 10);
+        if (!isNaN(parsed) && parsed > 0) {
+          onChange(parsed);
+        }
+      }
     }
   };
 
@@ -163,7 +193,7 @@ export const QuantityInput: React.FC<QuantityInputProps> = ({
       </button>
 
       <input
-        ref={inputRef}
+        ref={internalInputRef}
         id={id}
         name={name}
         type="text"
@@ -171,10 +201,12 @@ export const QuantityInput: React.FC<QuantityInputProps> = ({
         pattern="[0-9]*"
         required={required}
         disabled={disabled}
+        autoFocus={autoFocus}
         aria-label={ariaLabel}
         placeholder={placeholder}
         value={draft}
         onChange={handleChange}
+        onFocus={handleFocus}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
         className={`${sizeConfig.input} text-center font-black text-slate-900 dark:text-slate-100 bg-transparent border-x border-slate-200 dark:border-slate-800 focus:outline-none focus:bg-blue-50/20 dark:focus:bg-blue-950/20`}
@@ -192,6 +224,8 @@ export const QuantityInput: React.FC<QuantityInputProps> = ({
       </button>
     </div>
   );
-};
+});
+
+QuantityInput.displayName = 'QuantityInput';
 
 export default QuantityInput;
