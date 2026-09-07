@@ -356,7 +356,7 @@ export const UdhariView: React.FC = () => {
 
       const updatedUdhari = store.getUdharis().find((u) => u.id === activeUdhari.id);
       const paymentRecord: any = {
-        id: payRes.paymentCode || `PAY-${Date.now()}`,
+        id: payRes.paymentId || payRes.paymentCode || `PAY-${Date.now()}`,
         udhariId: activeUdhari.id,
         amount: numAmount,
         paymentMethod: payMethod,
@@ -371,6 +371,12 @@ export const UdhariView: React.FC = () => {
       setConfirmModalOpen(true);
       showToast(`Recorded payment of ${formatCurrency(numAmount)} from ${activeUdhari.customerNameSnapshot}!`, 'success');
       refreshData();
+      udhariService.getUdhariRecords().then((res) => {
+        if (res.data && res.data.length > 0) {
+          store.syncRemoteUdharis(res.data);
+          refreshData();
+        }
+      }).catch(() => {});
     } catch (err: any) {
       setPayError(err.message || 'Failed to record payment');
     } finally {

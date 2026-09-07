@@ -36,6 +36,20 @@ export interface CustomerPaymentResult {
 // In-memory idempotency guard preventing double-submissions within 5 seconds
 const activeSubmissions = new Map<string, number>();
 
+/**
+ * Normalizes payment methods to valid PostgreSQL enum values:
+ * 'Cash', 'UPI', 'Bank Transfer', 'Card', 'Cheque', 'Other'
+ */
+function normalizePaymentMethodEnum(method?: string): string {
+  const m = (method || '').trim().toLowerCase();
+  if (m === 'upi') return 'UPI';
+  if (m.includes('bank') || m.includes('neft') || m.includes('rtgs') || m.includes('transfer') || m.includes('imps')) return 'Bank Transfer';
+  if (m.includes('card') || m.includes('credit card') || m.includes('debit card')) return 'Card';
+  if (m.includes('cheque') || m.includes('check')) return 'Cheque';
+  if (m === 'cash') return 'Cash';
+  return 'Cash';
+}
+
 export class CustomerPaymentService {
   private getWorkspaceId(): string {
     return supabaseAuthService.getCurrentCompanyId() || '';
@@ -48,7 +62,7 @@ export class CustomerPaymentService {
   public async recordCustomerPayment(payload: CustomerPaymentPayload): Promise<CustomerPaymentResult> {
     const wsId = this.getWorkspaceId();
     const amount = Math.round(Number(payload.amount) * 100) / 100;
-    const paymentMethod = payload.paymentMethod || 'UPI';
+    const paymentMethod = normalizePaymentMethodEnum(payload.paymentMethod as string);
     const paymentDate = payload.paymentDate || new Date().toISOString().split('T')[0];
     
     // Normalize phone number with India country context
@@ -130,6 +144,7 @@ export class CustomerPaymentService {
         invoice_id: resolvedInvoiceId || null,
         invoice_number: invoiceNumber || null,
         udhari_id: resolvedUdhariId || null,
+        udhari_code: targetUdhari?.id || (invoiceNumber ? `UD-${invoiceNumber}` : null),
         counter_sale_id: payload.counterSaleId && isValidUuid(payload.counterSaleId) ? payload.counterSaleId : null,
         customer_id: resolvedCustomerId || null,
         customer_name: customerName,
@@ -159,18 +174,74 @@ export class CustomerPaymentService {
           }
 
           // If RPC is not found in schema cache (PGRST202), execute authoritative direct Supabase transaction
+          // using the verified live production table columns
           if (rpcErr.code === 'PGRST202' || rpcErr.message?.includes('schema cache')) {
             console.warn('[customerPaymentService] post_customer_payment_atomic RPC missing from schema cache (PGRST202). Executing direct authoritative Supabase transaction.');
 
-            // 1. Insert into public.payments
-            const dbPaymentId = isValidUuid(paymentId) ? paymentId : (crypto.randomUUID ? crypto.randomUUID() : undefined);
+            // 1. Resolve target DB invoice row
+            let dbInvRow: any = null;
+            if (resolvedInvoiceId) {
+              const { data: invById } = await supabase
+                .from('invoices')
+                .select('*')
+                .eq('id', resolvedInvoiceId)
+                .maybeSingle();
+              dbInvRow = invById;
+            } else if (invoiceNumber) {
+              const { data: invByNum } = await supabase
+                .from('invoices')
+                .select('*')
+                .eq('workspace_id', wsId)
+                .eq('invoice_number', invoiceNumber)
+                .maybeSingle();
+              dbInvRow = invByNum;
+            }
+
+            // 2. Resolve target DB Udhari row (using udhari_code as verified in live DB)
+            let dbUdhariRow: any = null;
+            const targetUdhariCode = payload.udhariId || (invoiceNumber ? `UD-${invoiceNumber}` : (dbInvRow ? `UD-${dbInvRow.invoice_number}` : null));
+            if (resolvedUdhariId) {
+              const { data: uById } = await supabase
+                .from('udhari_records')
+                .select('*')
+                .eq('id', resolvedUdhariId)
+                .maybeSingle();
+              dbUdhariRow = uById;
+            }
+            if (!dbUdhariRow && targetUdhariCode) {
+              const { data: uByCode } = await supabase
+                .from('udhari_records')
+                .select('*')
+                .eq('workspace_id', wsId)
+                .eq('udhari_code', targetUdhariCode)
+                .maybeSingle();
+              dbUdhariRow = uByCode;
+            }
+
+            // Check database-level overpayment
+            if (dbUdhariRow && amount > (Number(dbUdhariRow.outstanding_amount) + 0.05)) {
+              return {
+                success: false,
+                error: `Overpayment rejected: Amount (₹${amount.toLocaleString('en-IN')}) exceeds database outstanding balance (₹${Number(dbUdhariRow.outstanding_amount).toLocaleString('en-IN')}).`,
+              };
+            } else if (dbInvRow && !dbUdhariRow && amount > (Number(dbInvRow.balance_amount) + 0.05)) {
+              return {
+                success: false,
+                error: `Overpayment rejected: Amount (₹${amount.toLocaleString('en-IN')}) exceeds database invoice balance (₹${Number(dbInvRow.balance_amount).toLocaleString('en-IN')}).`,
+              };
+            }
+
+            const effectivePaymentId = (crypto.randomUUID ? crypto.randomUUID() : undefined);
+            const dbPaymentId = isValidUuid(paymentId) ? paymentId : (effectivePaymentId || undefined);
+
+            // 3. Insert into public.payments (strictly adhering to verified production columns)
             const dbPayPayload: any = {
               workspace_id: wsId,
               payment_number: paymentCode,
-              customer_id: resolvedCustomerId || null,
-              invoice_id: resolvedInvoiceId || null,
+              customer_id: resolvedCustomerId || dbInvRow?.customer_id || dbUdhariRow?.customer_id || null,
               customer_name: customerName,
-              invoice_number: invoiceNumber || null,
+              invoice_id: dbInvRow?.id || resolvedInvoiceId || null,
+              invoice_number: invoiceNumber || dbInvRow?.invoice_number || null,
               amount,
               payment_date: paymentDate,
               method: paymentMethod,
@@ -183,7 +254,7 @@ export class CustomerPaymentService {
 
             const { data: payInsertData, error: payInsertErr } = await supabase
               .from('payments')
-              .insert(dbPayPayload)
+              .insert([dbPayPayload])
               .select('id, payment_number')
               .single();
 
@@ -198,17 +269,17 @@ export class CustomerPaymentService {
               isDbPersisted = true;
             }
 
-            // 2. Insert into public.udhari_payments if linked to an Udhari record
-            if (resolvedUdhariId) {
+            // 4. Insert into public.udhari_payments if linked to an Udhari record
+            if (dbUdhariRow) {
               const dbUdhariPayPayload: any = {
                 workspace_id: wsId,
-                udhari_id: resolvedUdhariId,
-                customer_id: resolvedCustomerId || null,
+                udhari_id: dbUdhariRow.id,
+                customer_id: dbUdhariRow.customer_id || resolvedCustomerId || null,
                 payment_code: paymentCode,
                 amount,
                 payment_method: paymentMethod,
                 payment_date: paymentDate,
-                phone_number: customerPhone,
+                phone_number: customerPhone || dbUdhariRow.phone_snapshot || '9999999999',
                 reference: payload.reference || null,
                 notes: payload.notes || null,
               };
@@ -218,82 +289,71 @@ export class CustomerPaymentService {
 
               const { error: upErr } = await supabase
                 .from('udhari_payments')
-                .insert(dbUdhariPayPayload);
+                .insert([dbUdhariPayPayload]);
 
               if (upErr) {
                 console.warn('[customerPaymentService] udhari_payments insert notice:', upErr.message);
               }
 
               // Update public.udhari_records
-              const { data: udhariRow } = await supabase
+              const newRec = Number((Number(dbUdhariRow.total_received || 0) + amount).toFixed(2));
+              const newOut = Math.max(0, Number((Number(dbUdhariRow.original_amount) - newRec).toFixed(2)));
+              const newStatus = newOut <= 0.01 ? 'PAID' : 'PARTIALLY PAID';
+              await supabase
                 .from('udhari_records')
-                .select('original_amount, total_received')
-                .eq('id', resolvedUdhariId)
-                .maybeSingle();
-
-              if (udhariRow) {
-                const newRec = Number(udhariRow.total_received || 0) + amount;
-                const newOut = Math.max(0, Number((Number(udhariRow.original_amount) - newRec).toFixed(2)));
-                const newStatus = newOut <= 0.01 ? 'PAID' : 'PARTIALLY PAID';
-                await supabase
-                  .from('udhari_records')
-                  .update({
-                    total_received: newRec,
-                    outstanding_amount: newOut,
-                    status: newStatus,
-                    updated_at: new Date().toISOString(),
-                  })
-                  .eq('id', resolvedUdhariId);
-              }
+                .update({
+                  total_received: newRec,
+                  outstanding_amount: newOut,
+                  status: newStatus,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', dbUdhariRow.id);
             }
 
-            // 3. Update public.invoices if linked
-            if (resolvedInvoiceId) {
-              const { data: invRow } = await supabase
+            // 5. Update public.invoices if linked
+            if (dbInvRow) {
+              const newPaid = Number((Number(dbInvRow.paid_amount || 0) + amount).toFixed(2));
+              const newBal = Math.max(0, Number((Number(dbInvRow.grand_total) - newPaid).toFixed(2)));
+              const newStatus = newBal <= 0.01 ? 'Paid' : 'Partially Paid';
+              await supabase
                 .from('invoices')
-                .select('grand_total, paid_amount')
-                .eq('id', resolvedInvoiceId)
-                .maybeSingle();
-
-              if (invRow) {
-                const newPaid = Number(invRow.paid_amount || 0) + amount;
-                const newBal = Math.max(0, Number((Number(invRow.grand_total) - newPaid).toFixed(2)));
-                const newStatus = newBal <= 0.01 ? 'Paid' : 'Partially Paid';
-                await supabase
-                  .from('invoices')
-                  .update({
-                    paid_amount: newPaid,
-                    balance_amount: newBal,
-                    status: newStatus,
-                    updated_at: new Date().toISOString(),
-                  })
-                  .eq('id', resolvedInvoiceId);
-              }
+                .update({
+                  paid_amount: newPaid,
+                  balance_amount: newBal,
+                  status: newStatus,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', dbInvRow.id);
             }
 
-            // 4. Record Daybook Payment Event (Actual money received on payment date)
+            // 6. Record Daybook Payment Event (strictly adhering to verified production columns)
             try {
-              const { daybookService } = await import('./daybookService');
-              await daybookService.recordFinancialTransaction({
-                referenceType: 'PAYMENT',
-                referenceId: paymentId,
-                referenceNumber: invoiceNumber || paymentCode,
-                transactionType: 'CUSTOMER_PAYMENT',
+              const dbTxId = crypto.randomUUID ? crypto.randomUUID() : undefined;
+              const dtPayload: any = {
+                workspace_id: wsId,
+                transaction_code: `ACC-${paymentCode}`,
+                transaction_date: paymentDate,
+                transaction_type: 'CUSTOMER_PAYMENT',
                 direction: 'IN',
                 amount,
-                paymentMode: paymentMethod as any,
-                partyType: 'customer',
-                partyId: resolvedCustomerId,
-                partyName: customerName,
+                payment_mode: paymentMethod,
+                reference_type: 'PAYMENT',
+                reference_id: paymentId,
+                reference_number: invoiceNumber || paymentCode,
+                party_type: 'customer',
+                party_id: resolvedCustomerId || null,
+                party_name: customerName,
                 description: `Payment Received #${paymentCode} for ${invoiceNumber || customerName}`,
                 notes: payload.reference ? `Ref: ${payload.reference}` : payload.notes,
-                transactionDate: paymentDate,
-              });
+              };
+              if (dbTxId) dtPayload.id = dbTxId;
+
+              await supabase.from('daybook_transactions').insert([dtPayload]);
             } catch (dbErr) {
               console.warn('[customerPaymentService] Daybook sync notice:', dbErr);
             }
 
-            // 5. Record Cashbook Entry (Liquidity movement)
+            // 7. Record Cashbook Entry (Liquidity movement with safe fallback if table absent)
             try {
               const { cashbookService } = await import('./cashbookService');
               await cashbookService.recordCashbookEntry({
@@ -310,6 +370,28 @@ export class CustomerPaymentService {
               });
             } catch (cbErr) {
               console.warn('[customerPaymentService] Cashbook sync notice:', cbErr);
+            }
+
+            // 8. Follow-up synchronization
+            try {
+              const remainingBal = dbUdhariRow ? Math.max(0, Number(dbUdhariRow.original_amount) - (Number(dbUdhariRow.total_received || 0) + amount)) : (dbInvRow ? Math.max(0, Number(dbInvRow.grand_total) - (Number(dbInvRow.paid_amount || 0) + amount)) : 0);
+              if (remainingBal <= 0.01) {
+                await supabase
+                  .from('follow_ups')
+                  .update({ status: 'Completed', completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+                  .eq('workspace_id', wsId)
+                  .or(`invoice_id.eq.${dbInvRow?.id || resolvedInvoiceId},invoice_number.eq.${invoiceNumber}`)
+                  .neq('status', 'Completed');
+              } else {
+                await supabase
+                  .from('follow_ups')
+                  .update({ notes: `Outstanding receivable: ₹${remainingBal.toLocaleString('en-IN')}`, updated_at: new Date().toISOString() })
+                  .eq('workspace_id', wsId)
+                  .or(`invoice_id.eq.${dbInvRow?.id || resolvedInvoiceId},invoice_number.eq.${invoiceNumber}`)
+                  .neq('status', 'Completed');
+              }
+            } catch (fuErr) {
+              console.warn('[customerPaymentService] Follow-up sync notice:', fuErr);
             }
           } else {
             const errStr = handleSupabaseError(rpcErr, 'recordCustomerPayment.rpc');
