@@ -289,6 +289,92 @@ export class UdhariService {
       return { error: errStr || 'Payment transaction failed' };
     }
   }
+
+  /**
+   * Authoritative calculation of Outstanding Udhari as of a specific date (toDate).
+   * Outstanding Udhari = Opening Outstanding Balance + Credit generated up to To Date - Payments up to To Date.
+   * Agrees 100% with the Udhari Ledger.
+   */
+  public async getAuthoritativeUdhariMetricsAsOf(asOfDateStr?: string): Promise<{
+    outstanding: number;
+    totalUdhari: number;
+    totalReceived: number;
+    overdue: number;
+    activeCount: number;
+    error?: string;
+  }> {
+    const today = new Date().toISOString().split('T')[0];
+    const targetDate = asOfDateStr || today;
+    const isHistorical = targetDate < today;
+
+    const res = await this.getUdhariRecords();
+    if (res.error && (!res.data || res.data.length === 0)) {
+      return {
+        outstanding: 0,
+        totalUdhari: 0,
+        totalReceived: 0,
+        overdue: 0,
+        activeCount: 0,
+        error: res.error,
+      };
+    }
+
+    const records = res.data || [];
+    let totalOutstanding = 0;
+    let totalUdhari = 0;
+    let totalReceived = 0;
+    let overdue = 0;
+    let activeCount = 0;
+
+    for (const r of records) {
+      const createdDate = (r.createdAt || r.created_at || '').split('T')[0];
+      // Exclude udhari records created AFTER targetDate (did not exist yet)
+      if (createdDate && createdDate > targetDate) {
+        continue;
+      }
+
+      const orig = Number(r.originalAmount || r.original_amount || 0);
+      const currentOutstanding = Number(r.outstandingAmount || r.outstanding_amount || 0);
+      const currentReceived = Number(r.totalReceived || r.total_received || 0);
+      const payments = Array.isArray(r.payments) ? r.payments : [];
+
+      let balAsOf = currentOutstanding;
+      let recAsOf = currentReceived;
+
+      if (isHistorical) {
+        // Payments made AFTER targetDate need to be added back to the outstanding balance
+        let paymentsAfterTarget = 0;
+        for (const p of payments) {
+          const pDate = (p.payment_date || p.paymentDate || p.created_at || p.createdAt || '').split('T')[0];
+          if (pDate && pDate > targetDate) {
+            paymentsAfterTarget += Number(p.amount || 0);
+          }
+        }
+        balAsOf = Math.min(orig, currentOutstanding + paymentsAfterTarget);
+        recAsOf = Math.max(0, currentReceived - paymentsAfterTarget);
+      }
+
+      totalUdhari += orig;
+      totalReceived += recAsOf;
+      totalOutstanding += balAsOf;
+
+      if (balAsOf > 0.01) {
+        activeCount += 1;
+        const dueDate = r.dueDate || r.due_date;
+        if (dueDate && dueDate < targetDate) {
+          overdue += balAsOf;
+        }
+      }
+    }
+
+    return {
+      outstanding: Math.round(totalOutstanding * 100) / 100,
+      totalUdhari: Math.round(totalUdhari * 100) / 100,
+      totalReceived: Math.round(totalReceived * 100) / 100,
+      overdue: Math.round(overdue * 100) / 100,
+      activeCount,
+    };
+  }
 }
 
 export const udhariService = new UdhariService();

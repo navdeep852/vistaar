@@ -128,6 +128,61 @@ export class QuotationService {
       return { quotationId: newId };
     }
   }
+
+  /**
+   * Authoritative calculation of active/open quotations as of the end of a selected period (toDate).
+   * Respects quotation lifecycle, valid_until, and status transitions.
+   */
+  public async getOpenQuotationsCountAsOf(asOfDateStr?: string): Promise<{
+    count: number;
+    activeQuotations: any[];
+    error?: string;
+  }> {
+    const today = new Date().toISOString().split('T')[0];
+    const targetDate = asOfDateStr || today;
+
+    const res = await this.getQuotations();
+    if (res.error && (!res.data || res.data.length === 0)) {
+      return { count: 0, activeQuotations: [], error: res.error };
+    }
+
+    const allQuotations = res.data || [];
+    const active = allQuotations.filter((q: any) => {
+      const qDate = (q.date || q.created_at || q.createdAt || '').split('T')[0];
+      // Must have been created on or before targetDate
+      if (qDate && qDate > targetDate) {
+        return false;
+      }
+
+      const validUntil = q.valid_until || q.validUntil;
+      const status = (q.status || 'Draft').toLowerCase();
+
+      // If rejected prior to targetDate, it's not open
+      if (status === 'rejected') {
+        const updateDate = (q.updated_at || q.updatedAt || qDate).split('T')[0];
+        if (updateDate <= targetDate) return false;
+      }
+
+      // If accepted or converted prior to targetDate, it's not open
+      if (status === 'accepted' || status === 'converted' || q.converted_invoice_id) {
+        const convertDate = (q.updated_at || q.updatedAt || qDate).split('T')[0];
+        if (convertDate <= targetDate) return false;
+      }
+
+      // Check expiry: if validUntil was before targetDate, it was already expired as of targetDate
+      if (validUntil && validUntil < targetDate) {
+        return false;
+      }
+
+      // If status is draft, sent, viewed, or valid until >= targetDate
+      return true;
+    });
+
+    return {
+      count: active.length,
+      activeQuotations: active,
+    };
+  }
 }
 
 export const quotationService = new QuotationService();

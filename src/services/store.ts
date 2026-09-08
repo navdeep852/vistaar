@@ -1745,6 +1745,56 @@ class StoreService {
     return { totalUdhari, outstanding, received, overdue };
   }
 
+  public getUdhariMetricsAsOf(asOfDateStr?: string) {
+    const today = new Date().toISOString().split('T')[0];
+    const targetDate = asOfDateStr || today;
+    const isHistorical = targetDate < today;
+
+    const udharis = this.getUdharis();
+    const payments = this.getUdhariPayments();
+
+    let totalUdhari = 0;
+    let outstanding = 0;
+    let received = 0;
+    let overdue = 0;
+
+    for (const u of udharis) {
+      const created = (u.createdAt || '').split('T')[0];
+      if (created && created > targetDate) continue;
+
+      const orig = Number(u.originalAmount) || 0;
+      const curOutstanding = Number(u.outstandingAmount) || 0;
+      const curReceived = Number(u.totalReceived) || 0;
+
+      let balAsOf = curOutstanding;
+      let recAsOf = curReceived;
+
+      if (isHistorical) {
+        let paymentsAfter = 0;
+        for (const p of payments) {
+          if (p.udhariId === u.id) {
+            const pDate = (p.paymentDate || p.createdAt || '').split('T')[0];
+            if (pDate && pDate > targetDate) {
+              paymentsAfter += Number(p.amount) || 0;
+            }
+          }
+        }
+        balAsOf = Math.min(orig, curOutstanding + paymentsAfter);
+        recAsOf = Math.max(0, curReceived - paymentsAfter);
+      }
+
+      totalUdhari += orig;
+      outstanding += balAsOf;
+      received += recAsOf;
+
+      if (balAsOf > 0.01 && u.dueDate && u.dueDate < targetDate) {
+        overdue += balAsOf;
+      }
+    }
+
+    return { totalUdhari, outstanding, received, overdue };
+  }
+
   // --- INVENTORY MANAGEMENT METHODS ---
 
   public getInventorySettings(): InventorySettings {

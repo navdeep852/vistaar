@@ -1347,6 +1347,81 @@ export class ProductService {
       return { success: false, error: handleSupabaseError(e, 'deleteSupplier') };
     }
   }
+
+  /**
+   * Authoritative calculation of Low Stock products as of the end of a selected period (toDate).
+   * For current date: checks current_stock <= minimum_stock.
+   * For historical date: reconstructs stock from stock_movements (stockAsOf = current_stock - movements_after_toDate).
+   */
+  public async getLowStockProductsAsOf(asOfDateStr?: string): Promise<{
+    lowStockCount: number;
+    lowStockProducts: Product[];
+    isHistorical: boolean;
+    error?: string;
+  }> {
+    const today = new Date().toISOString().split('T')[0];
+    const targetDate = asOfDateStr || today;
+    const isHistorical = targetDate < today;
+
+    const prodRes = await this.getProducts();
+    if (prodRes.error && (!prodRes.data || prodRes.data.length === 0)) {
+      return { lowStockCount: 0, lowStockProducts: [], isHistorical: false, error: prodRes.error };
+    }
+
+    const allProducts = prodRes.data || [];
+    const wsId = this.getWorkspaceId();
+
+    // Map of product_id -> movement sum after targetDate
+    const movementsAfterMap = new Map<string, number>();
+
+    if (isHistorical && isSupabaseConfigured() && isValidUuid(wsId)) {
+      try {
+        const { data: mvData } = await supabase
+          .from('stock_movements')
+          .select('product_id, quantity, movement_date')
+          .eq('workspace_id', wsId)
+          .gt('movement_date', targetDate);
+
+        if (mvData && mvData.length > 0) {
+          for (const m of mvData) {
+            const pid = m.product_id;
+            const q = Number(m.quantity) || 0;
+            movementsAfterMap.set(pid, (movementsAfterMap.get(pid) || 0) + q);
+          }
+        }
+      } catch (mvErr) {
+        console.warn('[getLowStockProductsAsOf] Notice when checking stock movements:', mvErr);
+      }
+    }
+
+    const lowStockList: Product[] = [];
+
+    for (const p of allProducts) {
+      const current = Number(p.currentStock ?? (p as any).current_stock ?? 0);
+      const minStock = Number(p.minimumStock ?? (p as any).minimum_stock ?? 5);
+
+      let effectiveStock = current;
+      if (isHistorical && movementsAfterMap.has(p.id)) {
+        const movementsAfter = movementsAfterMap.get(p.id) || 0;
+        // Rollback: subtract additions after targetDate, add back deductions after targetDate
+        effectiveStock = Math.max(0, current - movementsAfter);
+      }
+
+      if (effectiveStock <= minStock) {
+        // Return a copy with the historical effectiveStock reflected
+        lowStockList.push({
+          ...p,
+          currentStock: effectiveStock,
+        });
+      }
+    }
+
+    return {
+      lowStockCount: lowStockList.length,
+      lowStockProducts: lowStockList,
+      isHistorical,
+    };
+  }
 }
 
 export const productService = new ProductService();
