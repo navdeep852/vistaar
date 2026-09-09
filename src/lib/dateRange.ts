@@ -68,6 +68,25 @@ export function formatFriendlyDate(dateStr: string): string {
 }
 
 /**
+ * Formats reporting period context for the toolbar header.
+ * e.g. "Today · 09 Sep 2026", "Yesterday · 08 Sep 2026", or "01 Sep 2026 – 09 Sep 2026"
+ */
+export function formatReportingPeriodSubtitle(dateRange: ResolvedDateRange): string {
+  const startFriendly = formatFriendlyDate(dateRange.startDateStr);
+  const endFriendly = formatFriendlyDate(dateRange.endDateStr);
+
+  if (dateRange.rangeType === 'today') {
+    return `Today · ${startFriendly}`;
+  }
+  if (dateRange.rangeType === 'yesterday') {
+    return `Yesterday · ${startFriendly}`;
+  }
+  if (dateRange.startDateStr === dateRange.endDateStr) {
+    return startFriendly;
+  }
+  return `${startFriendly} – ${endFriendly}`;
+}
+
  * Constructs an ISO string for an IST date at given time.
  */
 function toIstIso(dateStr: string, timeStr: '00:00:00.000' | '23:59:59.999'): string {

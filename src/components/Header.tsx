@@ -11,6 +11,7 @@ import {
   PackagePlus,
   CreditCard,
   CheckCheck,
+  RefreshCw,
 } from 'lucide-react';
 import { supabaseAuthService } from '../services/supabaseAuth';
 import { notificationService } from '../services/supabase';
@@ -126,6 +127,18 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Dark/Light Theme Control */}
         <ThemeToggle variant="segmented" className="hidden md:inline-flex" />
         <ThemeToggle variant="compact" className="md:hidden" />
+
+        {/* Subtle Dashboard Refresh */}
+        {activeTab === 'dashboard' && (
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'))}
+            className="p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            title="Refresh Dashboard"
+            aria-label="Refresh Dashboard"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        )}
 
         {/* Quick Create Dropdown */}
         <div className="relative" ref={quickRef}>
