@@ -10,6 +10,7 @@ import { productService, followUpService, notificationService } from './services
 // Views
 import { LoginView } from './views/LoginView';
 import { DashboardView } from './views/DashboardView';
+import { AnalyticsView } from './views/AnalyticsView';
 import { QuotationsView } from './views/QuotationsView';
 import { InvoicesView } from './views/InvoicesView';
 import { CustomersView } from './views/CustomersView';
@@ -109,6 +110,8 @@ function MainAppContent() {
     switch (activeTab) {
       case 'dashboard':
         return <DashboardView setActiveTab={setActiveTab} openModal={handleOpenQuickModal} />;
+      case 'analytics':
+        return <AnalyticsView onNavigateTab={setActiveTab} />;
       case 'quotations':
         return (
           <QuotationsView

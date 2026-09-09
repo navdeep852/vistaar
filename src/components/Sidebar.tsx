@@ -111,6 +111,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     {
       title: 'FINANCE & ANALYTICS',
       items: [
+        { id: 'analytics', label: 'Analytics', icon: BarChart3 },
         { id: 'daybook', label: 'Daybook', icon: BookOpen },
         { id: 'cashbook', label: 'Cashbook', icon: Wallet },
         { id: 'expenses', label: 'Expenses', icon: TrendingDown },

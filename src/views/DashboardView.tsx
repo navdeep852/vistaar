@@ -12,6 +12,7 @@ import {
   CalendarCheck,
   RefreshCw,
   AlertCircle,
+  BarChart3,
 } from 'lucide-react';
 import { store } from '../services/store';
 import { Product, Invoice, FollowUp } from '../types';
@@ -385,32 +386,46 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
 
-          {/* Segmented Preset Controls */}
-          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar p-1 rounded-xl bg-slate-100 dark:bg-slate-800/70 border border-slate-200/60 dark:border-slate-700/60">
-            {[
-              { id: 'today', label: 'Today' },
-              { id: 'yesterday', label: 'Yesterday' },
-              { id: 'week', label: 'This Week' },
-              { id: 'month', label: 'This Month' },
-              { id: 'custom', label: 'Custom Range' },
-            ].map((btn) => {
-              const isActive = rangePreset === btn.id;
-              return (
-                <button
-                  key={btn.id}
-                  onClick={() => setRangePreset(btn.id as DatePresetType)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
-                    isActive
-                      ? 'bg-blue-600 text-white font-semibold shadow-xs shadow-blue-600/30'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200/60 dark:hover:bg-slate-700/60'
-                  }`}
-                >
-                  {btn.label}
-                </button>
-              );
-            })}
+          <div className="flex items-center gap-2 self-start md:self-auto">
+            {/* Segmented Preset Controls */}
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar p-1 rounded-xl bg-slate-100 dark:bg-slate-800/70 border border-slate-200/60 dark:border-slate-700/60">
+              {[
+                { id: 'today', label: 'Today' },
+                { id: 'yesterday', label: 'Yesterday' },
+                { id: 'week', label: 'This Week' },
+                { id: 'month', label: 'This Month' },
+                { id: 'custom', label: 'Custom Range' },
+              ].map((btn) => {
+                const isActive = rangePreset === btn.id;
+                return (
+                  <button
+                    key={btn.id}
+                    onClick={() => setRangePreset(btn.id as DatePresetType)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
+                      isActive
+                        ? 'bg-blue-600 text-white font-semibold shadow-xs shadow-blue-600/30'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200/60 dark:hover:bg-slate-700/60'
+                    }`}
+                  >
+                    {btn.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Dedicated Analytics Entry */}
+            <button
+              onClick={() => setActiveTab('analytics')}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-blue-200/80 dark:border-blue-900/60 bg-blue-50/80 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50 font-semibold text-xs transition-colors shrink-0 shadow-xs"
+              title="Open Enterprise Business Analytics"
+            >
+              <BarChart3 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+              <span>Analytics</span>
+              <ArrowUpRight className="w-3.5 h-3.5 opacity-70" />
+            </button>
           </div>
         </div>
+
 
         {/* Compact Custom Date Range Inputs */}
         {rangePreset === 'custom' && (

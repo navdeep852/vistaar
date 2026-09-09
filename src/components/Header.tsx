@@ -12,6 +12,7 @@ import {
   CreditCard,
   CheckCheck,
   RefreshCw,
+  BarChart3,
 } from 'lucide-react';
 import { supabaseAuthService } from '../services/supabaseAuth';
 import { notificationService } from '../services/supabase';
@@ -91,6 +92,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   const tabTitles: Record<string, { title: string; desc: string }> = {
     dashboard: { title: 'Dashboard', desc: 'Business summary & live metrics' },
+    analytics: { title: 'Analytics', desc: 'Business performance & insights' },
     'follow-ups': { title: 'Follow-ups', desc: 'Manage customer task reminders' },
     quotations: { title: 'Quotations', desc: 'Create, edit and track estimates' },
     invoices: { title: 'Invoices', desc: 'Billing, tax invoices & payments' },
@@ -137,6 +139,18 @@ export const Header: React.FC<HeaderProps> = ({
             aria-label="Refresh Dashboard"
           >
             <RefreshCw className="w-4 h-4" />
+          </button>
+        )}
+
+        {/* Analytics Action Button on Dashboard */}
+        {activeTab === 'dashboard' && (
+          <button
+            onClick={() => setActiveTab('analytics')}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-blue-200/80 dark:border-blue-900/60 bg-blue-50/80 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 font-semibold text-xs sm:text-sm shadow-xs transition-colors"
+            title="Open Enterprise Analytics"
+          >
+            <BarChart3 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            <span>Analytics</span>
           </button>
         )}
 

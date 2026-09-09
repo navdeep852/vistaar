@@ -23,6 +23,7 @@ import {
   Wallet,
   Truck,
   ShoppingCart,
+  BarChart3,
 } from 'lucide-react';
 
 
@@ -70,6 +71,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
 
   const allDrawerItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'follow-ups', label: 'Follow-ups', icon: CalendarCheck },
     { id: 'quotations', label: 'Quotations', icon: FileText },
     { id: 'invoices', label: 'Invoices', icon: Receipt },
