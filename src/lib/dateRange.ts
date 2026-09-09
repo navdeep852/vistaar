@@ -87,6 +87,7 @@ export function formatReportingPeriodSubtitle(dateRange: ResolvedDateRange): str
   return `${startFriendly} – ${endFriendly}`;
 }
 
+/**
  * Constructs an ISO string for an IST date at given time.
  */
 function toIstIso(dateStr: string, timeStr: '00:00:00.000' | '23:59:59.999'): string {
