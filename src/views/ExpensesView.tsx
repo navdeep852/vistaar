@@ -15,6 +15,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { store } from '../services/store';
+import { expenseService } from '../services/supabase/expenseService';
 import { Expense, ExpenseCategory } from '../types';
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
@@ -124,9 +125,11 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
   const [expenseNameError, setExpenseNameError] = useState('');
   const [amount, setAmount] = useState<string>('');
   const [date, setDate] = useState<string>(getTodayStr());
+  const [paymentMode, setPaymentMode] = useState<'Cash' | 'UPI' | 'Bank Transfer' | 'Card' | 'Cheque' | 'Other'>('Cash');
   const [paidTo, setPaidTo] = useState('');
   const [referenceNo, setReferenceNo] = useState('');
   const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   // Filter States
   const [search, setSearch] = useState('');
@@ -138,12 +141,33 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
   const settings = store.getSettings();
 
   useEffect(() => {
+    let isMounted = true;
     const updateData = () => {
       const fetched = store.getExpenses();
-      setExpenses(Array.isArray(fetched) ? fetched : []);
+      if (isMounted) setExpenses(Array.isArray(fetched) ? fetched : []);
     };
     updateData();
-    return store.subscribe(updateData);
+    const unsubscribe = store.subscribe(updateData);
+
+    // Initial load from authoritative expenseService
+    expenseService.getExpenses().then((res) => {
+      if (isMounted && res.data) {
+        setExpenses(res.data);
+      }
+    });
+
+    // Auto-reconcile historical expenses with Daybook
+    expenseService.reconcileWithDaybook().then((recRes) => {
+      const removed = (recRes.duplicatesRemoved || 0) + (recRes.orphansCleaned || 0);
+      if (recRes.reconciledCount > 0 || recRes.updatedCount > 0 || removed > 0) {
+        console.info(`[ExpensesView] Daybook reconciled: +${recRes.reconciledCount} created, ~${recRes.updatedCount} updated, -${removed} cleaned.`);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, []);
 
   // Compute available years dynamically from existing expense records + current year
@@ -255,6 +279,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
     setExpenseNameError('');
     setAmount('');
     setDate(getTodayStr());
+    setPaymentMode('Cash');
     setPaidTo('');
     setReferenceNo('');
     setNotes('');
@@ -269,6 +294,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
     setExpenseNameError('');
     setAmount(exp.amount !== undefined ? exp.amount.toString() : '');
     setDate(exp.date || getTodayStr());
+    setPaymentMode((exp.paymentMode as any) || 'Cash');
     setPaidTo(exp.paidTo || '');
     setReferenceNo(exp.referenceNo || '');
     setNotes(exp.notes || '');
@@ -285,8 +311,9 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
   };
 
   // Form Submission
-  const handleSaveExpense = (e: React.FormEvent) => {
+  const handleSaveExpense = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
 
     let hasError = false;
 
@@ -305,36 +332,56 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
 
     if (hasError) return;
 
-    const payload = {
-      category,
-      expenseName: category === 'Other' ? expenseName.trim() : undefined,
-      amount: numAmount,
-      date: date || getTodayStr(),
-      paidTo: paidTo.trim() || undefined,
-      referenceNo: referenceNo.trim() || undefined,
-      notes: notes.trim() || undefined,
-    };
+    setSubmitting(true);
+    try {
+      const payload = {
+        category,
+        expenseName: category === 'Other' ? expenseName.trim() : undefined,
+        amount: numAmount,
+        date: date || getTodayStr(),
+        paymentMode,
+        paidTo: paidTo.trim() || undefined,
+        referenceNo: referenceNo.trim() || undefined,
+        notes: notes.trim() || undefined,
+      };
 
-    if (editingExpenseId) {
-      store.updateExpense(editingExpenseId, payload);
-      showToast('Expense updated successfully!', 'success');
-    } else {
-      store.addExpense(payload);
-      const catLabel = category === 'Other' ? `Other (${expenseName.trim()})` : category;
-      showToast(`Recorded expense of ${(settings?.currency || '₹')}${numAmount.toLocaleString()} under ${catLabel}!`, 'success');
+      if (editingExpenseId) {
+        const res = await expenseService.updateExpense(editingExpenseId, payload);
+        if (res.error) {
+          showToast(res.error, 'error');
+          return;
+        }
+        showToast('Expense and Daybook transaction updated successfully!', 'success');
+      } else {
+        const res = await expenseService.createExpense(payload);
+        if (res.error) {
+          showToast(res.error, 'error');
+          return;
+        }
+        const catLabel = category === 'Other' ? `Other (${expenseName.trim()})` : category;
+        showToast(`Recorded expense of ${(settings?.currency || '₹')}${numAmount.toLocaleString()} under ${catLabel}! Daybook entry synchronized.`, 'success');
+      }
+
+      setModalOpen(false);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to save expense.', 'error');
+    } finally {
+      setSubmitting(false);
     }
-
-    setModalOpen(false);
   };
 
   // Delete Expense Handler
-  const handleDeleteExpense = (exp: Expense) => {
+  const handleDeleteExpense = async (exp: Expense) => {
     if (!exp) return;
     const label = exp.category === 'Other' && exp.expenseName ? `Other (${exp.expenseName})` : (exp.category || 'Expense');
     const currency = settings?.currency || '₹';
-    if (window.confirm(`Are you sure you want to delete this expense: ${label} (${currency}${exp.amount || 0})?`)) {
-      store.deleteExpense(exp.id);
-      showToast('Expense deleted successfully.', 'info');
+    if (window.confirm(`Are you sure you want to delete this expense: ${label} (${currency}${exp.amount || 0})?\n\nThe corresponding Daybook and Cashbook transactions will also be removed.`)) {
+      const res = await expenseService.deleteExpense(exp.id);
+      if (res.error) {
+        showToast(res.error, 'error');
+      } else {
+        showToast('Expense and Daybook transaction deleted successfully.', 'info');
+      }
     }
   };
 
@@ -677,6 +724,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
                 <th className="p-3.5">Expense / Name</th>
                 <th className="p-3.5">Paid To / Vendor</th>
                 <th className="p-3.5">Ref / Cheque #</th>
+                <th className="p-3.5">Payment</th>
                 <th className="p-3.5 text-right">Amount</th>
                 <th className="p-3.5 text-center">Actions</th>
               </tr>
@@ -684,7 +732,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {filteredExpenses.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-slate-400 dark:text-slate-500">
+                  <td colSpan={8} className="p-8 text-center text-slate-400 dark:text-slate-500">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <AlertCircle className="w-6 h-6 text-slate-300 dark:text-slate-600" />
                       <p className="font-medium">No expenses found.</p>
@@ -726,6 +774,11 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
                     </td>
                     <td className="p-3.5 text-slate-700 dark:text-slate-300">{e.paidTo || '-'}</td>
                     <td className="p-3.5 text-slate-500 dark:text-slate-400 font-mono text-[11px]">{e.referenceNo || '-'}</td>
+                    <td className="p-3.5 whitespace-nowrap">
+                      <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                        {e.paymentMode || 'Cash'}
+                      </span>
+                    </td>
                     <td className="p-3.5 text-right font-extrabold text-rose-600 dark:text-rose-400 whitespace-nowrap">
                       {currencySymbol}{(Number(e.amount) || 0).toLocaleString()}
                     </td>
@@ -851,6 +904,25 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
                 />
               </div>
 
+              {/* Payment Mode */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                  Payment Mode *
+                </label>
+                <select
+                  value={paymentMode}
+                  onChange={(e) => setPaymentMode(e.target.value as any)}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 focus:bg-white dark:focus:bg-slate-900 transition-colors"
+                >
+                  <option value="Cash">Cash</option>
+                  <option value="UPI">UPI</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="Card">Card</option>
+                  <option value="Cheque">Cheque</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
               {/* Paid To / Vendor */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
@@ -899,15 +971,17 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
               <button
                 type="button"
                 onClick={() => setModalOpen(false)}
-                className="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                disabled={submitting}
+                className="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-6 py-2.5 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 shadow-md shadow-rose-600/20 transition-colors cursor-pointer"
+                disabled={submitting}
+                className="px-6 py-2.5 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 shadow-md shadow-rose-600/20 transition-colors cursor-pointer disabled:opacity-50"
               >
-                {editingExpenseId ? 'Update Expense' : 'Save Expense'}
+                {submitting ? 'Processing...' : (editingExpenseId ? 'Update Expense' : 'Save Expense')}
               </button>
             </div>
           </form>

@@ -548,6 +548,7 @@ export interface Expense {
   expenseName?: string;
   amount: number;
   date: string;
+  paymentMode?: 'Cash' | 'UPI' | 'Bank Transfer' | 'Card' | 'Cheque' | 'Other' | string;
   paidTo?: string;
   referenceNo?: string;
   notes?: string;

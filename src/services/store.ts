@@ -1263,6 +1263,10 @@ class StoreService {
 
   // Expenses, Follow-ups, Feedbacks, Offers, Notifications
   public getExpenses(): Expense[] { return Array.isArray(this.state.expenses) ? this.state.expenses : []; }
+  public setExpenses(expenses: Expense[]) {
+    this.state.expenses = Array.isArray(expenses) ? expenses : [];
+    this.saveToStorage();
+  }
   public addExpense(expense: Omit<Expense, 'id' | 'createdAt'>): Expense {
     const newExp: Expense = { ...expense, id: `exp-${Date.now()}`, createdAt: new Date().toISOString() };
     this.state.expenses.unshift(newExp);

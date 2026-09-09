@@ -227,10 +227,14 @@ export interface DbExpense {
   id: string;
   workspace_id: string;
   category: string;
-  expense_name?: string;
+  expense_name?: string | null;
   amount: number;
-  date: string;
-  paid_to?: string;
+  expense_date?: string;
+  date?: string;
+  payment_mode?: string | null;
+  paid_to?: string | null;
+  reference_no?: string | null;
+  notes?: string | null;
   created_at?: string;
 }
 
@@ -596,5 +600,17 @@ export function fromDbCashbookEntry(row: any): any {
   };
 }
 
-
-
+export function fromDbExpense(row: any): Expense {
+  return {
+    id: row.id,
+    category: row.category,
+    expenseName: row.expense_name || undefined,
+    amount: Number(row.amount) || 0,
+    date: row.expense_date || row.date || (row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
+    paymentMode: row.payment_mode || 'Cash',
+    paidTo: row.paid_to || undefined,
+    referenceNo: row.reference_no || undefined,
+    notes: row.notes || undefined,
+    createdAt: row.created_at || new Date().toISOString(),
+  };
+}

@@ -4,6 +4,7 @@ import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 import { fromDbDaybookTransaction } from './types';
+import { expenseService } from './expenseService';
 
 const LOCAL_DAYBOOK_KEY = 'vistaar_local_daybook_db';
 
@@ -224,6 +225,44 @@ export class DaybookService {
             status: 'COMPLETED',
             createdAt: inv.created_at,
           });
+        }
+      }
+
+      // 3. Fetch operational expenses
+      if (!options?.transactionType || options.transactionType === 'ALL' || options.transactionType === 'EXPENSE') {
+        let expQuery = supabase
+          .from('expenses')
+          .select('*')
+          .eq('workspace_id', wsId);
+
+        if (start) expQuery = expQuery.gte('expense_date', start);
+        if (end) expQuery = expQuery.lte('expense_date', end);
+
+        const { data: expList } = await expQuery;
+        if (expList) {
+          for (const exp of expList) {
+            const amt = Number(exp.amount) || 0;
+            const desc = exp.expense_name ? `${exp.category}: ${exp.expense_name}` : (exp.category || 'Operational Expense');
+            list.push({
+              id: `syn-exp-${exp.id}`,
+              workspaceId: exp.workspace_id,
+              transactionCode: exp.reference_no || `EXP-${exp.id.substring(0, 8)}`,
+              transactionDate: exp.expense_date,
+              transactionType: 'EXPENSE',
+              direction: 'OUT',
+              amount: amt,
+              paymentMode: (exp.payment_mode || 'Cash') as any,
+              partyType: 'other',
+              partyName: exp.paid_to || 'Vendor / Payee',
+              referenceType: 'EXPENSE',
+              referenceId: exp.id,
+              referenceNumber: exp.reference_no,
+              description: desc,
+              notes: exp.notes,
+              status: 'COMPLETED',
+              createdAt: exp.created_at,
+            });
+          }
         }
       }
     } catch (e) {
@@ -524,6 +563,14 @@ export class DaybookService {
           transactionDate: sale.sale_date,
         });
         synced++;
+      }
+
+      // Reconcile operational expenses with Daybook transactions idempotently
+      try {
+        const expReconcileRes = await expenseService.reconcileWithDaybook();
+        synced += (expReconcileRes.reconciledCount || 0) + (expReconcileRes.updatedCount || 0);
+      } catch (expErr) {
+        console.warn('Expense reconcile notice in daybookService:', expErr);
       }
     } catch (e) {
       console.warn('Sync historical notice:', e);

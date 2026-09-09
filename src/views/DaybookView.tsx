@@ -887,6 +887,12 @@ export const DaybookView: React.FC = () => {
                     <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">{selectedTx.referenceNumber}</span>
                   </div>
                 )}
+                {selectedTx.referenceType === 'EXPENSE' && (
+                  <div className="flex justify-between border-b border-slate-100 dark:border-slate-800 py-1.5 bg-rose-50/60 dark:bg-rose-950/20 px-2 rounded-lg">
+                    <span className="text-rose-600 dark:text-rose-400 font-semibold">Originating Expense ID:</span>
+                    <span className="font-mono text-xs font-bold text-rose-700 dark:text-rose-300">{selectedTx.referenceId}</span>
+                  </div>
+                )}
                 <div className="flex justify-between border-b border-slate-100 dark:border-slate-800 py-1.5">
                   <span className="text-slate-500">Status:</span>
                   <span className="font-semibold text-slate-800 dark:text-slate-200">{selectedTx.status}</span>
