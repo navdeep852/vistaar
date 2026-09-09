@@ -672,13 +672,13 @@ export class EnterpriseAnalyticsService {
 
       if (['sent', 'viewed', 'accepted', 'converted'].includes(st)) sentCount += 1;
       if (['accepted', 'converted'].includes(st)) acceptedCount += 1;
-      if (st === 'converted' || q.invoice_id || q.invoiceId) {
+      if (st === 'converted' || q.invoice_id || q.invoiceId || q.converted_invoice_id || q.convertedInvoiceId) {
         convertedCount += 1;
         convertedValue += val;
         // Check if converted invoice is paid
-        const invId = q.invoice_id || q.invoiceId;
-        const matchingInv = invoices.find((i) => i.id === invId || i.quotationId === q.id);
-        if (matchingInv && (matchingInv.status === 'Paid' || matchingInv.paidAmount >= matchingInv.grandTotal)) {
+        const invId = q.invoice_id || q.invoiceId || q.converted_invoice_id || q.convertedInvoiceId;
+        const matchingInv = invoices.find((i) => i.id === invId || (i.quotationId && i.quotationId === q.id) || (i.quotation_id && i.quotation_id === q.id));
+        if (matchingInv && (matchingInv.status === 'Paid' || (Number(matchingInv.paidAmount || matchingInv.paid_amount || 0) >= Number(matchingInv.grandTotal || matchingInv.grand_total || 0) && Number(matchingInv.grandTotal || matchingInv.grand_total || 0) > 0))) {
           paidCount += 1;
         }
       }

@@ -428,6 +428,19 @@ class StoreService {
         linkedU.status = inv.balanceAmount <= 0.01 ? 'PAID' : (inv.paidAmount > 0 ? 'PARTIALLY PAID' : 'UNPAID');
       }
     }
+
+    // 4. Audit & reconcile Converted Quotations with linked Invoices
+    const quotations = targetState.quotations || [];
+    for (const q of quotations) {
+      if (q.convertedInvoiceId || q.status === 'Converted') {
+        const matchingInv = invoices.find((i) => (q.convertedInvoiceId && i.id === q.convertedInvoiceId) || (i.quotationId && i.quotationId === q.id));
+        if (matchingInv) {
+          q.status = 'Converted';
+          q.convertedInvoiceId = matchingInv.id;
+          matchingInv.quotationId = q.id;
+        }
+      }
+    }
   }
 
   private saveToStorage() {
@@ -791,9 +804,44 @@ class StoreService {
     }
   }
 
-  public convertQuotationToInvoice(quotationId: string): Invoice | null {
+  public convertQuotationToInvoice(
+    quotationId: string,
+    options?: {
+      paymentStatus?: 'Unpaid' | 'Partially Paid' | 'Fully Paid';
+      paidAmount?: number;
+      paymentMode?: string;
+      paymentReference?: string;
+      paymentNotes?: string;
+      invoiceId?: string;
+      invoiceNumber?: string;
+      invoiceDate?: string;
+      paymentDate?: string;
+      dueDate?: string;
+    }
+  ): Invoice | null {
     const qt = this.state.quotations.find((q) => q.id === quotationId);
     if (!qt || qt.status === 'Converted') return null;
+
+    const grandTotal = Math.max(0, Number(qt.grandTotal) || 0);
+    const pStatus = options?.paymentStatus || (options?.paidAmount !== undefined && options.paidAmount > 0 ? (options.paidAmount >= grandTotal ? 'Fully Paid' : 'Partially Paid') : 'Unpaid');
+
+    let paidAmount = 0;
+    let balanceAmount = grandTotal;
+    let invoiceStatus: InvoiceStatus = 'Issued';
+
+    if (pStatus === 'Fully Paid') {
+      paidAmount = grandTotal;
+      balanceAmount = 0;
+      invoiceStatus = 'Paid';
+    } else if (pStatus === 'Partially Paid') {
+      paidAmount = Math.max(0, Math.min(grandTotal, Number(options?.paidAmount) || 0));
+      balanceAmount = Math.max(0, Number((grandTotal - paidAmount).toFixed(2)));
+      invoiceStatus = balanceAmount <= 0.01 ? 'Paid' : 'Partially Paid';
+    } else {
+      paidAmount = 0;
+      balanceAmount = grandTotal;
+      invoiceStatus = 'Issued';
+    }
 
     const inv = this.addInvoice({
       quotationId: qt.id,
@@ -804,16 +852,16 @@ class StoreService {
       customerEmail: qt.customerEmail,
       customerAddress: qt.customerAddress,
       customerGstin: qt.customerGstin,
-      status: 'Issued',
-      date: new Date().toISOString().split('T')[0],
-      dueDate: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
+      status: invoiceStatus,
+      date: options?.invoiceDate || new Date().toISOString().split('T')[0],
+      dueDate: options?.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
       items: qt.items.map((i) => ({ ...i })),
       subtotal: qt.subtotal,
       discountTotal: qt.discountTotal,
       taxTotal: qt.taxTotal,
       grandTotal: qt.grandTotal,
-      paidAmount: 0,
-      balanceAmount: qt.grandTotal,
+      paidAmount,
+      balanceAmount,
       notes: qt.notes,
       terms: qt.terms,
       footerText: qt.footerText,
@@ -822,8 +870,46 @@ class StoreService {
       theme: qt.theme,
     });
 
+    if (options?.invoiceId) {
+      inv.id = options.invoiceId;
+    }
+    if (options?.invoiceNumber) {
+      inv.invoiceNumber = options.invoiceNumber;
+    }
+
     qt.status = 'Converted';
     qt.convertedInvoiceId = inv.id;
+
+    // Record payment if collected upfront
+    if (paidAmount > 0) {
+      this.recordPayment({
+        invoiceId: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        customerId: inv.customerId || qt.customerId || 'cust_direct',
+        customerName: inv.customerName,
+        amount: paidAmount,
+        method: (options?.paymentMode as any) || 'Cash',
+        date: options?.paymentDate || inv.date,
+        referenceNo: options?.paymentReference,
+        notes: options?.paymentNotes || `Payment recorded at quotation conversion (#${qt.quotationNumber})`,
+      });
+    }
+
+    // Sync Udhari if balance remaining
+    if (balanceAmount > 0.01) {
+      this.syncInvoiceUdhari({
+        invoiceId: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        customerId: inv.customerId,
+        customerName: inv.customerName,
+        customerPhone: inv.customerPhone || '9999999999',
+        grandTotal: inv.grandTotal,
+        paidAmount: inv.paidAmount,
+        balanceAmount: inv.balanceAmount,
+        dueDate: inv.dueDate,
+      });
+    }
+
     this.saveToStorage();
     return inv;
   }
