@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   DollarSign,
   FileText,
@@ -23,6 +23,8 @@ import {
   udhariService,
   quotationService,
 } from '../services/supabase';
+import { supabaseAuthService } from '../services/supabaseAuth';
+import { isValidUuid } from '../lib/supabaseError';
 import {
   DatePresetType,
   ResolvedDateRange,
@@ -45,22 +47,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   setActiveTab,
   openModal,
 }) => {
-  // Global Date Filter State (Persisted across tab navigation)
+  // Concurrency and race-condition guard
+  const activeRequestIdRef = useRef<number>(0);
+
+  // Filter State initialized from localStorage with robust fallback
   const [rangePreset, setRangePreset] = useState<DatePresetType>(() => {
     try {
-      const saved = sessionStorage.getItem(STORAGE_KEY_PRESET);
-      if (saved && ['today', 'yesterday', 'week', 'month', 'custom'].includes(saved)) {
+      const saved = localStorage.getItem(STORAGE_KEY_PRESET);
+      if (saved && ['today', 'yesterday', 'this_week', 'this_month', 'this_quarter', 'this_year', 'custom'].includes(saved)) {
         return saved as DatePresetType;
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
     return 'today';
   });
 
   const [customStartDate, setCustomStartDate] = useState<string>(() => {
     try {
-      return sessionStorage.getItem(STORAGE_KEY_START) || getIstTodayString();
+      return localStorage.getItem(STORAGE_KEY_START) || getIstTodayString();
     } catch {
       return getIstTodayString();
     }
@@ -68,32 +71,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const [customEndDate, setCustomEndDate] = useState<string>(() => {
     try {
-      return sessionStorage.getItem(STORAGE_KEY_END) || getIstTodayString();
+      return localStorage.getItem(STORAGE_KEY_END) || getIstTodayString();
     } catch {
       return getIstTodayString();
     }
   });
 
-  // Authoritative Resolved Date Range
-  const dateRange: ResolvedDateRange = resolveDateRange(rangePreset, customStartDate, customEndDate);
+  // Calculate Authoritative Date Range
+  const dateRange: ResolvedDateRange = useMemo(() => resolveDateRange(
+    rangePreset,
+    rangePreset === 'custom' ? customStartDate : undefined,
+    rangePreset === 'custom' ? customEndDate : undefined
+  ), [rangePreset, customStartDate, customEndDate]);
 
-  // Synchronize filter persistence to sessionStorage
+  // Sync to localStorage
   useEffect(() => {
     try {
-      sessionStorage.setItem(STORAGE_KEY_PRESET, rangePreset);
-      sessionStorage.setItem(STORAGE_KEY_START, customStartDate);
-      sessionStorage.setItem(STORAGE_KEY_END, customEndDate);
-    } catch {
-      // ignore
-    }
+      localStorage.setItem(STORAGE_KEY_PRESET, rangePreset);
+      if (rangePreset === 'custom') {
+        localStorage.setItem(STORAGE_KEY_START, customStartDate);
+        localStorage.setItem(STORAGE_KEY_END, customEndDate);
+      }
+    } catch {}
   }, [rangePreset, customStartDate, customEndDate]);
 
   // Dashboard Data State
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [followUps, setFollowUps] = useState<FollowUp[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>(store.getInvoices());
+  const [followUps, setFollowUps] = useState<FollowUp[]>(store.getFollowUps());
   const [lowStockProducts, setLowStockProducts] = useState<Product[]>([]);
   const [lowStockCount, setLowStockCount] = useState<number>(0);
   const [openQuotationsCount, setOpenQuotationsCount] = useState<number>(0);
@@ -127,21 +134,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Authoritative Data Fetching Pipeline
   const loadDashboardData = useCallback(async (forceFresh = false) => {
+    const currentRequestId = ++activeRequestIdRef.current;
     setLoading(true);
     setError(null);
 
     try {
+      // 0. Resolve authoritative workspace ID
+      const wsId = await supabaseAuthService.getAuthoritativeWorkspaceId(forceFresh);
+      if (!wsId || !isValidUuid(wsId)) {
+        throw new Error('[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined.');
+      }
+
       // 1. Sales Metrics (Authoritative Invoices + Counter Sales for the resolved date range)
-      const salesPromise = salesAnalyticsService.getSalesMetrics(dateRange, forceFresh);
+      const salesPromise = salesAnalyticsService.getSalesMetrics(dateRange, forceFresh, wsId);
 
       // 2. Outstanding Udhari (Point-in-time balance as of dateRange.endDateStr)
-      const udhariPromise = udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr);
+      const udhariPromise = udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId);
 
       // 3. Open Quotations (Active/Open as of dateRange.endDateStr)
-      const quotationsPromise = quotationService.getOpenQuotationsCountAsOf(dateRange.endDateStr);
+      const quotationsPromise = quotationService.getOpenQuotationsCountAsOf(dateRange.endDateStr, wsId);
 
       // 4. Low Stock Products (Stock <= minimumStock as of dateRange.endDateStr)
-      const lowStockPromise = productService.getLowStockProductsAsOf(dateRange.endDateStr);
+      const lowStockPromise = productService.getLowStockProductsAsOf(dateRange.endDateStr, wsId);
 
       const [smRes, umRes, qtRes, lsRes] = await Promise.all([
         salesPromise,
@@ -149,6 +163,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         quotationsPromise,
         lowStockPromise,
       ]);
+
+      if (currentRequestId !== activeRequestIdRef.current) return;
 
       setSalesMetrics(smRes);
       setUdhariMetrics(umRes);
@@ -160,12 +176,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       setInvoices(store.getInvoices());
       setFollowUps(store.getFollowUps());
     } catch (err: any) {
+      if (currentRequestId !== activeRequestIdRef.current) return;
       console.error('[DashboardView] Failed to load authoritative metrics:', err);
       setError(err?.message || 'Unable to load Dashboard metrics. Please verify network and database connectivity.');
     } finally {
-      setLoading(false);
+      if (currentRequestId === activeRequestIdRef.current) {
+        setLoading(false);
+      }
     }
-  }, [dateRange.rangeType, dateRange.startDateStr, dateRange.endDateStr]);
+  }, [dateRange]);
 
   useEffect(() => {
     loadDashboardData();

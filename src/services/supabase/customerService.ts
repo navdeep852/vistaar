@@ -1,4 +1,4 @@
-import { supabase } from '../../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { Customer } from '../../types';
 import { DbCustomer, fromDbCustomer, toDbCustomer } from './types';
 import { supabaseAuthService } from '../supabaseAuth';
@@ -35,7 +35,12 @@ export class CustomerService {
     page?: number;
     pageSize?: number;
   }): Promise<{ data: Customer[]; count: number; error?: string }> {
-    const wsId = this.getWorkspaceId();
+    const wsId = await this.getOrFetchWorkspaceId();
+    if (!isSupabaseConfigured() || !isValidUuid(wsId)) {
+      const fallback = safeGetTenantStorage<Customer>(LOCAL_CUSTOMERS_KEY, []);
+      return { data: fallback, count: fallback.length };
+    }
+
     let query = supabase.from('customers').select('*', { count: 'exact' }).eq('workspace_id', wsId);
 
     if (options?.search) {

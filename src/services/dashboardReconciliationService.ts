@@ -3,6 +3,7 @@ import { udhariService } from './supabase/udhariService';
 import { invoiceService } from './supabase/invoiceService';
 import { counterSaleService } from './supabase/counterSaleService';
 import { cashbookService } from './supabase/cashbookService';
+import { supabaseAuthService } from './supabaseAuth';
 import { ResolvedDateRange } from '../lib/dateRange';
 
 export interface ReconciliationReport {
@@ -40,13 +41,15 @@ export class DashboardReconciliationService {
   public async runAudit(range: ResolvedDateRange): Promise<ReconciliationReport> {
     const details: string[] = [];
 
+    const wsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
+
     // 1. Dashboard calculations
-    const salesMetrics = await salesAnalyticsService.getSalesMetrics(range, true);
-    const udhariMetrics = await udhariService.getAuthoritativeUdhariMetricsAsOf(range.endDateStr);
+    const salesMetrics = await salesAnalyticsService.getSalesMetrics(range, true, wsId);
+    const udhariMetrics = await udhariService.getAuthoritativeUdhariMetricsAsOf(range.endDateStr, wsId);
 
     // 2. Direct Source Queries for same period
     // Source Invoices
-    const invRes = await invoiceService.getInvoices();
+    const invRes = await invoiceService.getInvoices({ workspaceId: wsId });
     const sourceInvoices = (invRes.data || []).filter((inv: any) => {
       const d = (inv.date || inv.created_at || '').split('T')[0];
       const validStatus = inv.status === 'Issued' || inv.status === 'Partially Paid' || inv.status === 'Paid';

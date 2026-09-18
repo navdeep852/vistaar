@@ -28,13 +28,18 @@ export class SalesAnalyticsService {
   private CACHE_TTL_MS = 15000; // 15 seconds cache per filter range
 
   private async getWorkspaceId(): Promise<string> {
+    if (!isSupabaseConfigured()) {
+      return supabaseAuthService.getCurrentCompanyId() || '';
+    }
     try {
       const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
       if (authWsId && isValidUuid(authWsId)) return authWsId;
-    } catch (e) {
-      console.warn('Failed to get authoritative workspace ID in salesAnalyticsService:', e);
+    } catch (e: any) {
+      console.warn('Failed to get authoritative workspace ID in salesAnalyticsService:', e?.message || e);
     }
-    return supabaseAuthService.getCurrentCompanyId() || '';
+    const currentId = supabaseAuthService.getCurrentCompanyId();
+    if (currentId && isValidUuid(currentId)) return currentId;
+    throw new Error('[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined in salesAnalyticsService.');
   }
 
   public invalidateCache(): void {
@@ -47,9 +52,9 @@ export class SalesAnalyticsService {
    * Strictly excludes Draft, Cancelled, Voided records.
    * Eliminates any potential double-counting between Invoices & Counter Sales.
    */
-  public async getSalesMetrics(dateRange?: ResolvedDateRange, forceFresh = false): Promise<SalesMetrics> {
+  public async getSalesMetrics(dateRange?: ResolvedDateRange, forceFresh = false, explicitWsId?: string): Promise<SalesMetrics> {
     const range = dateRange || resolveDateRange('today');
-    const wsId = await this.getWorkspaceId();
+    const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
     const cacheKey = `${wsId}:${range.rangeType}:${range.startDateStr}:${range.endDateStr}`;
 
     const now = Date.now();

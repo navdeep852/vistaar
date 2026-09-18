@@ -27,11 +27,11 @@ export class ProductService {
       return this.getWorkspaceId();
     }
     try {
-      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId(true);
+      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
       if (authWsId && isValidUuid(authWsId)) {
         return authWsId;
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('[WORKSPACE RESOLUTION FAILED] in productService:', e);
       throw e;
     }
@@ -48,8 +48,9 @@ export class ProductService {
     categoryId?: string;
     page?: number;
     pageSize?: number;
+    workspaceId?: string;
   }): Promise<{ data: Product[]; count: number; error?: string }> {
-    let wsId = this.getWorkspaceId();
+    let wsId = options?.workspaceId && isValidUuid(options.workspaceId) ? options.workspaceId : this.getWorkspaceId();
     const isDefaultFetch = !options?.search && !options?.categoryId && !options?.page;
 
     // Return from in-memory cache if available and fresh (<30s)
@@ -96,7 +97,9 @@ export class ProductService {
       return { data: items, count: items.length };
     }
 
-    wsId = await this.getOrFetchWorkspaceId();
+    if (!options?.workspaceId || !isValidUuid(options.workspaceId)) {
+      wsId = await this.getOrFetchWorkspaceId();
+    }
     const SELECT_FIELDS = 'id, workspace_id, name, sku, part_number, product_code, category_id, categories(name), brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, location, gst_rate, tax_percent, active, created_at, updated_at';
     const SELECT_FIELDS_FALLBACK = 'id, workspace_id, name, sku, part_number, product_code, category_id, categories(name), brand, unit, buy_price, selling_price, current_stock, minimum_stock, hsn_sac, gst_rate, tax_percent, active, created_at, updated_at';
 
@@ -1353,7 +1356,7 @@ export class ProductService {
    * For current date: checks current_stock <= minimum_stock.
    * For historical date: reconstructs stock from stock_movements (stockAsOf = current_stock - movements_after_toDate).
    */
-  public async getLowStockProductsAsOf(asOfDateStr?: string): Promise<{
+  public async getLowStockProductsAsOf(asOfDateStr?: string, explicitWsId?: string): Promise<{
     lowStockCount: number;
     lowStockProducts: Product[];
     isHistorical: boolean;
@@ -1363,13 +1366,17 @@ export class ProductService {
     const targetDate = asOfDateStr || today;
     const isHistorical = targetDate < today;
 
-    const prodRes = await this.getProducts();
+    let wsId = explicitWsId;
+    if (!wsId || !isValidUuid(wsId)) {
+      wsId = isSupabaseConfigured() ? await this.getOrFetchWorkspaceId() : this.getWorkspaceId();
+    }
+
+    const prodRes = await this.getProducts({ workspaceId: wsId });
     if (prodRes.error && (!prodRes.data || prodRes.data.length === 0)) {
       return { lowStockCount: 0, lowStockProducts: [], isHistorical: false, error: prodRes.error };
     }
 
     const allProducts = prodRes.data || [];
-    const wsId = this.getWorkspaceId();
 
     // Map of product_id -> movement sum after targetDate
     const movementsAfterMap = new Map<string, number>();

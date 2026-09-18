@@ -22,12 +22,12 @@ export class InvoiceService {
       return this.getWorkspaceId();
     }
     try {
-      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId(true);
+      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
       if (authWsId && isValidUuid(authWsId)) {
         return authWsId;
       }
-    } catch (e) {
-      console.error('Failed to get authoritative workspace ID in invoiceService:', e);
+    } catch (e: any) {
+      console.error('Failed to get authoritative workspace ID in invoiceService:', e?.message || e);
       throw e;
     }
     throw new Error('[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined in invoiceService.');
@@ -39,8 +39,9 @@ export class InvoiceService {
     status?: string;
     page?: number;
     pageSize?: number;
+    workspaceId?: string;
   }): Promise<{ data: any[]; count: number; error?: string }> {
-    const wsId = await this.getOrFetchWorkspaceId();
+    const wsId = options?.workspaceId && isValidUuid(options.workspaceId) ? options.workspaceId : await this.getOrFetchWorkspaceId();
     let query = supabase.from('invoices').select('*, invoice_items(*)', { count: 'exact' });
     if (isValidUuid(wsId)) {
       query = query.eq('workspace_id', wsId);

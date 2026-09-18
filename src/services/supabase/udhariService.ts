@@ -9,12 +9,23 @@ const LOCAL_UDHARI_KEY = 'vistaar_local_udharis_db';
 const LOCAL_UDHARI_PAYMENTS_KEY = 'vistaar_local_udhari_payments_db';
 
 export class UdhariService {
-  private getWorkspaceId(): string {
-    return supabaseAuthService.getCurrentCompanyId();
+  private async getWorkspaceId(): Promise<string> {
+    if (!isSupabaseConfigured()) {
+      return supabaseAuthService.getCurrentCompanyId() || '';
+    }
+    try {
+      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
+      if (authWsId && isValidUuid(authWsId)) return authWsId;
+    } catch (e: any) {
+      console.warn('Failed to get authoritative workspace ID in udhariService:', e?.message || e);
+    }
+    const cid = supabaseAuthService.getCurrentCompanyId();
+    if (cid && isValidUuid(cid)) return cid;
+    return '';
   }
 
-  public async getUdhariRecords(): Promise<{ data: any[]; error?: string }> {
-    const wsId = this.getWorkspaceId();
+  public async getUdhariRecords(explicitWsId?: string): Promise<{ data: any[]; error?: string }> {
+    const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
     try {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
         const { data, error } = await supabase
@@ -61,7 +72,7 @@ export class UdhariService {
   }
 
   public async createUdhari(udhari: Partial<UdhariRecord>): Promise<{ udhariId?: string; error?: string }> {
-    const wsId = this.getWorkspaceId();
+    const wsId = await this.getWorkspaceId();
     if (udhari.phoneSnapshot) {
       const pRes = validateIndianPhoneNumber(udhari.phoneSnapshot, true);
       if (!pRes.isValid) {
@@ -126,7 +137,7 @@ export class UdhariService {
     balanceAmount: number;
     dueDate?: string;
   }): Promise<{ udhariId?: string; error?: string }> {
-    const wsId = this.getWorkspaceId();
+    const wsId = await this.getWorkspaceId();
     const effectiveDueDate = params.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0];
     const isCleared = params.balanceAmount <= 0.01;
     const udhariStatus = isCleared ? 'PAID' : (params.paidAmount > 0 ? 'PARTIALLY PAID' : 'UNPAID');
@@ -295,7 +306,7 @@ export class UdhariService {
    * Outstanding Udhari = Opening Outstanding Balance + Credit generated up to To Date - Payments up to To Date.
    * Agrees 100% with the Udhari Ledger.
    */
-  public async getAuthoritativeUdhariMetricsAsOf(asOfDateStr?: string): Promise<{
+  public async getAuthoritativeUdhariMetricsAsOf(asOfDateStr?: string, explicitWsId?: string): Promise<{
     outstanding: number;
     totalUdhari: number;
     totalReceived: number;
@@ -307,7 +318,7 @@ export class UdhariService {
     const targetDate = asOfDateStr || today;
     const isHistorical = targetDate < today;
 
-    const res = await this.getUdhariRecords();
+    const res = await this.getUdhariRecords(explicitWsId);
     if (res.error && (!res.data || res.data.length === 0)) {
       return {
         outstanding: 0,

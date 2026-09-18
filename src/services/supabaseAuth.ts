@@ -129,15 +129,120 @@ export function normalizeAuthError(error: any): string {
   return msg;
 }
 
+export type AuthResolutionState = 'loading' | 'unauthenticated' | 'ready' | 'error';
+
 export class SupabaseAuthService {
   private currentProfile: UserProfile | null = null;
   private listeners: Set<() => void> = new Set();
   private isPasswordRecoveryMode: boolean = false;
+  private authResolutionState: AuthResolutionState = 'loading';
+  private resolutionError: string | null = null;
+  private authoritativeWorkspaceId: string | null = null;
+  private workspaceResolutionPromise: Promise<string> | null = null;
 
   constructor() {
     this.currentProfile = this.loadCachedSession();
+    if (!isSupabaseConfigured()) {
+      if (this.currentProfile?.id) {
+        const cid = this.currentProfile.companyId;
+        if (cid && isValidUuid(cid) && cid !== this.currentProfile.id) {
+          this.authoritativeWorkspaceId = cid;
+          this.authResolutionState = 'ready';
+        } else {
+          this.authResolutionState = 'error';
+          this.resolutionError = '[WORKSPACE RESOLUTION FAILED] Invalid local workspace ID.';
+        }
+      } else {
+        this.authResolutionState = 'unauthenticated';
+      }
+    } else {
+      this.authResolutionState = 'loading';
+      this.initializeAuth();
+    }
     this.initSessionListener();
     this.handleAuthRedirect();
+  }
+
+  /**
+   * Authoritative Auth and Workspace Initializer
+   * Resolves Supabase session, database profile, and workspace authorization.
+   */
+  public async initializeAuth(): Promise<void> {
+    if (!isSupabaseConfigured()) {
+      if (this.currentProfile?.id) {
+        const cid = this.currentProfile.companyId;
+        if (cid && isValidUuid(cid) && cid !== this.currentProfile.id) {
+          this.authoritativeWorkspaceId = cid;
+          this.authResolutionState = 'ready';
+          this.resolutionError = null;
+        } else {
+          this.authResolutionState = 'error';
+          this.resolutionError = '[WORKSPACE RESOLUTION FAILED] Invalid local workspace ID.';
+        }
+      } else {
+        this.authResolutionState = 'unauthenticated';
+        this.resolutionError = null;
+      }
+      this.notify();
+      return;
+    }
+
+    try {
+      this.authResolutionState = 'loading';
+      this.resolutionError = null;
+
+      const { data: { session }, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) {
+        console.warn('[AUTH_INIT] Session lookup error:', sessionErr);
+      }
+
+      let authUser = session?.user;
+      if (!authUser) {
+        const { data: userData } = await supabase.auth.getUser();
+        authUser = userData?.user;
+      }
+
+      if (!authUser) {
+        this.currentProfile = null;
+        this.authoritativeWorkspaceId = null;
+        this.saveSessionToStorage(null);
+        this.authResolutionState = 'unauthenticated';
+        this.notify();
+        return;
+      }
+
+      const wsId = await this.getAuthoritativeWorkspaceId(true);
+      if (wsId && isValidUuid(wsId)) {
+        this.authoritativeWorkspaceId = wsId;
+        this.authResolutionState = 'ready';
+        this.resolutionError = null;
+      } else {
+        this.authResolutionState = 'error';
+        this.resolutionError = '[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined.';
+      }
+    } catch (err: any) {
+      console.error('[AUTH_INIT_ERROR] Failed to initialize authenticated workspace:', err);
+      this.authResolutionState = 'error';
+      this.resolutionError = err?.message || '[WORKSPACE RESOLUTION FAILED] Failed to initialize authenticated workspace.';
+    } finally {
+      this.notify();
+    }
+  }
+
+  public getAuthResolutionState(): AuthResolutionState {
+    return this.authResolutionState;
+  }
+
+  public getResolutionError(): string | null {
+    return this.resolutionError;
+  }
+
+  public getAuthoritativeWorkspaceIdSync(): string | null {
+    if (this.authoritativeWorkspaceId && isValidUuid(this.authoritativeWorkspaceId)) {
+      return this.authoritativeWorkspaceId;
+    }
+    const cid = this.getCurrentCompanyId();
+    return cid && isValidUuid(cid) ? cid : null;
   }
 
   /**
@@ -167,7 +272,7 @@ export class SupabaseAuthService {
         } else {
           console.log('[AUTH_CODE_EXCHANGE_SUCCESS] Auth session established successfully.');
           if (data?.session?.user) {
-            await this.syncProfileFromSupabaseUser(data.session.user.id, data.session.user.email);
+            await this.getAuthoritativeWorkspaceId(true);
           }
           if (isRecoveryUrl || type === 'recovery') {
             this.isPasswordRecoveryMode = true;
@@ -221,12 +326,25 @@ export class SupabaseAuthService {
         if (event === 'PASSWORD_RECOVERY') {
           this.isPasswordRecoveryMode = true;
         }
-        if (session?.user) {
-          await this.syncProfileFromSupabaseUser(session.user.id, session.user.email);
-        } else if (!this.currentProfile) {
-          this.currentProfile = this.loadCachedSession();
+        if (event === 'SIGNED_OUT' || !session?.user) {
+          this.currentProfile = null;
+          this.authoritativeWorkspaceId = null;
+          this.authResolutionState = 'unauthenticated';
+          this.resolutionError = null;
+          this.saveSessionToStorage(null);
+          store.reloadTenantState();
+          this.notify();
+          return;
         }
-        this.notify();
+
+        if (session?.user) {
+          try {
+            await this.getAuthoritativeWorkspaceId(true);
+          } catch (e: any) {
+            console.warn('[AUTH_LISTENER] Workspace resolution notice on auth change:', e?.message || e);
+          }
+          this.notify();
+        }
       });
     } catch (e) {
       console.warn('Supabase auth listener initialization warning:', e);
@@ -263,13 +381,17 @@ export class SupabaseAuthService {
   }
 
   public isAuthenticated(): boolean {
-    return this.currentProfile !== null && Boolean(this.currentProfile?.id);
+    return this.authResolutionState === 'ready' && Boolean(this.currentProfile?.id);
   }
 
   public getCurrentCompanyId(): string {
-    const cid = this.currentProfile?.companyId || '';
+    const cid = this.authoritativeWorkspaceId || this.currentProfile?.companyId || '';
     if (cid && this.currentProfile?.id && cid === this.currentProfile.id) {
       console.warn(`[WORKSPACE_CORRUPTION_DETECTED] getCurrentCompanyId found corrupted companyId matching userId (${cid}). Returning empty string.`);
+      return '';
+    }
+    if (cid && !isValidUuid(cid)) {
+      console.warn(`[WORKSPACE_INVALID] getCurrentCompanyId found invalid UUID (${cid}). Returning empty string.`);
       return '';
     }
     return cid;
@@ -278,72 +400,140 @@ export class SupabaseAuthService {
   /**
    * Central Authoritative Workspace Resolver
    * Guarantees that auth.uid() is NEVER returned as workspace_id.
-   * Resolves: auth.uid() -> profiles.id -> profiles.workspace_id
-   * Reconciles cached session & local storage automatically.
+   * Resolves: auth.uid() -> public.profiles.id -> public.profiles.workspace_id -> public.workspaces.id
+   * Uses in-flight promise deduplication to eliminate concurrent race conditions.
    */
   public async getAuthoritativeWorkspaceId(forceRefresh: boolean = false): Promise<string> {
     if (!isSupabaseConfigured()) {
       const cid = this.getCurrentCompanyId();
-      return cid && isValidUuid(cid) && cid !== this.currentProfile?.id ? cid : '';
+      if (cid && isValidUuid(cid) && cid !== this.currentProfile?.id) {
+        this.authoritativeWorkspaceId = cid;
+        return cid;
+      }
+      throw new Error('[WORKSPACE RESOLUTION FAILED] Supabase unconfigured and no valid workspace ID available.');
     }
 
+    if (!forceRefresh && this.authoritativeWorkspaceId && isValidUuid(this.authoritativeWorkspaceId)) {
+      if (this.currentProfile?.id && this.authoritativeWorkspaceId !== this.currentProfile.id) {
+        return this.authoritativeWorkspaceId;
+      }
+    }
+
+    // Reuse existing in-flight resolution to prevent duplicate parallel DB requests
+    if (this.workspaceResolutionPromise) {
+      return this.workspaceResolutionPromise;
+    }
+
+    this.workspaceResolutionPromise = this.resolveAuthoritativeWorkspaceInternal(forceRefresh)
+      .finally(() => {
+        this.workspaceResolutionPromise = null;
+      });
+
+    return this.workspaceResolutionPromise;
+  }
+
+  private async resolveAuthoritativeWorkspaceInternal(forceRefresh: boolean): Promise<string> {
     try {
+      // 1. Obtain current authenticated Supabase user
       const { data: { session } } = await supabase.auth.getSession();
-      const authUser = session?.user;
+      let authUser = session?.user;
+
       if (!authUser) {
-        if (!forceRefresh) {
-          const cid = this.getCurrentCompanyId();
-          if (cid && isValidUuid(cid) && cid !== this.currentProfile?.id) {
-            return cid;
-          }
-        }
-        return '';
+        const { data: userData } = await supabase.auth.getUser();
+        authUser = userData?.user;
+      }
+
+      if (!authUser || !authUser.id) {
+        this.authResolutionState = 'unauthenticated';
+        this.authoritativeWorkspaceId = null;
+        this.notify();
+        throw new Error('[AUTH_NOT_AUTHENTICATED] No active authenticated session found.');
       }
 
       const userId = authUser.id;
 
-      // 1. Query database profile for workspace_id
+      // 2 & 5. Fetch user profile and confirm referenced workspace exists & authorized
       const { data: profile, error: profErr } = await supabase
         .from('profiles')
-        .select('workspace_id, workspaces(company_name)')
+        .select('id, workspace_id, employee_id, name, email, phone, department, designation, role, status, avatar_url, must_change_password, workspaces!inner(id, company_name)')
         .eq('id', userId)
         .single();
 
       if (profErr) {
         console.error('[WORKSPACE RESOLUTION ERROR] Profile query failed:', profErr);
+        if (profErr.code === 'PGRST116') {
+          // Check if profile exists without inner join to give precise diagnostic
+          const { data: rawProfile } = await supabase
+            .from('profiles')
+            .select('id, workspace_id')
+            .eq('id', userId)
+            .maybeSingle();
+
+          if (!rawProfile) {
+            throw new Error('[AUTH_PROFILE_NOT_FOUND] User profile could not be found for authenticated user.');
+          } else {
+            throw new Error('[AUTH_WORKSPACE_UNAUTHORIZED] Referenced workspace does not exist or access is denied.');
+          }
+        }
         throw new Error(`[AUTH_WORKSPACE_RESOLUTION_FAILED] Profile query failed: ${profErr.message}`);
       }
 
-      const dbWsId = profile?.workspace_id;
-
-      if (!dbWsId || !isValidUuid(dbWsId) || dbWsId === userId) {
-        console.error(`[WORKSPACE_RESOLVER_ERROR] Authoritative workspace_id could not be resolved for auth.uid=${userId}`);
-        throw new Error('[AUTH_WORKSPACE_RESOLUTION_FAILED] Unable to determine authoritative workspace for authenticated user.');
+      if (!profile) {
+        throw new Error('[AUTH_PROFILE_NOT_FOUND] User profile not found.');
       }
 
-      // 2. Reconcile in-memory profile and localStorage session cache if stale
-      if (this.currentProfile) {
-        if (this.currentProfile.companyId !== dbWsId) {
-          console.log(`[WORKSPACE RESOLUTION] Reconciled stale companyId (${this.currentProfile.companyId}) to database workspace_id (${dbWsId})`);
-          this.currentProfile.companyId = dbWsId;
-          if (profile?.workspaces?.company_name) {
-            this.currentProfile.businessName = profile.workspaces.company_name;
-          }
-          this.saveSessionToStorage(this.currentProfile);
-          store.reloadTenantState();
-        }
-      } else {
-        await this.syncProfileFromSupabaseUser(userId, authUser.email);
-        const curProfile = this.currentProfile as UserProfile | null;
-        if (curProfile) {
-          curProfile.companyId = dbWsId;
-          this.saveSessionToStorage(curProfile);
-        }
+      // 3. Read authoritative workspace_id
+      const dbWsId = profile.workspace_id;
+
+      // 4. Validate that workspace_id is a valid UUID and does not equal user ID
+      if (!dbWsId || !isValidUuid(dbWsId)) {
+        throw new Error(`[WORKSPACE_ID_MISMATCH] Profile workspace_id '${dbWsId}' is not a valid UUID.`);
       }
+      if (dbWsId === userId) {
+        throw new Error(`[WORKSPACE_ID_MISMATCH] Profile workspace_id matches auth user ID (${userId}). Workspace corruption detected.`);
+      }
+
+      // 5 & 6. Confirm referenced workspace exists and user account is active
+      const workspaceRecord = Array.isArray(profile.workspaces) ? profile.workspaces[0] : profile.workspaces;
+      if (!workspaceRecord || !workspaceRecord.id) {
+        throw new Error('[AUTH_WORKSPACE_UNAUTHORIZED] Referenced workspace not found or user lacks access rights.');
+      }
+
+      if (profile.status && profile.status !== 'Active') {
+        throw new Error(`[ACCOUNT_STATUS_SUSPENDED] User account is ${profile.status}. Access denied.`);
+      }
+
+      // 7. Update in-memory state and session storage
+      const businessName = workspaceRecord.company_name || 'VISTAAR Business Solutions';
+      this.currentProfile = {
+        id: profile.id,
+        companyId: dbWsId,
+        employeeId: profile.employee_id,
+        name: profile.name,
+        email: profile.email || authUser.email || '',
+        phone: profile.phone || '',
+        department: profile.department || '',
+        designation: profile.designation || '',
+        role: profile.role as UserRole,
+        status: profile.status,
+        businessName,
+        mustChangePassword: profile.must_change_password || false,
+        avatarUrl: profile.avatar_url || '',
+      };
+
+      this.authoritativeWorkspaceId = dbWsId;
+      this.authResolutionState = 'ready';
+      this.resolutionError = null;
+
+      this.saveSessionToStorage(this.currentProfile);
+      store.reloadTenantState();
 
       return dbWsId;
     } catch (e: any) {
       console.error('[WORKSPACE RESOLUTION EXCEPTION]', e);
+      this.authResolutionState = 'error';
+      this.resolutionError = e?.message || '[WORKSPACE RESOLUTION FAILED] Unknown resolution error.';
+      this.authoritativeWorkspaceId = null;
       throw e;
     }
   }
@@ -493,7 +683,7 @@ export class SupabaseAuthService {
       }
 
       if (data.user) {
-        await this.syncProfileFromSupabaseUser(data.user.id, data.user.email);
+        await this.getAuthoritativeWorkspaceId(true);
         this.saveSessionToStorage(this.currentProfile);
         store.reloadTenantState();
         this.notify();
@@ -1225,6 +1415,9 @@ export class SupabaseAuthService {
       console.warn('Logout warning:', e);
     }
     this.currentProfile = null;
+    this.authoritativeWorkspaceId = null;
+    this.authResolutionState = 'unauthenticated';
+    this.resolutionError = null;
     this.saveSessionToStorage(null);
     try {
       store.resetState();

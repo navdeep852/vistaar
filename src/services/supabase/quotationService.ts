@@ -32,40 +32,51 @@ export interface ConvertQuotationResult {
 export class QuotationService {
   private activeLocks = new Set<string>();
 
-  private getWorkspaceId(): string {
-    const wsId = supabaseAuthService.getCurrentCompanyId();
-    const userId = supabaseAuthService.getUser()?.id;
-    if (isValidUuid(wsId) && wsId !== userId) return wsId;
+  private async getWorkspaceId(): Promise<string> {
+    if (!isSupabaseConfigured()) {
+      const cid = supabaseAuthService.getCurrentCompanyId();
+      const userId = supabaseAuthService.getUser()?.id;
+      if (isValidUuid(cid) && cid !== userId) return cid;
+      return '';
+    }
+    try {
+      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
+      if (authWsId && isValidUuid(authWsId)) return authWsId;
+    } catch (e: any) {
+      console.warn('Failed to get authoritative workspace ID in quotationService:', e?.message || e);
+    }
+    const cid = supabaseAuthService.getCurrentCompanyId();
+    if (cid && isValidUuid(cid)) return cid;
     return '';
   }
 
   public async getOrFetchWorkspaceId(): Promise<string> {
-    try {
-      const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
-      if (authWsId && isValidUuid(authWsId)) {
-        return authWsId;
-      }
-    } catch (e) {
-      console.warn('Failed to get authoritative workspace ID in quotationService:', e);
+    const wsId = await this.getWorkspaceId();
+    if (wsId && isValidUuid(wsId)) {
+      return wsId;
     }
-    return '';
+    throw new Error('[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined in quotationService.');
   }
 
-  public async getQuotations(): Promise<{ data: any[]; error?: string }> {
-    const wsId = this.getWorkspaceId();
+  public async getQuotations(explicitWsId?: string): Promise<{ data: any[]; error?: string }> {
+    const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
     try {
-      const { data, error } = await supabase
-        .from('quotations')
-        .select('*, quotation_items(*)')
-        .eq('workspace_id', wsId)
-        .order('created_at', { ascending: false });
+      if (isSupabaseConfigured() && isValidUuid(wsId)) {
+        const { data, error } = await supabase
+          .from('quotations')
+          .select('*, quotation_items(*)')
+          .eq('workspace_id', wsId)
+          .order('created_at', { ascending: false });
 
-      if (error) {
-        const errStr = handleSupabaseError(error, 'getQuotations');
-        const fallback = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
-        return { data: fallback, error: errStr };
+        if (error) {
+          const errStr = handleSupabaseError(error, 'getQuotations');
+          const fallback = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
+          return { data: fallback, error: errStr };
+        }
+        return { data: data || [] };
       }
-      return { data: data || [] };
+      const fallback = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
+      return { data: fallback };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getQuotations');
       const fallback = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
@@ -157,7 +168,7 @@ export class QuotationService {
    * Authoritative calculation of active/open quotations as of the end of a selected period (toDate).
    * Respects quotation lifecycle, valid_until, and status transitions.
    */
-  public async getOpenQuotationsCountAsOf(asOfDateStr?: string): Promise<{
+  public async getOpenQuotationsCountAsOf(asOfDateStr?: string, explicitWsId?: string): Promise<{
     count: number;
     activeQuotations: any[];
     error?: string;
@@ -165,7 +176,7 @@ export class QuotationService {
     const today = new Date().toISOString().split('T')[0];
     const targetDate = asOfDateStr || today;
 
-    const res = await this.getQuotations();
+    const res = await this.getQuotations(explicitWsId);
     if (res.error && (!res.data || res.data.length === 0)) {
       return { count: 0, activeQuotations: [], error: res.error };
     }
