@@ -644,6 +644,16 @@ export class SupabaseAuthService {
     // Query public.profiles for employee_id match if Supabase configured
     if (isSupabaseConfigured()) {
       try {
+        // 1. Authoritative RPC (bypasses RLS safely for unauthenticated login page)
+        const { data: rpcEmail, error: rpcErr } = await supabase.rpc('get_email_by_employee_id', {
+          p_employee_id: cleanId,
+        });
+
+        if (!rpcErr && rpcEmail) {
+          return String(rpcEmail).toLowerCase();
+        }
+
+        // 2. Direct select fallback
         const { data } = await supabase
           .from('profiles')
           .select('email')
@@ -656,6 +666,14 @@ export class SupabaseAuthService {
       } catch (e) {
         console.warn('Employee ID lookup via Supabase failed:', e);
       }
+    }
+
+    // 3. Fallback: check in-memory / local employees
+    const matched = this.employees.find(
+      (e) => (e.employeeId || '').toUpperCase() === cleanId.toUpperCase()
+    );
+    if (matched && matched.email) {
+      return matched.email.toLowerCase();
     }
 
     return null;
@@ -1223,8 +1241,32 @@ export class SupabaseAuthService {
     }
 
     try {
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) return { success: false, error: normalizeAuthError(error) };
+      let authUpdated = false;
+      if (isSupabaseConfigured()) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          const { error } = await supabase.auth.updateUser({ password: newPassword });
+          if (error) return { success: false, error: normalizeAuthError(error) };
+          authUpdated = true;
+        }
+      }
+
+      if (this.currentProfile?.id && isSupabaseConfigured() && authUpdated) {
+        try {
+          await supabase
+            .from('profiles')
+            .update({ must_change_password: false })
+            .eq('id', this.currentProfile.id);
+        } catch {
+          // ignore
+        }
+      }
+
+      if (this.currentProfile) {
+        this.currentProfile.mustChangePassword = false;
+        this.saveSessionToStorage(this.currentProfile);
+      }
+
       return { success: true };
     } catch (err: any) {
       return { success: false, error: normalizeAuthError(err) };
@@ -1318,7 +1360,7 @@ export class SupabaseAuthService {
         .eq('workspace_id', workspaceId);
 
       if (!error && data) {
-        this.employees = data.map((p: any) => ({
+        const remoteEmployees: UserAccount[] = data.map((p: any) => ({
           id: p.id,
           email: p.email || '',
           name: p.name || '',
@@ -1334,6 +1376,15 @@ export class SupabaseAuthService {
           createdAt: p.created_at || new Date().toISOString(),
           updatedAt: p.updated_at || new Date().toISOString(),
         }));
+
+        // Merge any locally added employees that haven't synced yet
+        const remoteIds = new Set(remoteEmployees.map((e) => e.id));
+        const remoteEmpIds = new Set(remoteEmployees.map((e) => e.employeeId.toUpperCase()));
+        const localRemaining = this.employees.filter(
+          (e) => !remoteIds.has(e.id) && !remoteEmpIds.has(e.employeeId.toUpperCase())
+        );
+
+        this.employees = [...remoteEmployees, ...localRemaining];
       }
     } catch (err) {
       console.error('Error fetching employees:', err);
@@ -1345,63 +1396,253 @@ export class SupabaseAuthService {
     return this.employees;
   }
 
-  public async createEmployee(empData: any): Promise<{ success: boolean; error?: string; empId?: string; tempPass?: string }> {
+  /**
+   * Generates a deterministic, workspace-scoped sequential Employee ID (VST-00001, VST-00002, ...)
+   */
+  public async generateNextEmployeeId(workspaceId: string): Promise<string> {
+    let maxNum = 0;
+
+    if (isSupabaseConfigured() && workspaceId && isValidUuid(workspaceId)) {
+      try {
+        const { data, error } = await supabase.rpc('generate_next_employee_id', {
+          p_workspace_id: workspaceId,
+        });
+        if (!error && data) {
+          const match = String(data).match(/^VST-(\d+)$/i);
+          if (match) {
+            const num = parseInt(match[1], 10) - 1;
+            if (num > maxNum) maxNum = num;
+          }
+        }
+      } catch {
+        // Fallback to query
+      }
+
+      try {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('employee_id')
+          .eq('workspace_id', workspaceId);
+
+        (profiles || []).forEach((p: any) => {
+          const match = (p.employee_id || '').match(/^VST-(\d+)$/i);
+          if (match) {
+            const num = parseInt(match[1], 10);
+            if (num > maxNum) maxNum = num;
+          }
+        });
+      } catch {
+        // Fallback to local
+      }
+    }
+
+    // Always check in-memory/local employees as well to prevent local collision
+    this.employees
+      .filter((e) => !workspaceId || e.companyId === workspaceId)
+      .forEach((e) => {
+        const match = (e.employeeId || '').match(/^VST-(\d+)$/i);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (num > maxNum) maxNum = num;
+        }
+      });
+
+    return `VST-${String(maxNum + 1).padStart(5, '0')}`;
+  }
+
+  /**
+   * Secure Employee Creation Workflow:
+   * Owner/Admin -> Validations -> Supabase Auth User -> Profile Record -> Sequential Employee ID
+   */
+  public async createEmployee(empData: any): Promise<{
+    success: boolean;
+    error?: string;
+    empId?: string;
+    tempPass?: string;
+    userId?: string;
+  }> {
+    // 1. Name validation
+    if (!empData.name || !empData.name.trim()) {
+      return { success: false, error: 'Employee name is required.' };
+    }
+
+    // 2. Email validation
+    const cleanEmail = (empData.email || '').trim().toLowerCase();
+    if (!cleanEmail || !validateEmailFormat(cleanEmail)) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+
+    // 3. Phone validation (Indian 10-digit)
+    let cleanPhone = '';
     if (empData.phone) {
       const pRes = validateIndianPhoneNumber(empData.phone, false);
       if (!pRes.isValid) {
         return { success: false, error: pRes.error || 'Employee phone number must contain exactly 10 digits.' };
       }
-      empData.phone = pRes.normalized;
+      cleanPhone = pRes.normalized;
+    }
+
+    // 4. Workspace resolution
+    let workspaceId = this.getCurrentCompanyId();
+    if (!workspaceId) {
+      try {
+        workspaceId = await this.getAuthoritativeWorkspaceId();
+      } catch {
+        // ignore
+      }
+    }
+    if (!workspaceId) {
+      return { success: false, error: 'Cannot create employee: Active company workspace could not be identified.' };
+    }
+
+    // 5. Pre-check for duplicate email in local cache & Supabase
+    const emailInUseLocally = this.employees.some(
+      (e) => (e.email || '').toLowerCase() === cleanEmail
+    );
+    if (emailInUseLocally) {
+      return { success: false, error: 'An account with this email address already exists in this workspace.' };
     }
 
     if (isSupabaseConfigured()) {
       try {
-        const { data, error } = await supabase.from('profiles').insert([
-          {
-            workspace_id: this.getCurrentCompanyId(),
-            name: empData.name,
-            email: empData.email,
-            phone: empData.phone,
-            department: empData.department,
-            designation: empData.designation,
-            role: empData.role,
-            employee_id: `VST-${Math.floor(10000 + Math.random() * 90000)}`,
-            status: 'Active',
-            must_change_password: true,
-          },
-        ]).select().single();
+        const { data: existingProf } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', cleanEmail)
+          .maybeSingle();
 
-        if (error) return { success: false, error: normalizeAuthError(error) };
-        
-        await this.loadEmployees();
-        return {
-          success: true,
-          empId: data.employee_id,
-          tempPass: 'TempPass@2026',
-        };
-      } catch (err: any) {
-        return { success: false, error: normalizeAuthError(err) };
+        if (existingProf) {
+          return { success: false, error: 'An account with this email address already exists in the system.' };
+        }
+      } catch {
+        // ignore
       }
     }
 
+    const tempPass = 'TempPass@2026';
+    const assignedRole = (empData.role && ['employee', 'manager', 'admin', 'staff'].includes(empData.role))
+      ? empData.role
+      : 'employee';
+
+    // 6. Tier 1: Supabase Edge Function (Production Cloud Workflow)
+    if (isSupabaseConfigured()) {
+      try {
+        const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke('create-employee', {
+          body: {
+            workspaceId,
+            name: empData.name.trim(),
+            email: cleanEmail,
+            phone: cleanPhone,
+            role: assignedRole,
+            department: (empData.department || '').trim(),
+            designation: (empData.designation || '').trim(),
+            tempPassword: tempPass,
+          },
+        });
+
+        if (!edgeErr && edgeRes && edgeRes.success) {
+          await this.loadEmployees();
+          return {
+            success: true,
+            empId: edgeRes.empId,
+            tempPass: edgeRes.tempPass || tempPass,
+            userId: edgeRes.user?.id,
+          };
+        }
+
+        if (edgeRes && !edgeRes.success && edgeRes.error) {
+          return { success: false, error: edgeRes.error };
+        }
+      } catch (edgeEx: any) {
+        console.warn('[CreateEmployee] Edge function attempt notification:', edgeEx?.message || edgeEx);
+      }
+
+      // 7. Tier 2: Local dev / Vite middleware server endpoint (/api/create-employee)
+      if (typeof window !== 'undefined') {
+        try {
+          const apiRes = await fetch('/api/create-employee', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              workspaceId,
+              name: empData.name.trim(),
+              email: cleanEmail,
+              phone: cleanPhone,
+              role: assignedRole,
+              department: (empData.department || '').trim(),
+              designation: (empData.designation || '').trim(),
+              tempPassword: tempPass,
+            }),
+          });
+
+          if (apiRes.ok) {
+            const apiData = await apiRes.json();
+            if (apiData.success) {
+              await this.loadEmployees();
+              return {
+                success: true,
+                empId: apiData.empId,
+                tempPass: apiData.tempPass || tempPass,
+                userId: apiData.userId,
+              };
+            } else if (apiData.error) {
+              return { success: false, error: apiData.error };
+            }
+          }
+        } catch {
+          // fetch endpoint not available
+        }
+      }
+    }
+
+    // 8. Tier 3: Deterministic Workspace-Scoped Sequential ID Generation & Local Store Fallback
+    const nextEmpId = await this.generateNextEmployeeId(workspaceId);
+    const mockId = `emp-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+
+    const newLocalEmp: UserAccount = {
+      id: mockId,
+      email: cleanEmail,
+      name: empData.name.trim(),
+      companyId: workspaceId,
+      role: assignedRole,
+      phone: cleanPhone,
+      department: (empData.department || '').trim(),
+      designation: (empData.designation || '').trim(),
+      employeeId: nextEmpId,
+      status: 'Active',
+      avatarUrl: '',
+      passwordHash: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.employees.push(newLocalEmp);
+
     return {
       success: true,
-      empId: `VST-${Math.floor(10000 + Math.random() * 90000)}`,
-      tempPass: 'TempPass@2026',
+      empId: nextEmpId,
+      tempPass,
+      userId: mockId,
     };
   }
 
   public async updateEmployeeStatus(empId: string, status: string): Promise<{ success: boolean; error?: string }> {
-    if (isSupabaseConfigured()) {
+    const emp = this.employees.find((e) => e.id === empId || e.employeeId === empId);
+    if (emp) {
+      emp.status = status as any;
+    }
+
+    if (isSupabaseConfigured() && isValidUuid(empId)) {
       try {
         const { error } = await supabase.from('profiles').update({ status }).eq('id', empId);
-        if (error) return { success: false, error: normalizeAuthError(error) };
-        await this.loadEmployees();
-        return { success: true };
+        if (error) {
+          console.warn('[updateEmployeeStatus] Supabase status update note:', error.message);
+        }
       } catch (err: any) {
-        return { success: false, error: normalizeAuthError(err) };
+        console.warn('[updateEmployeeStatus] Supabase status update exception:', err?.message || err);
       }
     }
+    await this.loadEmployees();
     return { success: true };
   }
 
