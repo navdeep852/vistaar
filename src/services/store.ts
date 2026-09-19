@@ -241,33 +241,8 @@ class StoreService {
     payments.length = 0;
     payments.push(...cleanedPayments);
 
-    // 1. Audit & reconcile Hardik (INV-2026-0007)
-    let hardikInv = invoices.find((i) => i.invoiceNumber === 'INV-2026-0007' || i.customerName.toLowerCase().includes('hardik'));
-    if (!hardikInv) {
-      const newHardikInv: Invoice = {
-        id: 'inv-hardik-7',
-        invoiceNumber: 'INV-2026-0007',
-        customerId: 'cust-hardik',
-        customerName: 'Hardik Patel',
-        customerPhone: '9876543210',
-        date: '2026-09-01',
-        dueDate: '2026-09-15',
-        grandTotal: 5900,
-        paidAmount: 1900,
-        balanceAmount: 4000,
-        status: 'Partially Paid',
-        items: [],
-        subtotal: 5000,
-        taxTotal: 900,
-        discountTotal: 0,
-        templateId: 'inv-modern-blue',
-        createdAt: new Date('2026-09-01T10:00:00Z').toISOString(),
-        updatedAt: new Date('2026-09-01T10:00:00Z').toISOString(),
-      };
-      invoices.push(newHardikInv);
-      hardikInv = newHardikInv;
-    }
-
+    // 1. Audit & reconcile Hardik (INV-2026-0007) if present in state
+    let hardikInv = invoices.find((i) => i.id === 'inv-hardik-7' || (i.customerName?.toLowerCase().includes('hardik') && i.invoiceNumber === 'INV-2026-0007'));
     if (hardikInv) {
       hardikInv.grandTotal = 5900;
       const hardikPays = payments.filter((p) => p.invoiceId === hardikInv.id || p.invoiceNumber === 'INV-2026-0007' || p.customerName.toLowerCase().includes('hardik'));
@@ -288,13 +263,13 @@ class StoreService {
         };
         payments.push(initPay);
       }
-      const sumHardik = payments.filter((p) => p.invoiceId === hardikInv.id || p.invoiceNumber === 'INV-2026-0007' || p.customerName.toLowerCase().includes('hardik')).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+      const sumHardik = payments.filter((p) => p.invoiceId === hardikInv.id || (p.customerName.toLowerCase().includes('hardik') && p.invoiceNumber === 'INV-2026-0007')).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
       hardikInv.paidAmount = sumHardik;
       hardikInv.balanceAmount = Math.max(0, Number((5900 - sumHardik).toFixed(2)));
       hardikInv.status = hardikInv.balanceAmount <= 0.01 ? 'Paid' : (sumHardik > 0 ? 'Partially Paid' : 'Issued');
 
       // Ensure linked Udhari for Hardik
-      let hardikUdhari = udharis.find((u) => u.invoiceId === hardikInv.id || u.id === 'UD-INV-2026-0007' || u.customerNameSnapshot.toLowerCase().includes('hardik'));
+      let hardikUdhari = udharis.find((u) => u.invoiceId === hardikInv.id || (u.customerNameSnapshot.toLowerCase().includes('hardik') && u.id === 'UD-INV-2026-0007'));
       if (hardikUdhari) {
         hardikUdhari.invoiceId = hardikInv.id;
         hardikUdhari.originalAmount = 5900;
@@ -320,36 +295,11 @@ class StoreService {
       }
     }
 
-    // 2. Audit & reconcile Vaishali (INV-2026-0006)
-    let vaishaliInv = invoices.find((i) => i.invoiceNumber === 'INV-2026-0006' || i.customerName.toLowerCase().includes('vaishali'));
-    if (!vaishaliInv) {
-      const newVaishaliInv: Invoice = {
-        id: 'inv-vaishali-6',
-        invoiceNumber: 'INV-2026-0006',
-        customerId: 'cust-vaishali',
-        customerName: 'Vaishali Sharma',
-        customerPhone: '9812345678',
-        date: '2026-09-01',
-        dueDate: '2026-09-15',
-        grandTotal: 2950,
-        paidAmount: 1400,
-        balanceAmount: 1550,
-        status: 'Partially Paid',
-        items: [],
-        subtotal: 2500,
-        taxTotal: 450,
-        discountTotal: 0,
-        templateId: 'inv-modern-blue',
-        createdAt: new Date('2026-09-01T10:00:00Z').toISOString(),
-        updatedAt: new Date('2026-09-01T10:00:00Z').toISOString(),
-      };
-      invoices.push(newVaishaliInv);
-      vaishaliInv = newVaishaliInv;
-    }
-
+    // 2. Audit & reconcile Vaishali (INV-2026-0006) if present in state
+    let vaishaliInv = invoices.find((i) => i.id === 'inv-vaishali-6' || (i.customerName?.toLowerCase().includes('vaishali') && i.invoiceNumber === 'INV-2026-0006'));
     if (vaishaliInv) {
       vaishaliInv.grandTotal = 2950;
-      const vaishaliPays = payments.filter((p) => p.invoiceId === vaishaliInv.id || p.invoiceNumber === 'INV-2026-0006' || p.customerName.toLowerCase().includes('vaishali'));
+      const vaishaliPays = payments.filter((p) => p.invoiceId === vaishaliInv.id || (p.customerName.toLowerCase().includes('vaishali') && p.invoiceNumber === 'INV-2026-0006'));
       if (vaishaliPays.length === 0 && vaishaliInv.paidAmount !== 2950) {
         const initPay: Payment = {
           id: 'pay-vaishali-init',
@@ -366,12 +316,12 @@ class StoreService {
         };
         payments.push(initPay);
       }
-      const sumVaishali = payments.filter((p) => p.invoiceId === vaishaliInv.id || p.invoiceNumber === 'INV-2026-0006' || p.customerName.toLowerCase().includes('vaishali')).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+      const sumVaishali = payments.filter((p) => p.invoiceId === vaishaliInv.id || (p.customerName.toLowerCase().includes('vaishali') && p.invoiceNumber === 'INV-2026-0006')).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
       vaishaliInv.paidAmount = sumVaishali;
       vaishaliInv.balanceAmount = Math.max(0, Number((2950 - sumVaishali).toFixed(2)));
       vaishaliInv.status = vaishaliInv.balanceAmount <= 0.01 ? 'Paid' : (sumVaishali > 0 ? 'Partially Paid' : 'Issued');
 
-      let vaishaliUdhari = udharis.find((u) => u.invoiceId === vaishaliInv.id || u.id === 'UD-INV-2026-0006' || u.customerNameSnapshot.toLowerCase().includes('vaishali'));
+      let vaishaliUdhari = udharis.find((u) => u.invoiceId === vaishaliInv.id || (u.customerNameSnapshot.toLowerCase().includes('vaishali') && u.id === 'UD-INV-2026-0006'));
       if (vaishaliUdhari) {
         vaishaliUdhari.invoiceId = vaishaliInv.id;
         vaishaliUdhari.originalAmount = 2950;

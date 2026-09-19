@@ -235,75 +235,15 @@ export class QuotationService {
     this.activeLocks.add(qId);
 
     try {
-      const wsId = await this.getOrFetchWorkspaceId();
-
-      // 1. Pre-validation: Check if already converted in local store
-      const localQt = store.getQuotations().find((q) => q.id === qId);
-      if (localQt && (localQt.status === 'Converted' || localQt.convertedInvoiceId)) {
-        return {
-          success: false,
-          error: `This quotation was already converted into invoice ${localQt.convertedInvoiceId || ''}.`,
-        };
+      let wsId = '';
+      try {
+        wsId = await this.getOrFetchWorkspaceId();
+      } catch {
+        wsId = await this.getWorkspaceId();
       }
 
-      // 2. Primary Path: Execute atomic PostgreSQL RPC if Supabase is connected
-      if (isSupabaseConfigured() && isValidUuid(wsId)) {
-        try {
-          const { data: rpcRes, error: rpcErr } = await supabase.rpc('convert_quotation_to_invoice_atomic', {
-            p_payload: {
-              workspace_id: wsId,
-              quotation_id: qId,
-              payment_status: payload.paymentStatus,
-              paid_amount: payload.paidAmount || 0,
-              payment_mode: payload.paymentMode || 'Cash',
-              payment_reference: payload.paymentReference || null,
-              payment_notes: payload.paymentNotes || null,
-              invoice_date: payload.invoiceDate || new Date().toISOString().split('T')[0],
-              due_date: payload.dueDate || null,
-              payment_date: payload.paymentDate || payload.invoiceDate || new Date().toISOString().split('T')[0],
-            },
-          });
-
-          if (!rpcErr && rpcRes && rpcRes.success) {
-            // Synchronize in-memory store
-            store.convertQuotationToInvoice(qId, {
-              paymentStatus: payload.paymentStatus,
-              paidAmount: rpcRes.paid_amount,
-              paymentMode: payload.paymentMode,
-              paymentReference: payload.paymentReference,
-              paymentNotes: payload.paymentNotes,
-              invoiceId: rpcRes.invoice_id,
-              invoiceNumber: rpcRes.invoice_number,
-              invoiceDate: payload.invoiceDate,
-              dueDate: payload.dueDate,
-            });
-
-            // Invalidate analytics caches
-            try {
-              const { salesAnalyticsService } = await import('./salesAnalyticsService');
-              salesAnalyticsService.invalidateCache();
-            } catch (e) {
-              // ignore
-            }
-
-            return {
-              success: true,
-              invoiceId: rpcRes.invoice_id,
-              invoiceNumber: rpcRes.invoice_number,
-              paidAmount: rpcRes.paid_amount,
-              balanceAmount: rpcRes.balance_amount,
-              status: rpcRes.status,
-            };
-          } else if (rpcRes && !rpcRes.success && rpcRes.error) {
-            return { success: false, error: rpcRes.error };
-          }
-        } catch (rpcEx) {
-          console.warn('[convertQuotationToInvoice] RPC exception, falling through to client transaction:', rpcEx);
-        }
-      }
-
-      // 3. Resilient Client-Side Transaction Pipeline (Fallback / Offline)
-      let targetQt: any = localQt;
+      // 1. Resolve quotation from store or Supabase
+      let targetQt: any = store.getQuotations().find((q) => q.id === qId);
       if (!targetQt && isSupabaseConfigured() && isValidUuid(wsId)) {
         const { data: dbQt } = await supabase
           .from('quotations')
@@ -317,121 +257,81 @@ export class QuotationService {
         return { success: false, error: 'Quotation not found.' };
       }
 
-      if (targetQt.status === 'Converted' || targetQt.converted_invoice_id) {
-        return { success: false, error: 'This quotation has already been converted.' };
+      if (targetQt.status === 'Converted' || targetQt.converted_invoice_id || targetQt.convertedInvoiceId) {
+        const existingInvId = targetQt.converted_invoice_id || targetQt.convertedInvoiceId;
+        const linkedInv = store.getInvoices().find((i) => i.id === existingInvId || i.quotationId === qId);
+        if (linkedInv) {
+          return {
+            success: true,
+            invoiceId: linkedInv.id,
+            invoiceNumber: linkedInv.invoiceNumber,
+            paidAmount: linkedInv.paidAmount,
+            balanceAmount: linkedInv.balanceAmount,
+            status: linkedInv.status,
+          };
+        }
+        return { success: false, error: 'This quotation has already been converted into an invoice.' };
       }
 
-      const grandTotal = Number(targetQt.grand_total || targetQt.grandTotal || 0);
-      let paidAmount = 0;
-      let balanceAmount = grandTotal;
-      let invStatus: 'Issued' | 'Partially Paid' | 'Paid' = 'Issued';
+      // 2. Prepare line items for authoritative invoice
+      const rawItems = targetQt.quotation_items || targetQt.items || [];
+      const items = rawItems.map((i: any) => ({
+        id: i.id,
+        productId: i.product_id || i.productId || null,
+        productName: i.product_name || i.productName || i.name || 'Item',
+        description: i.description || null,
+        partNumber: i.part_number || i.partNumber || null,
+        sku: i.sku || '',
+        unit: i.unit || 'Pcs',
+        quantity: Number(i.quantity) || 1,
+        buyPrice: Number(i.buy_price || i.buyPrice) || 0,
+        sellingPrice: Number(i.selling_price || i.sellingPrice || i.rate || i.price) || 0,
+        discountAmount: Number(i.discount_amount || i.discountAmount) || 0,
+        taxPercent: Number(i.tax_percent || i.taxPercent || i.taxRate) || 0,
+        taxAmount: Number(i.tax_amount || i.taxAmount) || 0,
+        total: Number(i.total) || 0,
+        itemType: i.item_type || i.itemType || (i.product_id || i.productId ? 'product' : 'custom'),
+      }));
 
-      if (payload.paymentStatus === 'Fully Paid') {
-        paidAmount = grandTotal;
-        balanceAmount = 0;
-        invStatus = 'Paid';
-      } else if (payload.paymentStatus === 'Partially Paid') {
-        paidAmount = Math.max(0, Math.min(grandTotal, Number(payload.paidAmount) || 0));
-        balanceAmount = Math.max(0, Number((grandTotal - paidAmount).toFixed(2)));
-        invStatus = balanceAmount <= 0.01 ? 'Paid' : 'Partially Paid';
-      } else {
-        paidAmount = 0;
-        balanceAmount = grandTotal;
-        invStatus = 'Issued';
-      }
-
-      // Update store
-      const inv = store.convertQuotationToInvoice(qId, {
+      // 3. Delegate directly to the single Authoritative Invoice Accounting Pipeline
+      const { invoiceService } = await import('./invoiceService');
+      const result = await invoiceService.finalizeAuthoritativeInvoice({
+        source: 'QUOTATION',
+        quotationId: qId,
+        quotationNumber: targetQt.quotation_number || targetQt.quotationNumber,
+        customerId: targetQt.customer_id || targetQt.customerId,
+        customerName: targetQt.customer_name || targetQt.customerName,
+        customerPhone: targetQt.customer_phone || targetQt.customerPhone,
+        customerWhatsapp: targetQt.customer_whatsapp || targetQt.customerWhatsapp,
+        customerEmail: targetQt.customer_email || targetQt.customerEmail,
+        customerAddress: targetQt.customer_address || targetQt.customerAddress,
+        customerGstin: targetQt.customer_gstin || targetQt.customerGstin,
+        items,
+        subtotal: Number(targetQt.subtotal) || 0,
+        discountTotal: Number(targetQt.discount_total || targetQt.discountTotal) || 0,
+        taxTotal: Number(targetQt.tax_total || targetQt.taxTotal) || 0,
+        grandTotal: Number(targetQt.grand_total || targetQt.grandTotal) || 0,
         paymentStatus: payload.paymentStatus,
-        paidAmount,
+        paidAmount: payload.paidAmount,
         paymentMode: payload.paymentMode,
         paymentReference: payload.paymentReference,
         paymentNotes: payload.paymentNotes,
-        invoiceDate: payload.invoiceDate,
-        dueDate: payload.dueDate,
+        paymentDate: payload.paymentDate,
+        date: payload.invoiceDate || targetQt.date || new Date().toISOString().split('T')[0],
+        dueDate: payload.dueDate || targetQt.valid_until || targetQt.validUntil,
+        notes: targetQt.notes,
+        terms: targetQt.terms,
+        footerText: targetQt.footer_text || targetQt.footerText,
+        templateId: (targetQt.template_id || targetQt.templateId || 'qt-modern-blue').replace('qt-', 'inv-'),
+        branding: targetQt.branding,
+        theme: targetQt.theme,
+        customization: targetQt.customization,
+        snapshot: targetQt.snapshot,
       });
 
-      if (!inv) {
-        return { success: false, error: 'Failed to create invoice from quotation in local store.' };
-      }
-
-      // If Supabase is configured, persist to remote database
-      if (isSupabaseConfigured() && isValidUuid(wsId)) {
-        try {
-          const { invoiceService } = await import('./invoiceService');
-          const items = (targetQt.quotation_items || targetQt.items || []).map((i: any) => ({
-            productId: i.product_id || i.productId,
-            productName: i.product_name || i.productName,
-            sku: i.sku,
-            unit: i.unit || 'Pcs',
-            quantity: Number(i.quantity) || 1,
-            buyPrice: Number(i.buy_price || i.buyPrice) || 0,
-            sellingPrice: Number(i.selling_price || i.sellingPrice || i.price) || 0,
-            discountAmount: Number(i.discount_amount || i.discountAmount) || 0,
-            taxPercent: Number(i.tax_percent || i.taxPercent) || 0,
-            taxAmount: Number(i.tax_amount || i.taxAmount) || 0,
-            total: Number(i.total) || 0,
-          }));
-
-          const invRes = await invoiceService.createInvoice({
-            ...inv,
-            quotationId: qId,
-            paidAmount,
-            balanceAmount,
-            status: invStatus,
-          }, items);
-
-          if (invRes.invoiceId) {
-            // Update Supabase quotation
-            await supabase
-              .from('quotations')
-              .update({
-                status: 'Converted',
-                converted_invoice_id: invRes.invoiceId,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', qId);
-
-            // Record upfront payment if paid > 0
-            if (paidAmount > 0) {
-              const { customerPaymentService } = await import('./customerPaymentService');
-              await customerPaymentService.recordCustomerPayment({
-                invoiceId: invRes.invoiceId,
-                invoiceNumber: inv.invoiceNumber,
-                customerId: inv.customerId,
-                customerName: inv.customerName,
-                customerPhone: inv.customerPhone,
-                amount: paidAmount,
-                paymentMethod: (payload.paymentMode || 'Cash') as any,
-                paymentDate: payload.paymentDate || inv.date,
-                reference: payload.paymentReference,
-                notes: payload.paymentNotes || `Payment recorded at quotation conversion (${targetQt.quotation_number || targetQt.quotationNumber})`,
-                isUpfrontInvoicePayment: true,
-              });
-            }
-          }
-        } catch (dbErr) {
-          console.warn('[convertQuotationToInvoice] Database persistence notice:', dbErr);
-        }
-      }
-
-      // Invalidate Analytics Caches
-      try {
-        const { salesAnalyticsService } = await import('./salesAnalyticsService');
-        salesAnalyticsService.invalidateCache();
-      } catch (e) {
-        // ignore
-      }
-
-      return {
-        success: true,
-        invoiceId: inv.id,
-        invoiceNumber: inv.invoiceNumber,
-        paidAmount,
-        balanceAmount,
-        status: invStatus,
-      };
+      return result;
     } catch (err: any) {
+      console.error('[convertQuotationToInvoice] Error:', err);
       return { success: false, error: err.message || 'Quotation conversion failed.' };
     } finally {
       this.activeLocks.delete(qId);
@@ -442,7 +342,95 @@ export class QuotationService {
    * Batch reconcile converted quotations and ensure Daybook, Cashbook, and Udhari records exist
    */
   public async reconcileConversions(): Promise<{ success: boolean; message?: string }> {
-    const wsId = await this.getOrFetchWorkspaceId();
+    let wsId = '';
+    try {
+      wsId = await this.getOrFetchWorkspaceId();
+    } catch {
+      wsId = await this.getWorkspaceId();
+    }
+
+    let reconciledCount = 0;
+
+    // 1. Reconcile in local store
+    const storeInvoices = store.getInvoices();
+    const quotations = store.getQuotations();
+    for (const qt of quotations) {
+      if (qt.status === 'Converted' && qt.convertedInvoiceId) {
+        const inv = storeInvoices.find((i) => i.id === qt.convertedInvoiceId || i.quotationId === qt.id);
+        if (inv) {
+          const grandTotal = Number(inv.grandTotal) || 0;
+          const paid = Number(inv.paidAmount) || 0;
+          const remaining = Math.max(0, Number((grandTotal - paid).toFixed(2)));
+          const pStatus = remaining <= 0.01 ? 'PAID' : (paid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+
+          // Ensure Daybook entry
+          try {
+            const { daybookService } = await import('./daybookService');
+            await daybookService.recordFinancialTransaction({
+              referenceType: 'INVOICE',
+              referenceId: inv.id,
+              referenceNumber: inv.invoiceNumber,
+              transactionType: 'SALE',
+              direction: 'IN',
+              amount: paid,
+              totalAmount: grandTotal,
+              remainingAmount: remaining,
+              paymentStatus: pStatus,
+              paymentMode: paid > 0 ? 'Cash' : 'Cash',
+              partyType: 'customer',
+              partyId: inv.customerId,
+              partyName: inv.customerName,
+              description: `Invoice #${inv.invoiceNumber} (Quotation #${qt.quotationNumber})`,
+              transactionDate: inv.date,
+            });
+            reconciledCount++;
+          } catch (e) {
+            // ignore
+          }
+
+          // Ensure Cashbook if paid > 0
+          if (paid > 0) {
+            try {
+              const { cashbookService } = await import('./cashbookService');
+              await cashbookService.recordCashbookEntry({
+                sourceType: 'INVOICE_PAYMENT',
+                sourceId: inv.id,
+                referenceNumber: inv.invoiceNumber,
+                direction: 'IN',
+                amount: paid,
+                paymentMethod: 'Cash',
+                partyName: inv.customerName,
+                description: `Payment received for Invoice #${inv.invoiceNumber}`,
+                transactionDate: inv.date,
+              });
+            } catch (e) {
+              // ignore
+            }
+          }
+
+          // Ensure Udhari if remaining > 0.01
+          if (remaining > 0.01) {
+            try {
+              store.syncInvoiceUdhari({
+                invoiceId: inv.id,
+                invoiceNumber: inv.invoiceNumber,
+                customerId: inv.customerId,
+                customerName: inv.customerName,
+                customerPhone: inv.customerPhone || '9999999999',
+                grandTotal,
+                paidAmount: paid,
+                balanceAmount: remaining,
+                dueDate: inv.dueDate,
+              });
+            } catch (e) {
+              // ignore
+            }
+          }
+        }
+      }
+    }
+
+    // 2. RPC reconciliation if Supabase is connected
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
       try {
         const { data, error } = await supabase.rpc('reconcile_quotation_conversions', {
@@ -452,10 +440,11 @@ export class QuotationService {
           return { success: true, message: `Reconciled: ${data.fixed_daybook} Daybook, ${data.fixed_cashbook} Cashbook, ${data.fixed_udhari} Udhari.` };
         }
       } catch (e) {
-        console.warn('[reconcileConversions] Notice:', e);
+        console.warn('[reconcileConversions] Supabase RPC notice:', e);
       }
     }
-    return { success: true };
+
+    return { success: true, message: `Reconciled ${reconciledCount} converted quotation records.` };
   }
 }
 

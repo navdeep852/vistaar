@@ -372,6 +372,7 @@ export class CashbookService {
     // 4. Local Storage fallback / mirror check
     const local = safeGetTenantStorage<any>(LOCAL_CASHBOOK_KEY, []);
     for (const t of local) {
+      if (wsId && t.workspaceId && t.workspaceId !== wsId) continue;
       const key = `${t.sourceType || 'MANUAL'}:${t.sourceId || t.id}:${t.direction || 'IN'}`;
       const rRef = t.referenceNumber || t.partyName || '';
       const receiptKey = `${t.direction || 'IN'}:${rRef}:${Number(t.amount) || 0}:${t.entryDate}`;

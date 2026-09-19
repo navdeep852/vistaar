@@ -104,9 +104,86 @@ export class DaybookService {
           dtQuery = dtQuery.order('transaction_date', { ascending: false }).order('created_at', { ascending: false });
 
           const { data: dtData, count: dtCount, error: dtErr } = await dtQuery;
-          if (!dtErr && dtData && dtData.length > 0) {
+          if (!dtErr && dtData) {
             const mapped = dtData.map((row: any) => fromDbDaybookTransaction(row));
-            return { data: mapped, count: dtCount || mapped.length };
+
+            // Merge with local transactions (offline or freshly converted) that aren't yet in Supabase
+            const seenRefs = new Set<string>();
+            mapped.forEach((t: DaybookTransaction) => {
+              seenRefs.add(`${t.referenceType}:${t.referenceId}`);
+              if (t.id) seenRefs.add(t.id);
+            });
+
+            const local = this.getFilteredLocalTransactions(wsId, options);
+            for (const lt of local) {
+              const refKey = `${lt.referenceType}:${lt.referenceId}`;
+              if (!seenRefs.has(refKey) && !seenRefs.has(lt.id)) {
+                seenRefs.add(refKey);
+                mapped.push(lt);
+              }
+            }
+
+            // Synthesize any missing store invoices not yet in daybook_transactions
+            try {
+              const { store } = await import('../store');
+              const { start, end } = this.getDateBounds(options?.dateRange, options?.startDate, options?.endDate);
+              for (const inv of store.getInvoices()) {
+                if (inv.status === 'Draft' || inv.status === 'Cancelled') continue;
+                const invDate = (inv.date || '').split('T')[0];
+                if (start && invDate < start) continue;
+                if (end && invDate > end) continue;
+
+                const invRefKey = `INVOICE:${inv.id}`;
+                const invNumKey = `INVOICE:${inv.invoiceNumber}`;
+                if (!seenRefs.has(invRefKey) && !seenRefs.has(invNumKey)) {
+                  seenRefs.add(invRefKey);
+                  const grandTotal = Number(inv.grandTotal) || 0;
+                  const paid = Number(inv.paidAmount) || 0;
+                  const remaining = Number(inv.balanceAmount) || Math.max(0, grandTotal - paid);
+                  const pStatus = remaining <= 0.01 ? 'PAID' : (paid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+
+                  if (options?.paymentStatus && options.paymentStatus !== 'ALL' && pStatus !== options.paymentStatus) {
+                    continue;
+                  }
+
+                  mapped.push({
+                    id: `db-syn-${inv.id}`,
+                    workspaceId: wsId,
+                    transactionCode: inv.invoiceNumber || `INV-${inv.id.substring(0, 8)}`,
+                    transactionDate: inv.date,
+                    transactionType: 'SALE',
+                    direction: 'IN',
+                    amount: paid,
+                    totalAmount: grandTotal,
+                    remainingAmount: remaining,
+                    paymentStatus: pStatus as any,
+                    paymentMode: 'Cash' as any,
+                    partyType: 'customer',
+                    partyId: inv.customerId,
+                    partyName: inv.customerName || 'Customer',
+                    referenceType: 'INVOICE',
+                    referenceId: inv.id,
+                    referenceNumber: inv.invoiceNumber,
+                    description: `Invoice #${inv.invoiceNumber}`,
+                    status: 'COMPLETED',
+                    createdAt: inv.createdAt,
+                  });
+                }
+              }
+            } catch {
+              // store import ignore
+            }
+
+            mapped.sort((a: DaybookTransaction, b: DaybookTransaction) => {
+              if (b.transactionDate !== a.transactionDate) {
+                return b.transactionDate.localeCompare(a.transactionDate);
+              }
+              return (b.createdAt || '').localeCompare(a.createdAt || '');
+            });
+
+            if (mapped.length > 0) {
+              return { data: mapped, count: mapped.length };
+            }
           }
         } catch (dtEx) {
           // Fall through
@@ -331,6 +408,7 @@ export class DaybookService {
     const wsId = await this.getWorkspaceId();
     const entryDate = params.transactionDate || new Date().toISOString().split('T')[0];
     const entryNumber = `ACC-${params.referenceNumber || params.referenceId || Date.now()}`;
+    let savedDbId: string | undefined;
 
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
       // 1. Primary write target: daybook_transactions with full idempotency & audit trail
@@ -379,7 +457,7 @@ export class DaybookService {
             delete dtPayload.payment_status;
             await supabase.from('daybook_transactions').update(dtPayload).eq('id', existing.id);
           }
-          return { success: true, id: existing.id };
+          savedDbId = existing.id;
         } else {
           // Insert new transaction entry
           let { data: insData, error: insErr } = await supabase
@@ -394,10 +472,10 @@ export class DaybookService {
             delete dtPayload.payment_status;
             const retry = await supabase.from('daybook_transactions').insert([dtPayload]).select('id').single();
             if (!retry.error && retry.data) {
-              return { success: true, id: retry.data.id };
+              savedDbId = retry.data.id;
             }
           } else if (!insErr && insData) {
-            return { success: true, id: insData.id };
+            savedDbId = insData.id;
           }
         }
       } catch (dtErr) {
@@ -439,7 +517,7 @@ export class DaybookService {
     }
     safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, local);
 
-    return { success: true, id: localEntry.id };
+    return { success: true, id: savedDbId || localEntry.id };
   }
 
   /**

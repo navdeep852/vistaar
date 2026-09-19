@@ -816,85 +816,51 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           customization,
         };
 
-        let targetInvoiceId: string | undefined;
-        let invoiceNumStr = 'INV-2026-0001';
+        const finResult = await invoiceService.finalizeAuthoritativeInvoice({
+          source: 'MANUAL',
+          id: initialDraftData?.id,
+          date,
+          dueDate: dueDateOrValid,
+          customerId: selectedCustomerId || undefined,
+          customerName,
+          customerPhone,
+          customerWhatsapp,
+          customerEmail,
+          customerAddress,
+          customerGstin,
+          items: invoiceItemsForSave,
+          subtotal,
+          discountTotal,
+          taxTotal,
+          grandTotal,
+          paymentStatus: paymentStatus as any,
+          paidAmount: effectivePaidAmount,
+          balanceAmount,
+          paymentMode: finalMethod,
+          paymentReference: paymentReference || undefined,
+          paymentNotes: paymentNotes || undefined,
+          paymentDate: paymentDate || undefined,
+          notes,
+          terms,
+          footerText,
+          templateId,
+          branding,
+          theme: {
+            primaryColor: customization.primaryColor,
+            secondaryColor: customization.secondaryColor,
+            textColor: customization.textColor,
+            fontFamily: customization.bodyFont,
+          },
+          customization,
+        });
 
-        if (initialDraftData?.id) {
-          const updated = store.updateInvoice(initialDraftData.id, invoicePayload);
-          if (!updated) {
-            showToast('Failed to find existing invoice for update.', 'error');
-            setIsFinalizing(false);
-            return;
-          }
-          targetInvoiceId = updated.id;
-          invoiceNumStr = updated.invoiceNumber;
-
-          // Sync with Supabase
-          await invoiceService.createInvoice({ ...updated, id: initialDraftData.id }, invoiceItemsForSave);
-        } else {
-          const inv = store.addInvoice(invoicePayload as any);
-          targetInvoiceId = inv.id;
-          invoiceNumStr = inv.invoiceNumber;
-
-          // Sync with Supabase
-          const subRes = await invoiceService.createInvoice(inv, invoiceItemsForSave);
-          if (subRes.invoiceId) {
-            targetInvoiceId = subRes.invoiceId;
-          }
-          if (subRes.error) {
-            showToast(`Finalization Warning: ${subRes.error}`, 'info');
-          }
+        if (!finResult.success) {
+          showToast(finResult.error || 'Failed to finalize invoice.', 'error');
+          setIsFinalizing(false);
+          return;
         }
 
-        // Authoritative Udhari & Follow-up synchronization for unpaid or partial balances ONLY (Rule 8: Never create for fully paid)
-        if (targetInvoiceId && balanceAmount > 0.01) {
-          store.syncInvoiceUdhari({
-            invoiceId: targetInvoiceId,
-            invoiceNumber: invoiceNumStr,
-            customerId: selectedCustomerId || undefined,
-            customerName,
-            customerPhone: customerPhone || '9999999999',
-            grandTotal,
-            paidAmount: effectivePaidAmount,
-            balanceAmount,
-            dueDate: dueDateOrValid,
-          });
-
-          import('../services/supabase/udhariService').then(({ udhariService }) => {
-            udhariService.syncInvoiceUdhari({
-              invoiceId: targetInvoiceId,
-              invoiceNumber: invoiceNumStr,
-              customerId: selectedCustomerId || undefined,
-              customerName,
-              customerPhone: customerPhone || '9999999999',
-              grandTotal,
-              paidAmount: effectivePaidAmount,
-              balanceAmount,
-              dueDate: dueDateOrValid,
-            }).catch((uErr) => console.warn('[DocumentEditorView] Udhari sync notice:', uErr));
-          }).catch(() => {});
-        }
-
-        // Automatically record Payment transaction if payment was collected upfront
-        if (effectivePaidAmount > 0 && targetInvoiceId) {
-          const payData = {
-            customerId: selectedCustomerId || 'manual-cust',
-            customerName,
-            invoiceId: targetInvoiceId,
-            invoiceNumber: invoiceNumStr,
-            amount: effectivePaidAmount,
-            date: paymentDate || new Date().toISOString().split('T')[0],
-            method: finalMethod,
-            referenceNo: paymentReference || undefined,
-            notes: paymentNotes || `Payment recorded at invoice finalization`,
-          };
-          await paymentService.createPayment({
-            ...payData,
-            isUpfrontInvoicePayment: true,
-          } as any);
-        }
-
-        showToast(`Invoice ${invoiceNumStr} finalized & snapshot saved!`, 'success');
+        showToast(`Invoice ${finResult.invoiceNumber || ''} finalized & snapshot saved!`, 'success');
       } else {
         const qt = store.addQuotation({
           customerId: selectedCustomerId || undefined,

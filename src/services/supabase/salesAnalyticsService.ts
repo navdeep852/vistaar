@@ -98,21 +98,76 @@ export class SalesAnalyticsService {
       }
     }
 
-    // Fallback to local storage if offline or empty Supabase return while offline
-    if (counterSales.length === 0 && invoices.length === 0) {
-      const localCS = safeGetTenantStorage<any>(LOCAL_SALES_KEY, []);
-      counterSales = localCS.filter((s: any) => {
-        if (s.status === 'CANCELLED') return false;
-        const d = (s.sale_date ?? s.saleDate ?? s.created_at ?? '').split('T')[0];
-        return d >= range.startDateStr && d <= range.endDateStr;
-      });
+    // Resilient local storage and store merging to ensure newly created or converted invoices appear immediately
+    const seenInvoiceIds = new Set<string>();
+    invoices.forEach((inv) => {
+      const k1 = inv.id ? String(inv.id).toLowerCase() : '';
+      const k2 = inv.invoice_number ? String(inv.invoice_number).toLowerCase() : '';
+      if (k1) seenInvoiceIds.add(k1);
+      if (k2) seenInvoiceIds.add(k2);
+    });
 
-      const localInv = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
-      invoices = localInv.filter((i: any) => {
-        if (i.status === 'Draft' || i.status === 'Cancelled') return false;
-        const d = (i.date ?? i.created_at ?? '').split('T')[0];
-        return d >= range.startDateStr && d <= range.endDateStr;
-      });
+    const localInv = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
+    for (const li of localInv) {
+      if (li.status === 'Draft' || li.status === 'Cancelled') continue;
+      if (wsId && (li.workspace_id || li.workspaceId) && (li.workspace_id !== wsId && li.workspaceId !== wsId)) continue;
+      const d = (li.date ?? li.created_at ?? '').split('T')[0];
+      if (d < range.startDateStr || d > range.endDateStr) continue;
+      const k1 = li.id ? String(li.id).toLowerCase() : '';
+      const k2 = (li.invoice_number || li.invoiceNumber) ? String(li.invoice_number || li.invoiceNumber).toLowerCase() : '';
+      if ((!k1 || !seenInvoiceIds.has(k1)) && (!k2 || !seenInvoiceIds.has(k2))) {
+        if (k1) seenInvoiceIds.add(k1);
+        if (k2) seenInvoiceIds.add(k2);
+        invoices.push(li);
+      }
+    }
+
+    try {
+      const { store } = await import('../store');
+      for (const si of store.getInvoices()) {
+        if (si.status === 'Draft' || si.status === 'Cancelled') continue;
+        if (wsId && (si as any).workspaceId && (si as any).workspaceId !== wsId) continue;
+        const d = (si.date || '').split('T')[0];
+        if (d < range.startDateStr || d > range.endDateStr) continue;
+        const k1 = si.id ? String(si.id).toLowerCase() : '';
+        const k2 = si.invoiceNumber ? String(si.invoiceNumber).toLowerCase() : '';
+        if ((!k1 || !seenInvoiceIds.has(k1)) && (!k2 || !seenInvoiceIds.has(k2))) {
+          if (k1) seenInvoiceIds.add(k1);
+          if (k2) seenInvoiceIds.add(k2);
+          invoices.push({
+            id: si.id,
+            workspace_id: (si as any).workspaceId || wsId,
+            invoice_number: si.invoiceNumber,
+            date: si.date,
+            grand_total: si.grandTotal,
+            paid_amount: si.paidAmount,
+            balance_amount: si.balanceAmount,
+            status: si.status,
+            created_at: si.createdAt,
+          });
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    const seenCsIds = new Set<string>();
+    counterSales.forEach((cs) => {
+      const k = cs.id ? String(cs.id).toLowerCase() : '';
+      if (k) seenCsIds.add(k);
+    });
+
+    const localCS = safeGetTenantStorage<any>(LOCAL_SALES_KEY, []);
+    for (const s of localCS) {
+      if (s.status === 'CANCELLED') continue;
+      if (wsId && (s.workspace_id || s.workspaceId) && (s.workspace_id !== wsId && s.workspaceId !== wsId)) continue;
+      const d = (s.sale_date ?? s.saleDate ?? s.created_at ?? '').split('T')[0];
+      if (d < range.startDateStr || d > range.endDateStr) continue;
+      const k = s.id ? String(s.id).toLowerCase() : '';
+      if (!k || !seenCsIds.has(k)) {
+        if (k) seenCsIds.add(k);
+        counterSales.push(s);
+      }
     }
 
     // De-duplication: Track seen invoice/reference numbers to prevent double counting

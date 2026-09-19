@@ -384,8 +384,33 @@ export class SupabaseAuthService {
     return this.authResolutionState === 'ready' && Boolean(this.currentProfile?.id);
   }
 
+  public setAuthoritativeWorkspaceId(wsId: string | null): void {
+    if (wsId && isValidUuid(wsId)) {
+      this.authoritativeWorkspaceId = wsId;
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.setItem('vistaar_current_company_id', wsId);
+        } catch {
+          // ignore
+        }
+      }
+    } else {
+      this.authoritativeWorkspaceId = null;
+    }
+  }
+
   public getCurrentCompanyId(): string {
-    const cid = this.authoritativeWorkspaceId || this.currentProfile?.companyId || '';
+    let cid = this.authoritativeWorkspaceId || this.currentProfile?.companyId || '';
+    if (!cid && typeof localStorage !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('vistaar_current_company_id');
+        if (stored && isValidUuid(stored)) {
+          cid = stored;
+        }
+      } catch {
+        // ignore
+      }
+    }
     if (cid && this.currentProfile?.id && cid === this.currentProfile.id) {
       console.warn(`[WORKSPACE_CORRUPTION_DETECTED] getCurrentCompanyId found corrupted companyId matching userId (${cid}). Returning empty string.`);
       return '';
@@ -444,6 +469,12 @@ export class SupabaseAuthService {
       }
 
       if (!authUser || !authUser.id) {
+        const fallbackCid = this.getCurrentCompanyId();
+        if (fallbackCid && isValidUuid(fallbackCid)) {
+          this.authoritativeWorkspaceId = fallbackCid;
+          this.authResolutionState = 'ready';
+          return fallbackCid;
+        }
         this.authResolutionState = 'unauthenticated';
         this.authoritativeWorkspaceId = null;
         this.notify();
