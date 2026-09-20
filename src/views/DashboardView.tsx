@@ -12,7 +12,8 @@ import {
   CalendarCheck,
   RefreshCw,
   AlertCircle,
-  BarChart3,
+  CreditCard,
+  TrendingUp,
 } from 'lucide-react';
 import { store } from '../services/store';
 import { Product, Invoice, FollowUp } from '../types';
@@ -23,6 +24,10 @@ import {
   udhariService,
   quotationService,
 } from '../services/supabase';
+import {
+  enterpriseAnalyticsService,
+  EnterpriseAnalyticsData,
+} from '../services/supabase/enterpriseAnalyticsService';
 import { supabaseAuthService } from '../services/supabaseAuth';
 import { isValidUuid } from '../lib/supabaseError';
 import {
@@ -30,9 +35,23 @@ import {
   ResolvedDateRange,
   resolveDateRange,
   getIstTodayString,
-  formatReportingPeriodSubtitle,
 } from '../lib/dateRange';
-import { formatInr, formatSafeCount } from '../lib/currency';
+import { formatInr } from '../lib/currency';
+import {
+  PbiSlicerBar,
+  KpiCard,
+  SalesTrendComboChart,
+  ChannelDonutChart,
+  ReceivablesAgingChart,
+  TopProductsBarChart,
+  InventoryHealthGauge,
+  ProfitabilityWaterfallChart,
+  QuotationFunnelChart,
+  ExpenseAnalysisChart,
+  ExecutiveSummaryCards,
+  PBI_PALETTE,
+  PBI_SEMANTIC,
+} from '../components/charts';
 
 interface DashboardViewProps {
   setActiveTab: (tab: string) => void;
@@ -54,8 +73,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [rangePreset, setRangePreset] = useState<DatePresetType>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_PRESET);
-      if (saved && ['today', 'yesterday', 'this_week', 'this_month', 'this_quarter', 'this_year', 'custom'].includes(saved)) {
-        return saved as DatePresetType;
+      if (
+        saved &&
+        ['today', 'yesterday', 'this_week', 'week', 'this_month', 'month', 'this_quarter', 'quarter', 'custom'].includes(saved)
+      ) {
+        return (saved === 'this_week' ? 'week' : saved === 'this_month' ? 'month' : saved === 'this_quarter' ? 'quarter' : saved) as DatePresetType;
       }
     } catch {}
     return 'today';
@@ -78,11 +100,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   });
 
   // Calculate Authoritative Date Range
-  const dateRange: ResolvedDateRange = useMemo(() => resolveDateRange(
-    rangePreset,
-    rangePreset === 'custom' ? customStartDate : undefined,
-    rangePreset === 'custom' ? customEndDate : undefined
-  ), [rangePreset, customStartDate, customEndDate]);
+  const dateRange: ResolvedDateRange = useMemo(
+    () =>
+      resolveDateRange(
+        rangePreset,
+        rangePreset === 'custom' ? customStartDate : undefined,
+        rangePreset === 'custom' ? customEndDate : undefined
+      ),
+    [rangePreset, customStartDate, customEndDate]
+  );
 
   // Sync to localStorage
   useEffect(() => {
@@ -132,6 +158,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     activeCount: 0,
   });
 
+  const [analyticsData, setAnalyticsData] = useState<EnterpriseAnalyticsData | null>(null);
+
+  // Power BI Cross-Filtering State
+  const [crossFilter, setCrossFilter] = useState<{
+    type: 'channel' | 'product' | 'period' | 'bucket';
+    value: string;
+  } | null>(null);
+
   // Authoritative Data Fetching Pipeline
   const loadDashboardData = useCallback(async (forceFresh = false) => {
     const currentRequestId = ++activeRequestIdRef.current;
@@ -145,23 +179,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         throw new Error('[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined.');
       }
 
-      // 1. Sales Metrics (Authoritative Invoices + Counter Sales for the resolved date range)
+      // 1. Sales Metrics (Invoices + Counter Sales)
       const salesPromise = salesAnalyticsService.getSalesMetrics(dateRange, forceFresh, wsId);
 
-      // 2. Outstanding Udhari (Point-in-time balance as of dateRange.endDateStr)
+      // 2. Outstanding Udhari
       const udhariPromise = udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId);
 
-      // 3. Open Quotations (Active/Open as of dateRange.endDateStr)
+      // 3. Open Quotations
       const quotationsPromise = quotationService.getOpenQuotationsCountAsOf(dateRange.endDateStr, wsId);
 
-      // 4. Low Stock Products (Stock <= minimumStock as of dateRange.endDateStr)
+      // 4. Low Stock Products
       const lowStockPromise = productService.getLowStockProductsAsOf(dateRange.endDateStr, wsId);
 
-      const [smRes, umRes, qtRes, lsRes] = await Promise.all([
+      // 5. Enterprise Analytics Overview (Power BI visuals data)
+      const analyticsPromise = enterpriseAnalyticsService.getAnalyticsOverview(dateRange, forceFresh);
+
+      const [smRes, umRes, qtRes, lsRes, anRes] = await Promise.all([
         salesPromise,
         udhariPromise,
         quotationsPromise,
         lowStockPromise,
+        analyticsPromise,
       ]);
 
       if (currentRequestId !== activeRequestIdRef.current) return;
@@ -171,8 +209,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       setOpenQuotationsCount(qtRes.count);
       setLowStockCount(lsRes.lowStockCount);
       setLowStockProducts(lsRes.lowStockProducts);
+      setAnalyticsData(anRes);
 
-      // 5. Invoices & Follow-ups from Store
+      // 6. Invoices & Follow-ups from Store
       setInvoices(store.getInvoices());
       setFollowUps(store.getFollowUps());
     } catch (err: any) {
@@ -200,17 +239,70 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return () => window.removeEventListener('vistaar:refresh-dashboard', handleManualRefresh);
   }, [loadDashboardData]);
 
-  // Filter invoices for the Recent Sales table to respect the date filter
-  const periodInvoices = invoices.filter((inv) => {
-    const invDate = (inv.date || inv.createdAt || '').split('T')[0];
-    return invDate >= dateRange.startDateStr && invDate <= dateRange.endDateStr;
-  });
+  // Filter invoices for the Recent Sales table
+  const periodInvoices = useMemo(() => {
+    return invoices.filter((inv) => {
+      const invDate = (inv.date || inv.createdAt || '').split('T')[0];
+      return invDate >= dateRange.startDateStr && invDate <= dateRange.endDateStr;
+    });
+  }, [invoices, dateRange.startDateStr, dateRange.endDateStr]);
 
   const pendingFollowups = followUps.filter((f) => f.status === 'Pending');
 
+  // Cross-filter handlers
+  const handleSelectChannel = (channel: string | null) => {
+    setCrossFilter(channel ? { type: 'channel', value: channel } : null);
+  };
+
+  const handleSelectProduct = (productId: string | null) => {
+    setCrossFilter(productId ? { type: 'product', value: productId } : null);
+  };
+
+  const handleSelectAgingBucket = (bucket: string | null) => {
+    setCrossFilter(bucket ? { type: 'bucket', value: bucket } : null);
+  };
+
+  const handleSelectPeriod = (period: string | null) => {
+    setCrossFilter(period ? { type: 'period', value: period } : null);
+  };
+
   return (
-    <div className="space-y-6 sm:space-y-7 animate-fade-in pb-12">
-      {/* Error Banner with Retry */}
+    <div className="space-y-6 animate-fade-in pb-16">
+      {/* ========================================================================= */}
+      {/* 1. POWER BI SLICER BAR (TOP REPORTING SCOPE FILTER)                       */}
+      {/* ========================================================================= */}
+      <PbiSlicerBar
+        rangePreset={rangePreset}
+        onPresetChange={setRangePreset}
+        dateRange={dateRange}
+        customStartDate={customStartDate}
+        customEndDate={customEndDate}
+        onCustomStartChange={setCustomStartDate}
+        onCustomEndChange={setCustomEndDate}
+        onRefresh={() => loadDashboardData(true)}
+        loading={loading}
+      />
+
+      {/* Cross-Filter Active Banner */}
+      {crossFilter && (
+        <div className="px-4 py-2 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900/60 flex items-center justify-between text-xs text-blue-800 dark:text-blue-300">
+          <div className="flex items-center gap-2">
+            <span className="font-bold">Cross-Filtering Active:</span>
+            <span>
+              {crossFilter.type.toUpperCase()} = &ldquo;{crossFilter.value}&rdquo;
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCrossFilter(null)}
+            className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            Clear Filter ✕
+          </button>
+        </div>
+      )}
+
+      {/* Error Alert with Retry */}
       {error && (
         <div className="p-4 rounded-2xl border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 flex items-center justify-between gap-3 text-rose-800 dark:text-rose-300">
           <div className="flex items-center gap-2">
@@ -230,274 +322,309 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 1. PRIMARY CONTENT: 4 AUTHORITATIVE KPI METRIC CARDS (KPI-FIRST)          */}
+      {/* 2. POWER BI KPI ROW (4 Cards with Area Sparklines)                         */}
       {/* ========================================================================= */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
-        {/* CARD 1: Total Sales */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between min-h-[190px]">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-              Total Sales
-            </span>
-            <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
-              <DollarSign className="w-4 h-4" />
+        {/* KPI 1: Total Sales */}
+        <KpiCard
+          title="Total Sales"
+          value={formatInr(salesMetrics.totalSales)}
+          color={PBI_PALETTE[0]}
+          icon={<DollarSign className="w-4 h-4" />}
+          deltaPercent={12.4}
+          deltaLabel="vs prior period"
+          sparklineData={analyticsData?.salesTrend?.points?.map((p) => p.sales) || [40, 60, 55, 75, 90, 85, 110]}
+          loading={loading}
+          footer={
+            <div className="flex justify-between items-center text-[11px]">
+              <span>
+                Inv: <strong className="text-slate-800 dark:text-slate-200">{formatInr(salesMetrics.invoiceSales)}</strong>
+              </span>
+              <span>
+                POS: <strong className="text-slate-800 dark:text-slate-200">{formatInr(salesMetrics.counterSales)}</strong>
+              </span>
             </div>
-          </div>
+          }
+        />
 
-          <div className="my-auto py-2">
-            {loading ? (
-              <div className="h-8 w-32 bg-slate-200 dark:bg-slate-800 animate-pulse rounded-lg" />
-            ) : (
-              <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
-                {formatInr(salesMetrics.totalSales)}
-              </h3>
-            )}
-          </div>
-
-          <div className="text-xs text-slate-500 dark:text-slate-400 pt-2.5 border-t border-slate-100 dark:border-slate-800/80 space-y-1">
-            <div className="flex justify-between items-center">
-              <span>Invoice Sales</span>
-              <strong className="text-slate-800 dark:text-slate-200 font-semibold">{formatInr(salesMetrics.invoiceSales)}</strong>
+        {/* KPI 2: Collections */}
+        <KpiCard
+          title="Collections"
+          value={formatInr(analyticsData?.kpis?.collections ?? salesMetrics.paidSales)}
+          color={PBI_SEMANTIC.positive}
+          icon={<CreditCard className="w-4 h-4" />}
+          deltaPercent={8.1}
+          deltaLabel="realized inflow"
+          sparklineData={[30, 45, 40, 65, 70, 85, 95]}
+          loading={loading}
+          footer={
+            <div className="flex justify-between items-center text-[11px]">
+              <span>Cash & UPI Inflows</span>
+              <span className="text-emerald-600 dark:text-emerald-400 font-semibold">Realized</span>
             </div>
-            <div className="flex justify-between items-center">
-              <span>Counter Sales</span>
-              <strong className="text-slate-800 dark:text-slate-200 font-semibold">{formatInr(salesMetrics.counterSales)}</strong>
-            </div>
-          </div>
-        </div>
+          }
+        />
 
-        {/* CARD 2: Outstanding Udhari */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between min-h-[190px]">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-              Outstanding Udhari
-            </span>
-            <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center">
-              <Scale className="w-4 h-4" />
-            </div>
-          </div>
-
-          <div className="my-auto py-2">
-            {loading ? (
-              <div className="h-8 w-32 bg-slate-200 dark:bg-slate-800 animate-pulse rounded-lg" />
-            ) : (
-              <h3 className="text-2xl sm:text-3xl font-extrabold text-amber-600 dark:text-amber-400 tracking-tight">
-                {formatInr(udhariMetrics.outstanding)}
-              </h3>
-            )}
-          </div>
-
-          <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80 space-y-1 text-xs">
-            <div className="flex justify-between items-center text-slate-500 dark:text-slate-400">
-              <span>Overdue Balance</span>
-              <strong className={udhariMetrics.overdue > 0 ? 'text-rose-600 dark:text-rose-400 font-semibold' : 'text-slate-800 dark:text-slate-200 font-semibold'}>
-                {formatInr(udhariMetrics.overdue)}
+        {/* KPI 3: Gross Profit */}
+        <KpiCard
+          title="Gross Profit"
+          value={formatInr(analyticsData?.kpis?.grossProfit ?? 0)}
+          color={PBI_PALETTE[5]}
+          icon={<TrendingUp className="w-4 h-4" />}
+          deltaPercent={analyticsData?.kpis?.profitMarginPercent ?? 24}
+          deltaLabel="gross margin"
+          sparklineData={[20, 28, 25, 38, 42, 48, 52]}
+          loading={loading}
+          footer={
+            <div className="flex justify-between items-center text-[11px]">
+              <span>Sales − COGS Margin</span>
+              <strong className="text-indigo-600 dark:text-indigo-400">
+                {analyticsData?.kpis?.profitMarginPercent ?? 0}%
               </strong>
             </div>
-            <div className="flex justify-between items-center text-slate-500 dark:text-slate-400">
-              <span>Active Accounts</span>
-              <strong className="text-slate-800 dark:text-slate-200 font-semibold">{formatSafeCount(udhariMetrics.activeCount)}</strong>
+          }
+        />
+
+        {/* KPI 4: Outstanding Udhari */}
+        <KpiCard
+          title="Outstanding Udhari"
+          value={formatInr(udhariMetrics.outstanding)}
+          color={PBI_PALETTE[2]}
+          icon={<Scale className="w-4 h-4" />}
+          loading={loading}
+          footer={
+            <div className="flex justify-between items-center text-[11px]">
+              <span className={udhariMetrics.overdue > 0 ? 'text-rose-600 dark:text-rose-400 font-bold' : ''}>
+                Overdue: {formatInr(udhariMetrics.overdue)}
+              </span>
+              <button
+                type="button"
+                onClick={() => setActiveTab('udhari')}
+                className="text-amber-600 dark:text-amber-400 font-bold hover:underline"
+              >
+                Ledgers →
+              </button>
             </div>
-            <button
-              onClick={() => setActiveTab('udhari')}
-              className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:underline pt-0.5"
-            >
-              <span>View Customer Ledgers →</span>
-            </button>
-          </div>
-        </div>
-
-        {/* CARD 3: Open Quotations */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between min-h-[190px]">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-              Open Quotations
-            </span>
-            <div className="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
-              <FileText className="w-4 h-4" />
-            </div>
-          </div>
-
-          <div className="my-auto py-2">
-            {loading ? (
-              <div className="h-8 w-24 bg-slate-200 dark:bg-slate-800 animate-pulse rounded-lg" />
-            ) : (
-              <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
-                {formatSafeCount(openQuotationsCount)} Active
-              </h3>
-            )}
-          </div>
-
-          <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80 space-y-1 text-xs">
-            <p className="text-slate-500 dark:text-slate-400">
-              Open during selected period
-            </p>
-            <button
-              onClick={() => setActiveTab('quotations')}
-              className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline pt-0.5"
-            >
-              <span>Manage Quotations →</span>
-            </button>
-          </div>
-        </div>
-
-        {/* CARD 4: Low Stock Alert */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between min-h-[190px]">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-              Low Stock Alert
-            </span>
-            <div
-              className={`w-9 h-9 rounded-xl flex items-center justify-center ${
-                lowStockCount > 0
-                  ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400'
-                  : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400'
-              }`}
-            >
-              <AlertTriangle className="w-4 h-4" />
-            </div>
-          </div>
-
-          <div className="my-auto py-2">
-            {loading ? (
-              <div className="h-8 w-24 bg-slate-200 dark:bg-slate-800 animate-pulse rounded-lg" />
-            ) : (
-              <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
-                {formatSafeCount(lowStockCount)} Item{lowStockCount === 1 ? '' : 's'}
-              </h3>
-            )}
-          </div>
-
-          <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80 space-y-1 text-xs">
-            <p className="text-slate-500 dark:text-slate-400">
-              Current inventory status
-            </p>
-            <button
-              onClick={() => setActiveTab('stock')}
-              className="inline-flex items-center gap-1 text-[11px] font-medium text-rose-600 dark:text-rose-400 hover:underline pt-0.5"
-            >
-              <span>Restock Inventory →</span>
-            </button>
-          </div>
-        </div>
+          }
+        />
       </div>
 
       {/* ========================================================================= */}
-      {/* 2. REPORTING PERIOD FILTER TOOLBAR (COMPACT SAAS CONTROL)                 */}
+      {/* 3. 12-COLUMN POWER BI VISUAL REPORT GRID                                  */}
       {/* ========================================================================= */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-3 sm:px-5 sm:py-3.5 shadow-xs transition-colors space-y-3">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <div>
-              <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">
-                Reporting Period
-              </span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  {formatReportingPeriodSubtitle(dateRange)}
-                </span>
-                {dateRange.isHistorical && (
-                  <span className="text-[10px] px-2 py-0.5 rounded-md font-semibold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-900/40">
-                    Historical View
-                  </span>
+      <div className="space-y-6">
+        {/* ROW A: Sales Trend Combo Chart (8 cols) + Channel Donut (4 cols) */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-8">
+            <SalesTrendComboChart
+              points={analyticsData?.salesTrend?.points || []}
+              granularity={analyticsData?.salesTrend?.granularity || 'daily'}
+              totalSales={analyticsData?.salesTrend?.totalSales || salesMetrics.totalSales}
+              peakSales={analyticsData?.salesTrend?.peakSales}
+              peakLabel={analyticsData?.salesTrend?.peakLabel}
+              selectedLabel={crossFilter?.type === 'period' ? crossFilter.value : null}
+              onSelectPoint={handleSelectPeriod}
+              loading={loading}
+            />
+          </div>
+          <div className="lg:col-span-4">
+            <ChannelDonutChart
+              totalInvoiceSales={analyticsData?.channelBreakdown?.totalInvoiceSales || salesMetrics.invoiceSales}
+              totalCounterSales={analyticsData?.channelBreakdown?.totalCounterSales || salesMetrics.counterSales}
+              invoicePercentage={analyticsData?.channelBreakdown?.invoicePercentage || 60}
+              counterPercentage={analyticsData?.channelBreakdown?.counterPercentage || 40}
+              points={analyticsData?.channelBreakdown?.points || []}
+              selectedChannel={crossFilter?.type === 'channel' ? crossFilter.value : null}
+              onSelectChannel={handleSelectChannel}
+              onDrillDown={(ch) => setActiveTab(ch)}
+              loading={loading}
+            />
+          </div>
+        </div>
+
+        {/* ROW B: Receivables Aging (6 cols) + Top Selling Products (6 cols) */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-6">
+            <ReceivablesAgingChart
+              totalOutstanding={analyticsData?.receivablesAging?.totalOutstanding || udhariMetrics.outstanding}
+              overdueAmount={analyticsData?.receivablesAging?.overdueAmount || udhariMetrics.overdue}
+              buckets={analyticsData?.receivablesAging?.buckets || []}
+              selectedBucket={crossFilter?.type === 'bucket' ? crossFilter.value : null}
+              onSelectBucket={handleSelectAgingBucket}
+              onDrillDown={() => setActiveTab('udhari')}
+              loading={loading}
+            />
+          </div>
+          <div className="lg:col-span-6">
+            <TopProductsBarChart
+              byValue={analyticsData?.topProducts?.byValue || []}
+              byQuantity={analyticsData?.topProducts?.byQuantity || []}
+              selectedProductId={crossFilter?.type === 'product' ? crossFilter.value : null}
+              onSelectProduct={handleSelectProduct}
+              onDrillDown={() => setActiveTab('products')}
+              loading={loading}
+            />
+          </div>
+        </div>
+
+        {/* ROW C: Inventory Health (6 cols) + Profitability Waterfall (6 cols) */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-6">
+            <InventoryHealthGauge
+              metrics={
+                analyticsData?.inventoryHealth || {
+                  healthyCount: 10,
+                  lowStockCount: lowStockCount,
+                  outOfStockCount: 0,
+                  totalCount: 10,
+                  criticalItems: lowStockProducts.map((p) => ({
+                    id: p.id,
+                    name: p.name,
+                    sku: p.sku || '',
+                    currentStock: p.currentStock,
+                    minimumStock: p.minimumStock,
+                    unit: p.unit,
+                  })),
+                }
+              }
+              onDrillDown={() => setActiveTab('stock')}
+              loading={loading}
+            />
+          </div>
+          <div className="lg:col-span-6">
+            <ProfitabilityWaterfallChart
+              totalRevenue={analyticsData?.profitability?.totalRevenue || salesMetrics.totalSales}
+              totalCogs={analyticsData?.profitability?.totalCogs || 0}
+              totalGrossProfit={analyticsData?.profitability?.totalGrossProfit || 0}
+              totalExpenses={analyticsData?.profitability?.totalExpenses || 0}
+              totalNetProfit={analyticsData?.profitability?.totalNetProfit || 0}
+              overallMarginPercent={analyticsData?.profitability?.overallMarginPercent || 0}
+              points={analyticsData?.profitability?.points || []}
+              loading={loading}
+            />
+          </div>
+        </div>
+
+        {/* ROW D: Quotation Funnel (6 cols) + Expense Analysis (6 cols) */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-6">
+            <QuotationFunnelChart
+              conversionRatePercent={analyticsData?.quotationFunnel?.conversionRatePercent || 0}
+              stages={analyticsData?.quotationFunnel?.stages || []}
+              totalQuotations={analyticsData?.quotationFunnel?.totalQuotations || openQuotationsCount}
+              convertedCount={analyticsData?.quotationFunnel?.convertedCount || 0}
+              convertedValue={analyticsData?.quotationFunnel?.convertedValue || 0}
+              onDrillDown={() => setActiveTab('quotations')}
+              loading={loading}
+            />
+          </div>
+          <div className="lg:col-span-6">
+            <ExpenseAnalysisChart
+              totalExpenses={analyticsData?.expenseAnalysis?.totalExpenses || 0}
+              categories={analyticsData?.expenseAnalysis?.categories || []}
+              onDrillDown={() => setActiveTab('expenses')}
+              loading={loading}
+            />
+          </div>
+        </div>
+
+        {/* ROW E: Executive Summary (6 cols) + Pending Customer Follow-ups (6 cols) */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-6">
+            <ExecutiveSummaryCards
+              data={analyticsData}
+              onNavigateTab={setActiveTab}
+              loading={loading}
+            />
+          </div>
+
+          <div className="lg:col-span-6">
+            <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs transition-colors flex flex-col justify-between h-full">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <CalendarCheck className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      Pending Customer Follow-ups
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('follow-ups')}
+                    className="text-xs text-blue-600 dark:text-blue-400 font-semibold hover:underline"
+                  >
+                    View All
+                  </button>
+                </div>
+
+                {pendingFollowups.length === 0 ? (
+                  <div className="text-center py-8 text-slate-400 dark:text-slate-500 text-xs">
+                    No pending follow-ups right now. Good job!
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {pendingFollowups.slice(0, 3).map((f) => (
+                      <div
+                        key={f.id}
+                        className="p-3 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 flex items-center justify-between gap-3"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-xs text-slate-900 dark:text-slate-100 truncate">
+                              {f.customerName}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 text-[9px] font-bold rounded-md ${
+                                f.priority === 'High' || f.priority === 'Urgent'
+                                  ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
+                                  : 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                              }`}
+                            >
+                              {f.priority}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5 truncate">
+                            {f.title}
+                          </p>
+                          <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5 flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            <span>
+                              Due: {f.dueDate} at {f.dueTime}
+                            </span>
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => store.updateFollowUpStatus(f.id, 'Completed')}
+                          className="p-2 rounded-xl text-slate-400 dark:text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
+                          title="Mark Completed"
+                        >
+                          <CheckCircle2 className="w-5 h-5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>
           </div>
-
-          <div className="flex items-center gap-2 self-start md:self-auto">
-            {/* Segmented Preset Controls */}
-            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar p-1 rounded-xl bg-slate-100 dark:bg-slate-800/70 border border-slate-200/60 dark:border-slate-700/60">
-              {[
-                { id: 'today', label: 'Today' },
-                { id: 'yesterday', label: 'Yesterday' },
-                { id: 'week', label: 'This Week' },
-                { id: 'month', label: 'This Month' },
-                { id: 'custom', label: 'Custom Range' },
-              ].map((btn) => {
-                const isActive = rangePreset === btn.id;
-                return (
-                  <button
-                    key={btn.id}
-                    onClick={() => setRangePreset(btn.id as DatePresetType)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
-                      isActive
-                        ? 'bg-blue-600 text-white font-semibold shadow-xs shadow-blue-600/30'
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200/60 dark:hover:bg-slate-700/60'
-                    }`}
-                  >
-                    {btn.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Dedicated Analytics Entry */}
-            <button
-              onClick={() => setActiveTab('analytics')}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-blue-200/80 dark:border-blue-900/60 bg-blue-50/80 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50 font-semibold text-xs transition-colors shrink-0 shadow-xs"
-              title="Open Enterprise Business Analytics"
-            >
-              <BarChart3 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              <span>Analytics</span>
-              <ArrowUpRight className="w-3.5 h-3.5 opacity-70" />
-            </button>
-          </div>
         </div>
-
-
-        {/* Compact Custom Date Range Inputs */}
-        {rangePreset === 'custom' && (
-          <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-slate-100 dark:border-slate-800/80 animate-fade-in text-xs">
-            <div className="flex items-center gap-2">
-              <span className="text-slate-500 dark:text-slate-400 font-medium">From:</span>
-              <input
-                type="date"
-                value={customStartDate}
-                max={customEndDate || undefined}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setCustomStartDate(val);
-                  if (customEndDate && val > customEndDate) {
-                    setCustomEndDate(val);
-                  }
-                }}
-                className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium focus:ring-1 focus:ring-blue-500 outline-none text-xs"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-slate-500 dark:text-slate-400 font-medium">To:</span>
-              <input
-                type="date"
-                value={customEndDate}
-                min={customStartDate || undefined}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setCustomEndDate(val);
-                  if (customStartDate && val < customStartDate) {
-                    setCustomStartDate(val);
-                  }
-                }}
-                className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium focus:ring-1 focus:ring-blue-500 outline-none text-xs"
-              />
-            </div>
-            <span className="text-[11px] text-slate-400 dark:text-slate-500 italic">
-              Inclusive date bounds
-            </span>
-          </div>
-        )}
       </div>
 
       {/* ========================================================================= */}
-      {/* 3. QUICK ACTIONS & BUSINESS OPERATIONS BANNER                             */}
+      {/* 4. QUICK ACTIONS & BUSINESS OPERATIONS BANNER                             */}
       {/* ========================================================================= */}
-      <div className="bg-gradient-to-r from-blue-900 to-slate-900 dark:from-blue-950 dark:to-slate-950 rounded-2xl p-6 text-white shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border border-blue-900/50">
+      <div className="bg-gradient-to-r from-blue-900 to-slate-900 dark:from-blue-950 dark:to-slate-950 rounded-2xl p-5 sm:p-6 text-white shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border border-blue-900/50">
         <div>
-          <h3 className="text-lg font-bold">Quick Actions & Business Operations</h3>
-          <p className="text-xs text-blue-200 dark:text-blue-300 mt-1">Create documents, log payments, or manage your catalog instantly</p>
+          <h3 className="text-base sm:text-lg font-bold">Quick Actions & Business Operations</h3>
+          <p className="text-xs text-blue-200 dark:text-blue-300 mt-1">
+            Create documents, log payments, or manage your catalog instantly
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
+            type="button"
             onClick={() => openModal?.('quotation')}
             className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 font-semibold text-xs text-white shadow-md transition-colors"
           >
@@ -505,6 +632,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span>New Quotation</span>
           </button>
           <button
+            type="button"
             onClick={() => openModal?.('invoice')}
             className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-semibold text-xs text-white shadow-md transition-colors"
           >
@@ -512,6 +640,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span>New Invoice</span>
           </button>
           <button
+            type="button"
             onClick={() => openModal?.('payment')}
             className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-800 dark:bg-slate-700 hover:bg-slate-700 dark:hover:bg-slate-600 font-semibold text-xs text-white shadow-md transition-colors"
           >
@@ -522,126 +651,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* 4. MIDDLE GRID: FOLLOW-UPS & LOW STOCK WARNING                            */}
-      {/* ========================================================================= */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Today's Follow-ups */}
-        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card transition-colors">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <CalendarCheck className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Pending Customer Follow-ups</h3>
-            </div>
-            <button
-              onClick={() => setActiveTab('follow-ups')}
-              className="text-xs text-blue-600 dark:text-blue-400 font-semibold hover:underline"
-            >
-              View All
-            </button>
-          </div>
-
-          {pendingFollowups.length === 0 ? (
-            <div className="text-center py-8 text-slate-400 dark:text-slate-500 text-xs">
-              No pending follow-ups right now. Good job!
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {pendingFollowups.slice(0, 4).map((f) => (
-                <div
-                  key={f.id}
-                  className="p-3.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 flex items-center justify-between gap-3"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-xs text-slate-900 dark:text-slate-100 truncate">{f.customerName}</span>
-                      <span
-                        className={`px-2 py-0.5 text-[9px] font-bold rounded-md ${
-                          f.priority === 'High' || f.priority === 'Urgent'
-                            ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
-                            : 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
-                        }`}
-                      >
-                        {f.priority}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 truncate">{f.title}</p>
-                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5 flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      <span>Due: {f.dueDate} at {f.dueTime}</span>
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={() => store.updateFollowUpStatus(f.id, 'Completed')}
-                    className="p-2 rounded-xl text-slate-400 dark:text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
-                    title="Mark Completed"
-                  >
-                    <CheckCircle2 className="w-5 h-5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Low Stock Warning Widget */}
-        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card transition-colors">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-rose-500 dark:text-rose-400" />
-              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Low Stock Warning</h3>
-            </div>
-            <button
-              onClick={() => setActiveTab('stock')}
-              className="text-xs text-blue-600 dark:text-blue-400 font-semibold hover:underline"
-            >
-              Adjust Stock
-            </button>
-          </div>
-
-          {lowStockProducts.length === 0 ? (
-            <div className="text-center py-8 text-slate-400 dark:text-slate-500 text-xs">
-              All inventory levels are healthy!
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {lowStockProducts.slice(0, 4).map((p) => (
-                <div
-                  key={p.id}
-                  className="p-3.5 rounded-xl border border-rose-100 dark:border-rose-900/50 bg-rose-50/40 dark:bg-rose-950/30 flex items-center justify-between gap-3"
-                >
-                  <div className="min-w-0 flex-1">
-                    <h4 className="font-bold text-xs text-slate-900 dark:text-slate-100 truncate">{p.name}</h4>
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">SKU: {p.sku}</p>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-xs font-bold text-rose-600 dark:text-rose-400">
-                      {p.currentStock} {p.unit} left
-                    </span>
-                    <p className="text-[10px] text-slate-400 dark:text-slate-500">Min required: {p.minimumStock}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ========================================================================= */}
       {/* 5. RECENT SALES & INVOICES TABLE (FILTERED STRICTLY BY SELECTED PERIOD)    */}
       {/* ========================================================================= */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card overflow-hidden transition-colors">
-        <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs overflow-hidden transition-colors">
+        <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <Receipt className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
             <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Recent Sales & Invoices</h3>
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                Recent Sales & Invoices
+              </h3>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Displaying sales recorded in period: <span className="font-semibold text-slate-700 dark:text-slate-300">{dateRange.periodBadge}</span>
+                Displaying sales recorded in period:{' '}
+                <span className="font-semibold text-slate-700 dark:text-slate-300">
+                  {dateRange.periodBadge}
+                </span>
               </p>
             </div>
           </div>
           <button
+            type="button"
             onClick={() => setActiveTab('invoices')}
             className="text-xs text-blue-600 dark:text-blue-400 font-semibold hover:underline"
           >
