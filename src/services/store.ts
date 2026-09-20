@@ -33,8 +33,11 @@ import {
 import { BrandingConfig, ThemeConfig, DocumentSnapshot } from '../types/template';
 import { INVOICE_TEMPLATES } from '../templates/invoiceTemplates';
 import { QUOTATION_TEMPLATES } from '../templates/quotationTemplates';
-import { safeGetTenantItem, safeSaveTenantItem, clearTenantStorage } from './supabase/safeStorage';
+import { safeGetTenantItem, safeSaveTenantItem, safeGetTenantStorage, safeSaveTenantStorage, clearTenantStorage } from './supabase/safeStorage';
 import { isSupabaseConfigured } from '../lib/supabase';
+import { supabaseAuthService } from './supabaseAuth';
+
+const LOCAL_PRODUCTS_KEY = 'vistaar_local_products_db';
 
 
 export function calculateUdhariStatus(originalAmount: number, totalReceived: number, dueDate: string): UdhariStatus {
@@ -660,17 +663,34 @@ class StoreService {
     product.updatedAt = new Date().toISOString();
 
     // 1. Update local stockReceipts FIFO if deducting
+    if (!this.state.stockReceipts) this.state.stockReceipts = [];
     if (quantityDelta < 0) {
       let remainingToDeduct = Math.abs(quantityDelta);
-      for (const rec of this.state.stockReceipts) {
-        if (rec.productId === productId && rec.quantityRemaining > 0) {
-          const deduct = Math.min(rec.quantityRemaining, remainingToDeduct);
-          rec.quantityRemaining -= deduct;
-          rec.updatedAt = new Date().toISOString();
-          remainingToDeduct -= deduct;
-          if (remainingToDeduct <= 0) break;
-        }
+      const activeReceipts = (this.state.stockReceipts || [])
+        .filter((r) => r.productId === productId && r.quantityRemaining > 0)
+        .sort((a, b) => new Date(a.receivedDate).getTime() - new Date(b.receivedDate).getTime());
+
+      for (const rec of activeReceipts) {
+        if (remainingToDeduct <= 0) break;
+        const deduct = Math.min(rec.quantityRemaining, remainingToDeduct);
+        rec.quantityRemaining -= deduct;
+        rec.updatedAt = new Date().toISOString();
+        remainingToDeduct -= deduct;
       }
+
+      const localReceipts = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []);
+      let remTenant = Math.abs(quantityDelta);
+      const activeLocal = localReceipts
+        .filter((r: any) => r.product_id === productId && (r.quantity_remaining || 0) > 0)
+        .sort((a: any, b: any) => new Date(a.received_date || a.receivedDate).getTime() - new Date(b.received_date || b.receivedDate).getTime());
+
+      for (const rec of activeLocal) {
+        if (remTenant <= 0) break;
+        const deduct = Math.min(rec.quantity_remaining, remTenant);
+        rec.quantity_remaining -= deduct;
+        remTenant -= deduct;
+      }
+      safeSaveTenantStorage('vistaar_local_stock_receipts_db', localReceipts);
     } else if (quantityDelta > 0 && type === 'Sales Return') {
       const rec = this.state.stockReceipts.find((r) => r.productId === productId);
       if (rec) {
@@ -678,6 +698,7 @@ class StoreService {
         rec.updatedAt = new Date().toISOString();
       }
     }
+    this.syncProductStock(productId, newStock);
 
     // 2. Add StockMovement record
     const movementType: StockMovementType = quantityDelta < 0 ? 'SALE' : type === 'Sales Return' ? 'RETURN' : 'ADJUSTMENT';
@@ -970,9 +991,10 @@ class StoreService {
     };
 
     // Deduct stock for linked product items ONLY if invoice is finalized (Issued / Paid / Partially Paid)
-    // When Supabase is configured, stock validation and atomic deduction are authoritatively handled by Supabase RPC
+    // When Supabase is configured with an authenticated user, stock validation and atomic deduction are authoritatively handled by Supabase RPC
     const isFinalized = newInvoice.status === 'Issued' || newInvoice.status === 'Paid' || newInvoice.status === 'Partially Paid';
-    if (isFinalized && !isSupabaseConfigured()) {
+    const isRemoteAuthenticated = isSupabaseConfigured() && Boolean(supabaseAuthService.getUser());
+    if (isFinalized && !isRemoteAuthenticated) {
       // Validate stock for ALL items before deducting stock for any item (offline/local mode only)
       for (const item of newInvoice.items) {
         if (item.productId) {
@@ -1032,8 +1054,9 @@ class StoreService {
     const wasFinalized = existing.status === 'Issued' || existing.status === 'Paid' || existing.status === 'Partially Paid';
     const isFinalized = updatedInvoice.status === 'Issued' || updatedInvoice.status === 'Paid' || updatedInvoice.status === 'Partially Paid';
 
-    // When Supabase is configured, stock validation and atomic deduction are authoritatively handled by Supabase RPC
-    if (isFinalized && !wasFinalized && !isSupabaseConfigured()) {
+    // When Supabase is configured with an authenticated user, stock validation and atomic deduction are authoritatively handled by Supabase RPC
+    const isRemoteAuth = isSupabaseConfigured() && Boolean(supabaseAuthService.getUser());
+    if (isFinalized && !wasFinalized && !isRemoteAuth) {
       for (const item of updatedInvoice.items) {
         if (item.productId) {
           const avail = this.getProductAvailableStock(item.productId);
@@ -1852,8 +1875,18 @@ class StoreService {
     this.saveToStorage();
   }
 
+  public setProducts(products: Product[]): void {
+    if (!Array.isArray(products)) return;
+    this.state.products = [...products];
+    this.saveToStorage();
+  }
+
   public getProductAvailableStock(productId: string): number {
-    const prod = (this.state.products || []).find((p) => p.id === productId);
+    let prod = (this.state.products || []).find((p) => p.id === productId);
+    if (!prod) {
+      const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+      prod = local.find((p) => p.id === productId);
+    }
     const prodStock = prod ? Math.max(0, Number(prod.currentStock) || 0) : 0;
     const receipts = (this.state.stockReceipts || []).filter((r) => r.productId === productId);
     if (receipts.length > 0) {
@@ -1870,6 +1903,24 @@ class StoreService {
       prod.currentStock = Math.max(0, newStock);
       prod.updatedAt = new Date().toISOString();
       this.saveToStorage();
+    } else {
+      const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+      const lp = local.find((p) => p.id === productId);
+      if (lp) {
+        lp.currentStock = Math.max(0, newStock);
+        lp.updatedAt = new Date().toISOString();
+        this.state.products.push(lp);
+        this.saveToStorage();
+      }
+    }
+
+    // Mirror to tenant storage
+    const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+    const idx = local.findIndex((p) => p.id === productId);
+    if (idx !== -1) {
+      local[idx].currentStock = Math.max(0, newStock);
+      local[idx].updatedAt = new Date().toISOString();
+      safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, local);
     }
   }
 
@@ -2093,11 +2144,23 @@ class StoreService {
     }
 
     this.saveToStorage();
+
+    // Keep tenant storage products list in sync
+    const localProds = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+    const idx = localProds.findIndex((p) => p.id === newProduct.id);
+    if (idx >= 0) {
+      localProds[idx] = newProduct;
+    } else {
+      localProds.unshift(newProduct);
+    }
+    safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, localProds);
+
     return newProduct;
   }
 
   public addStockReceipt(data: {
     productId: string;
+    receiptNumber?: string;
     quantityReceived: number;
     buyPrice?: number;
     receivedDate?: string;
@@ -2114,7 +2177,7 @@ class StoreService {
 
     const now = new Date().toISOString();
     const count = this.state.stockReceipts.length + 1;
-    const receiptNumber = `GRN-${String(count).padStart(4, '0')}`;
+    const receiptNumber = data.receiptNumber || `GRN-${String(count).padStart(4, '0')}`;
     const qty = Number(data.quantityReceived);
     if (isNaN(qty) || qty <= 0) throw new Error('Quantity received must be greater than 0.');
 
@@ -2138,6 +2201,18 @@ class StoreService {
 
     this.state.stockReceipts.unshift(newReceipt);
 
+    // Sync tenant storage for receipts
+    const localReceipts = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []);
+    localReceipts.unshift({
+      ...newReceipt,
+      product_id: newReceipt.productId,
+      quantity_received: newReceipt.quantityReceived,
+      quantity_remaining: newReceipt.quantityRemaining,
+      received_date: newReceipt.receivedDate,
+      buy_price: newReceipt.buyPrice,
+    });
+    safeSaveTenantStorage('vistaar_local_stock_receipts_db', localReceipts);
+
     const newMovement: StockMovement = {
       id: `mov-${Date.now()}`,
       productId: product.id,
@@ -2154,9 +2229,30 @@ class StoreService {
     product.currentBuyPrice = receiptBuyPrice;
     product.currentStock = this.getProductAvailableStock(product.id);
     product.updatedAt = now;
+    this.syncProductStock(product.id, product.currentStock);
 
     this.saveToStorage();
     return newReceipt;
+  }
+
+  public receiveStockBatch(data: {
+    productId: string;
+    receiptNumber?: string;
+    quantityReceived: number;
+    buyPrice?: number;
+    receivedDate?: string;
+    supplierId?: string;
+    notes?: string;
+  }): StockReceipt {
+    return this.addStockReceipt({
+      productId: data.productId,
+      receiptNumber: data.receiptNumber,
+      quantityReceived: data.quantityReceived,
+      buyPrice: data.buyPrice,
+      receivedDate: data.receivedDate,
+      supplierId: data.supplierId,
+      notes: data.notes,
+    });
   }
 
   // FIFO Stock Consumption Logic (Section 25 & 26)

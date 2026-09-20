@@ -275,23 +275,29 @@ export class QuotationService {
 
       // 2. Prepare line items for authoritative invoice
       const rawItems = targetQt.quotation_items || targetQt.items || [];
-      const items = rawItems.map((i: any) => ({
-        id: i.id,
-        productId: i.product_id || i.productId || null,
-        productName: i.product_name || i.productName || i.name || 'Item',
-        description: i.description || null,
-        partNumber: i.part_number || i.partNumber || null,
-        sku: i.sku || '',
-        unit: i.unit || 'Pcs',
-        quantity: Number(i.quantity) || 1,
-        buyPrice: Number(i.buy_price || i.buyPrice) || 0,
-        sellingPrice: Number(i.selling_price || i.sellingPrice || i.rate || i.price) || 0,
-        discountAmount: Number(i.discount_amount || i.discountAmount) || 0,
-        taxPercent: Number(i.tax_percent || i.taxPercent || i.taxRate) || 0,
-        taxAmount: Number(i.tax_amount || i.taxAmount) || 0,
-        total: Number(i.total) || 0,
-        itemType: i.item_type || i.itemType || (i.product_id || i.productId ? 'product' : 'custom'),
-      }));
+      const items = rawItems.map((i: any) => {
+        const rawPId = i.product_id || i.productId;
+        const cleanProductId = (rawPId && typeof rawPId === 'string' && rawPId.trim() !== '' && rawPId !== 'null' && rawPId !== 'undefined') ? rawPId.trim() : null;
+        const itemType = i.item_type || i.itemType || (cleanProductId ? 'product' : 'custom');
+
+        return {
+          id: i.id,
+          productId: cleanProductId,
+          productName: i.product_name || i.productName || i.name || 'Item',
+          description: i.description || null,
+          partNumber: i.part_number || i.partNumber || null,
+          sku: i.sku || '',
+          unit: i.unit || 'Pcs',
+          quantity: Number(i.quantity) || 1,
+          buyPrice: Number(i.buy_price || i.buyPrice) || 0,
+          sellingPrice: Number(i.selling_price || i.sellingPrice || i.rate || i.price) || 0,
+          discountAmount: Number(i.discount_amount || i.discountAmount) || 0,
+          taxPercent: Number(i.tax_percent || i.taxPercent || i.taxRate) || 0,
+          taxAmount: Number(i.tax_amount || i.taxAmount) || 0,
+          total: Number(i.total) || 0,
+          itemType,
+        };
+      });
 
       // 3. Delegate directly to the single Authoritative Invoice Accounting Pipeline
       const { invoiceService } = await import('./invoiceService');

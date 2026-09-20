@@ -55,6 +55,9 @@ export class ProductService {
 
     // Return from in-memory cache if available and fresh (<30s)
     if (isDefaultFetch && this.productsCache && this.productsCache.wsId === wsId && (Date.now() - this.productsCache.timestamp < this.CACHE_TTL_MS)) {
+      try {
+        store.setProducts(this.productsCache.data);
+      } catch {}
       return { data: this.productsCache.data, count: this.productsCache.count };
     }
 
@@ -173,6 +176,11 @@ export class ProductService {
           timestamp: Date.now(),
           wsId,
         };
+        try {
+          store.setProducts(products);
+        } catch (syncErr) {
+          console.warn('[PRODUCT_STORE_SYNC] Warning syncing store products:', syncErr);
+        }
       }
 
       return { data: products, count: count || 0 };
@@ -594,10 +602,22 @@ export class ProductService {
       return 0;
     }
 
-    if (!isSupabaseConfigured()) {
+    if (!isSupabaseConfigured() || !isValidUuid(productId)) {
       const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
-      const p = local.find((prod) => prod.id === productId) || store.getProducts().find((prod) => prod.id === productId);
-      const prodStock = Math.max(0, Number(p?.currentStock) || 0);
+      let p = local.find((prod) => prod.id === productId);
+
+      if (!p) {
+        const currentWs = supabaseAuthService.getCurrentCompanyId();
+        if (!currentWs || currentWs === 'unauthenticated') {
+          p = store.getProducts().find((prod) => prod.id === productId);
+        }
+      }
+
+      if (!p) {
+        return 0;
+      }
+
+      const prodStock = Math.max(0, Number(p.currentStock) || 0);
 
       const receipts = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []).filter(
         (r: any) => r.product_id === productId
@@ -614,6 +634,21 @@ export class ProductService {
       throw new Error('[WORKSPACE RESOLUTION] Failed to resolve authoritative workspace for stock lookup.');
     }
 
+    // Attempt authoritative database calculation helper RPC
+    try {
+      const { data: rpcStock, error: rpcErr } = await supabase.rpc('get_authoritative_product_stock', {
+        p_product_id: productId,
+        p_workspace_id: wsId,
+      });
+      if (!rpcErr && rpcStock !== null && rpcStock !== undefined && !isNaN(Number(rpcStock))) {
+        const numStock = Math.max(0, Number(rpcStock));
+        store.syncProductStock(productId, numStock);
+        return numStock;
+      }
+    } catch {
+      // Non-blocking fallback to direct query below
+    }
+
     // 1. Fetch current_stock directly from products table for authoritative workspace
     const prodQuery = supabase
       .from('products')
@@ -628,32 +663,7 @@ export class ProductService {
       throw new Error(`[STOCK AUTHORITY] Failed to query product stock: ${prodErr.message}`);
     }
 
-    // If product row not found by ID in authoritative workspace, attempt safe canonical resolution within SAME workspace
     if (!prodData) {
-      console.warn('[CANONICAL PRODUCT RESOLUTION] Product ID not found in workspace, attempting safe fallback lookup within workspace:', {
-        productId,
-        workspaceId: wsId,
-      });
-
-      const localCandidate = store.getProducts().find((p) => p.id === productId);
-      if (localCandidate) {
-        const canonical = await this.resolveCanonicalProduct({
-          productId,
-          sku: localCandidate.sku,
-          partNumber: localCandidate.partNumber,
-          productName: localCandidate.name || (localCandidate as any).productName,
-        });
-
-        if (canonical && canonical.id && canonical.id !== productId) {
-          console.log('[CANONICAL PRODUCT RESOLUTION] Redirecting stock lookup to canonical product ID:', {
-            originalProductId: productId,
-            canonicalProductId: canonical.id,
-            workspaceId: wsId,
-          });
-          return this.getProductAvailableStock(canonical.id);
-        }
-      }
-
       console.error('[STOCK AUTHORITY] Product does not exist in authoritative workspace:', {
         productId,
         workspaceId: wsId,
@@ -711,6 +721,7 @@ export class ProductService {
       finalAvailableStock: finalStock,
     });
 
+    store.syncProductStock(prodData.id, finalStock);
     return finalStock;
   }
 

@@ -113,6 +113,16 @@ export class InvoiceService {
     const invNumber = invoice.invoiceNumber || `INV-${Date.now()}`;
     const isFinalized = invoice.status === 'Issued' || invoice.status === 'Paid' || invoice.status === 'Partially Paid';
 
+    // Fall back directly to local tenant storage if Supabase is unconfigured or no user is logged in
+    if (!isSupabaseConfigured() || !supabaseAuthService.getUser()) {
+      const newId = `inv-${Date.now()}`;
+      const localInv = { id: newId, invoice_number: invNumber, ...invoice, invoice_items: items, createdAt: new Date().toISOString() };
+      const local = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
+      local.unshift(localInv);
+      safeSaveTenantStorage(LOCAL_INVOICES_KEY, local);
+      return { invoiceId: newId };
+    }
+
     try {
       // Step 1: Insert Parent Invoice (insert as 'Draft' if finalizing via RPC to ensure stock finalization executes)
       const initialStatus = isFinalized ? 'Draft' : (invoice.status || 'Draft');
@@ -299,7 +309,7 @@ export class InvoiceService {
         console.error('[finalizeInvoice] RPC finalize_invoice_stock returned error:', error);
 
         const code = (error as any).code || '';
-        const msg = (error as any).message || '';
+        let msg = (error as any).message || '';
         const isUnavailable =
           code === 'PGRST202' ||
           msg.includes('Could not find the function') ||
@@ -308,6 +318,9 @@ export class InvoiceService {
           msg.includes('NetworkError');
 
         if (!isUnavailable) {
+          if (msg.includes('INSUFFICIENT_STOCK:')) {
+            msg = msg.replace(/^.*?INSUFFICIENT_STOCK:\s*/, '');
+          }
           return { success: false, error: msg || 'Invoice finalization failed.' };
         }
       }
@@ -319,30 +332,37 @@ export class InvoiceService {
       const items = invoice.invoice_items || invoice.items || [];
       const invNumber = invoice.invoice_number || invoice.invoiceNumber || invoiceId;
 
-      // Validate stock availability for all items first
+      // Validate stock availability aggregating by product ID
+      const reqMap = new Map<string, { name: string; qty: number }>();
       for (const item of items) {
         const productId = item.product_id || item.productId;
         const qty = Number(item.quantity) || 0;
         if (!productId || qty <= 0) continue;
-
-        const currentStock = await productService.getProductAvailableStock(productId);
-        if (currentStock < qty) {
+        const prev = reqMap.get(productId);
+        if (prev) {
+          prev.qty += qty;
+        } else {
           const prod = store.getProducts().find((p: Product) => p.id === productId);
-          const pName = prod ? prod.name : item.product_name || 'Product';
+          reqMap.set(productId, {
+            name: prod ? prod.name : item.product_name || 'Product',
+            qty,
+          });
+        }
+      }
+
+      for (const [productId, req] of reqMap.entries()) {
+        const currentStock = await productService.getProductAvailableStock(productId);
+        if (currentStock < req.qty) {
           return {
             success: false,
-            error: `Insufficient stock for "${pName}". Requested ${qty}, but only ${currentStock} units are available.`,
+            error: `Insufficient stock for "${req.name}". Requested ${req.qty}, but only ${currentStock} units are available.`,
           };
         }
       }
 
-      // Perform stock deduction across all line items
-      for (const item of items) {
-        const productId = item.product_id || item.productId;
-        const qty = Number(item.quantity) || 0;
-        if (!productId || qty <= 0) continue;
-
-        store.adjustStock(productId, 'Sale', -qty, `Invoice Finalization #${invNumber}`, invNumber);
+      // Perform stock deduction across line products
+      for (const [productId, req] of reqMap.entries()) {
+        store.adjustStock(productId, 'Sale', -req.qty, `Invoice Finalization #${invNumber}`, invNumber);
 
         if (isSupabaseConfigured()) {
           try {
@@ -354,7 +374,7 @@ export class InvoiceService {
               .maybeSingle();
 
             if (currentProd) {
-              const newStock = Math.max(0, (Number(currentProd.current_stock) || 0) - qty);
+              const newStock = Math.max(0, (Number(currentProd.current_stock) || 0) - req.qty);
               await supabase
                 .from('products')
                 .update({ current_stock: newStock, updated_at: new Date().toISOString() })
@@ -495,20 +515,33 @@ export class InvoiceService {
         effectiveStatus = 'Issued';
       }
 
-      // 3. Stock Validation (Catalog items check available stock; custom items exempt)
+      // 3. Authoritative Stock Validation (Catalog items check available stock; custom items exempt)
+      const requestedByProduct = new Map<string, { name: string; quantity: number }>();
       for (const item of normalizedItems) {
         if (item.productId && item.itemType !== 'custom') {
-          const avail = store.getProductAvailableStock(item.productId);
-          if (avail < item.quantity) {
-            return {
-              success: false,
-              error: `Insufficient stock for "${item.productName}". Requested ${item.quantity}, but only ${avail} units are available.`,
-            };
+          const prev = requestedByProduct.get(item.productId);
+          if (prev) {
+            prev.quantity += item.quantity;
+          } else {
+            requestedByProduct.set(item.productId, {
+              name: item.productName || 'Product',
+              quantity: item.quantity,
+            });
           }
         }
       }
 
-      // 4. Persist to Local Store
+      for (const [pId, req] of requestedByProduct.entries()) {
+        const avail = await productService.getProductAvailableStock(pId);
+        if (avail < req.quantity) {
+          return {
+            success: false,
+            error: `Insufficient stock for "${req.name}". Requested ${req.quantity}, but only ${avail} units are available.`,
+          };
+        }
+      }
+
+      // 4. Resolve Authoritative Workspace ID
       let wsId = '';
       try {
         wsId = await this.getOrFetchWorkspaceId();
@@ -546,15 +579,65 @@ export class InvoiceService {
         snapshot: payload.snapshot,
       };
 
-      let inv: Invoice;
-      if (payload.id && store.getInvoices().some((i) => i.id === payload.id)) {
-        inv = store.updateInvoice(payload.id, invoicePayload) as Invoice;
-      } else {
-        inv = store.addInvoice(invoicePayload as any);
+      let authoritativeInvoiceId = payload.id || `inv-${Date.now()}`;
+      let authoritativeInvoiceNumber = payload.invoiceNumber;
+
+      // 5. Persist to Remote Supabase FIRST (enforcing atomic stock deduction)
+      if (isSupabaseConfigured() && isValidUuid(wsId) && Boolean(supabaseAuthService.getUser())) {
+        const subRes = await this.createInvoice({
+          ...invoicePayload,
+          invoiceNumber: authoritativeInvoiceNumber || undefined,
+          quotationId: payload.quotationId,
+          status: effectiveStatus,
+          paidAmount: effectivePaid,
+          balanceAmount: effectiveBalance,
+        }, normalizedItems);
+
+        if (!subRes.invoiceId || subRes.error) {
+          return {
+            success: false,
+            error: subRes.error || 'Invoice finalization failed due to database error.',
+          };
+        }
+
+        authoritativeInvoiceId = subRes.invoiceId;
+
+        if (payload.quotationId) {
+          await supabase
+            .from('quotations')
+            .update({
+              status: 'Converted',
+              converted_invoice_id: authoritativeInvoiceId,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', payload.quotationId)
+            .eq('workspace_id', wsId);
+        }
       }
 
-      if (payload.invoiceNumber && payload.invoiceNumber !== inv.invoiceNumber) {
-        inv.invoiceNumber = payload.invoiceNumber;
+      // 6. Persist / Mirror to Local Store (reflecting validated execution)
+      const localInvoiceData = {
+        ...invoicePayload,
+        id: authoritativeInvoiceId,
+        status: effectiveStatus,
+        paidAmount: effectivePaid,
+        balanceAmount: effectiveBalance,
+      };
+
+      let inv: Invoice;
+      if (payload.id && store.getInvoices().some((i) => i.id === payload.id)) {
+        inv = store.updateInvoice(payload.id, localInvoiceData) as Invoice;
+      } else if (store.getInvoices().some((i) => i.id === authoritativeInvoiceId)) {
+        inv = store.updateInvoice(authoritativeInvoiceId, localInvoiceData) as Invoice;
+      } else {
+        inv = store.addInvoice(localInvoiceData as any);
+        if (authoritativeInvoiceId && inv.id !== authoritativeInvoiceId) {
+          inv.id = authoritativeInvoiceId;
+        }
+      }
+
+      if (authoritativeInvoiceNumber && authoritativeInvoiceNumber !== inv.invoiceNumber) {
+        inv.invoiceNumber = authoritativeInvoiceNumber;
       }
 
       // Link quotation in store
@@ -585,37 +668,13 @@ export class InvoiceService {
       }
       safeSaveTenantStorage(LOCAL_INVOICES_KEY, localInvoices);
 
-      // 5. Persist to Remote Supabase
-      let authoritativeInvoiceId = inv.id;
-
-      if (isSupabaseConfigured() && isValidUuid(wsId)) {
+      // Synchronize local store stock levels for products that were deducted
+      for (const [pId] of requestedByProduct.entries()) {
         try {
-          const subRes = await this.createInvoice({
-            ...inv,
-            quotationId: payload.quotationId,
-            status: effectiveStatus,
-            paidAmount: effectivePaid,
-            balanceAmount: effectiveBalance,
-          }, normalizedItems);
-
-          if (subRes.invoiceId) {
-            authoritativeInvoiceId = subRes.invoiceId;
-            inv.id = subRes.invoiceId;
-          }
-
-          if (payload.quotationId) {
-            await supabase
-              .from('quotations')
-              .update({
-                status: 'Converted',
-                converted_invoice_id: authoritativeInvoiceId,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', payload.quotationId)
-              .eq('workspace_id', wsId);
-          }
-        } catch (dbErr) {
-          console.warn('[finalizeAuthoritativeInvoice] Remote database persistence notice:', dbErr);
+          const remainingStock = await productService.getProductAvailableStock(pId);
+          store.syncProductStock(pId, remainingStock);
+        } catch {
+          // ignore
         }
       }
 
