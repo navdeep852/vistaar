@@ -5,9 +5,7 @@ import { safeGetTenantStorage } from './safeStorage';
 import { ResolvedDateRange, resolveDateRange, formatFriendlyDate, formatIndianDate, addDays } from '../../lib/dateRange';
 import { salesAnalyticsService } from './salesAnalyticsService';
 import { udhariService } from './udhariService';
-import { productService } from './productService';
 import { quotationService } from './quotationService';
-import { expenseService } from './expenseService';
 import { store } from '../store';
 import { Invoice, Product, Expense } from '../../types';
 
@@ -161,23 +159,23 @@ export class EnterpriseAnalyticsService {
   ): Promise<EnterpriseAnalyticsData> {
     const wsId = await this.getWorkspaceId();
 
-    // 1. Fetch Authoritative Dashboard Sales Metrics & Raw Invoices / Counter Sales
-    const [salesMetricsRes, udhariMetricsRes, productsRes, quotationsRes, expensesRes] = await Promise.all([
+    // 1. Fetch Authoritative Dashboard Sales Metrics & Raw Invoices / Counter Sales (Read-Only)
+    const [salesMetricsRes, udhariMetricsRes, quotationsRes] = await Promise.all([
       salesAnalyticsService.getSalesMetrics(dateRange, forceFresh),
       udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr),
-      productService.getProducts(),
       quotationService.getQuotations(),
-      expenseService.getExpenses(),
     ]);
 
-    // Fetch Invoices with Items & Counter Sales with Items for granular charts
+    // Fetch Invoices with Items, Counter Sales with Items, Payments, Products, and Expenses (Strictly Read-Only)
     let invoices: any[] = [];
     let counterSales: any[] = [];
     let payments: any[] = [];
+    let productsList: any[] = [];
+    let expensesList: any[] = [];
 
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
       try {
-        const [invRes, csRes, payRes] = await Promise.all([
+        const [invRes, csRes, payRes, prodRes, expRes] = await Promise.all([
           supabase
             .from('invoices')
             .select('*, invoice_items(*)')
@@ -198,14 +196,38 @@ export class EnterpriseAnalyticsService {
             .eq('workspace_id', wsId)
             .gte('payment_date', dateRange.startDateStr)
             .lte('payment_date', dateRange.endDateStr),
+          supabase
+            .from('products')
+            .select('*')
+            .eq('workspace_id', wsId),
+          supabase
+            .from('expenses')
+            .select('*')
+            .eq('workspace_id', wsId)
+            .gte('expense_date', dateRange.startDateStr)
+            .lte('expense_date', dateRange.endDateStr),
         ]);
 
         if (invRes.data) invoices = invRes.data;
         if (csRes.data) counterSales = csRes.data;
         if (payRes.data) payments = payRes.data;
+        if (prodRes.data) productsList = prodRes.data;
+        if (expRes.data) expensesList = expRes.data;
       } catch (err) {
         console.warn('[enterpriseAnalyticsService] Supabase query notice:', err);
       }
+    }
+
+    // Read-only fallback to local store/storage if Supabase offline or empty
+    if (productsList.length === 0) {
+      productsList = store.getProducts() || [];
+    }
+    if (expensesList.length === 0) {
+      const localExps = store.getExpenses() || [];
+      expensesList = localExps.filter((exp: any) => {
+        const d = (exp.date || exp.expense_date || exp.createdAt || '').split('T')[0];
+        return d >= dateRange.startDateStr && d <= dateRange.endDateStr;
+      });
     }
 
     // Fallback to local storage / memory if empty or offline
@@ -323,24 +345,36 @@ export class EnterpriseAnalyticsService {
         trendMap.set(key, entry);
       });
     } else {
-      // Daily, Weekly, or Monthly buckets
-      let curDate = dateRange.startDateStr;
-      while (curDate <= dateRange.endDateStr) {
-        const [y, m, d] = curDate.split('-').map(Number);
-        const dt = new Date(y, m - 1, d);
-        const dayLabel = dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+      // Daily, Weekly, or Monthly buckets (Guarded timestamp traversal with hard iteration cap)
+      const [sy, sm, sd] = (dateRange.startDateStr || '').split('-').map(Number);
+      const [ey, em, ed] = (dateRange.endDateStr || '').split('-').map(Number);
+      const startMs = new Date(Date.UTC(sy || 2026, (sm || 1) - 1, sd || 1)).getTime();
+      const endMs = new Date(Date.UTC(ey || 2026, (em || 1) - 1, ed || 1)).getTime();
 
-        trendMap.set(curDate, {
-          label: dayLabel,
-          fullDate: curDate,
-          sales: 0,
-          invoices: 0,
-          counterSales: 0,
-          invoiceCount: 0,
-          counterCount: 0,
-        });
+      let guard = 0;
+      if (!isNaN(startMs) && !isNaN(endMs) && startMs <= endMs) {
+        const dayFormatter = new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', day: '2-digit', month: 'short' });
+        let curMs = startMs;
+        while (curMs <= endMs && guard++ < 1000) {
+          const curObj = new Date(curMs);
+          const yStr = curObj.getUTCFullYear();
+          const mStr = String(curObj.getUTCMonth() + 1).padStart(2, '0');
+          const dStr = String(curObj.getUTCDate()).padStart(2, '0');
+          const curDateKey = `${yStr}-${mStr}-${dStr}`;
+          const dayLabel = dayFormatter.format(curObj);
 
-        curDate = addDays(curDate, 1);
+          trendMap.set(curDateKey, {
+            label: dayLabel,
+            fullDate: curDateKey,
+            sales: 0,
+            invoices: 0,
+            counterSales: 0,
+            invoiceCount: 0,
+            counterCount: 0,
+          });
+
+          curMs += 86400000; // Exact 24-hour increment in UTC ms
+        }
       }
 
       invoices.forEach((inv) => {
@@ -577,11 +611,8 @@ export class EnterpriseAnalyticsService {
     const totalRevenue = salesMetricsRes.totalSales;
     const totalGrossProfit = Math.max(0, totalRevenue - totalCogs);
 
-    // Aggregate period expenses
-    const periodExpenses = (expensesRes.data || store.getExpenses() || []).filter((exp: any) => {
-      const d = (exp.date || exp.createdAt || '').split('T')[0];
-      return d >= dateRange.startDateStr && d <= dateRange.endDateStr;
-    });
+    // Aggregate period expenses (read-only)
+    const periodExpenses = expensesList;
 
     const totalExpenseAmount = periodExpenses.reduce((sum: number, e: any) => sum + Number(e.amount || 0), 0);
     const totalNetProfit = totalGrossProfit - totalExpenseAmount;
@@ -606,7 +637,7 @@ export class EnterpriseAnalyticsService {
     // -------------------------------------------------------------
     // CHART 6: INVENTORY HEALTH
     // -------------------------------------------------------------
-    const allProducts: Product[] = productsRes.data || store.getProducts() || [];
+    const allProducts: Product[] = productsList;
     let healthyCount = 0;
     let lowStockCount = 0;
     let outOfStockCount = 0;
@@ -666,6 +697,15 @@ export class EnterpriseAnalyticsService {
     let paidCount = 0;
     let convertedValue = 0;
 
+    // Fast O(1) invoice lookups for quotation conversion
+    const invoicesById = new Map<string, any>();
+    const invoicesByQuotationId = new Map<string, any>();
+    invoices.forEach((inv) => {
+      if (inv.id) invoicesById.set(inv.id, inv);
+      const qId = inv.quotationId || inv.quotation_id;
+      if (qId) invoicesByQuotationId.set(qId, inv);
+    });
+
     allQuotations.forEach((q: any) => {
       const st = String(q.status || '').toLowerCase();
       const val = Number(q.total || q.grand_total || q.grandTotal || 0);
@@ -675,9 +715,9 @@ export class EnterpriseAnalyticsService {
       if (st === 'converted' || q.invoice_id || q.invoiceId || q.converted_invoice_id || q.convertedInvoiceId) {
         convertedCount += 1;
         convertedValue += val;
-        // Check if converted invoice is paid
+        // Check if converted invoice is paid via O(1) map
         const invId = q.invoice_id || q.invoiceId || q.converted_invoice_id || q.convertedInvoiceId;
-        const matchingInv = invoices.find((i) => i.id === invId || (i.quotationId && i.quotationId === q.id) || (i.quotation_id && i.quotation_id === q.id));
+        const matchingInv = (invId ? invoicesById.get(invId) : null) || invoicesByQuotationId.get(q.id);
         if (matchingInv && (matchingInv.status === 'Paid' || (Number(matchingInv.paidAmount || matchingInv.paid_amount || 0) >= Number(matchingInv.grandTotal || matchingInv.grand_total || 0) && Number(matchingInv.grandTotal || matchingInv.grand_total || 0) > 0))) {
           paidCount += 1;
         }

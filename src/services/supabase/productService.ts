@@ -55,9 +55,6 @@ export class ProductService {
 
     // Return from in-memory cache if available and fresh (<30s)
     if (isDefaultFetch && this.productsCache && this.productsCache.wsId === wsId && (Date.now() - this.productsCache.timestamp < this.CACHE_TTL_MS)) {
-      try {
-        store.setProducts(this.productsCache.data);
-      } catch {}
       return { data: this.productsCache.data, count: this.productsCache.count };
     }
 

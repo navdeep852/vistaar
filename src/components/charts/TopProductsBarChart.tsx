@@ -58,14 +58,14 @@ export const TopProductsBarChart: React.FC<TopProductsBarChartProps> = ({
     return sorted.slice(0, 5).reverse(); // reverse for vertical bar layout so #1 is at top
   }, [rawList, metric, chartType]);
 
-  const isEmpty = !displayData || displayData.length === 0;
-
   const totalSum = useMemo(() => {
     return (rawList || []).reduce(
-      (acc, curr) => acc + (metric === 'value' ? curr.salesValue : curr.quantitySold),
+      (acc, curr) => acc + (metric === 'value' ? (curr.salesValue || 0) : (curr.quantitySold || 0)),
       0
     );
   }, [rawList, metric]);
+
+  const isEmpty = !displayData || displayData.length === 0 || totalSum <= 0;
 
   const tableColumns = [
     { key: 'name', label: 'Product Name' },
@@ -146,6 +146,7 @@ export const TopProductsBarChart: React.FC<TopProductsBarChartProps> = ({
                 tick={{ fontSize: PBI_FONTS.axisSize, fill: '#888888', fontFamily: PBI_FONTS.family }}
                 axisLine={false}
                 tickLine={false}
+                domain={[0, Math.max(totalSum, 1)]}
               />
               <YAxis
                 type="category"

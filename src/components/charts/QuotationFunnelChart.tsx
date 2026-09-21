@@ -25,7 +25,7 @@ export const QuotationFunnelChart: React.FC<QuotationFunnelChartProps> = ({
   onDrillDown,
   loading = false,
 }) => {
-  const isEmpty = totalQuotations <= 0 && (!stages || stages.every((s) => s.count === 0));
+  const isEmpty = totalQuotations <= 0 || !stages || stages.length === 0 || stages.every((s) => s.count === 0);
 
   // Funnel stage colors descending in brightness / hue
   const funnelColors = [

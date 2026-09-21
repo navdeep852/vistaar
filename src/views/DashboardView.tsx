@@ -68,6 +68,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 }) => {
   // Concurrency and race-condition guard
   const activeRequestIdRef = useRef<number>(0);
+  const isFetchingRef = useRef<boolean>(false);
 
   // Filter State initialized from localStorage with robust fallback
   const [rangePreset, setRangePreset] = useState<DatePresetType>(() => {
@@ -166,8 +167,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     value: string;
   } | null>(null);
 
-  // Authoritative Data Fetching Pipeline
+  // Authoritative Data Fetching Pipeline (Guarded against re-entrant fetches)
   const loadDashboardData = useCallback(async (forceFresh = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     const currentRequestId = ++activeRequestIdRef.current;
     setLoading(true);
     setError(null);
@@ -191,7 +194,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       // 4. Low Stock Products
       const lowStockPromise = productService.getLowStockProductsAsOf(dateRange.endDateStr, wsId);
 
-      // 5. Enterprise Analytics Overview (Power BI visuals data)
+      // 5. Enterprise Analytics Overview (Power BI visuals data - strictly read-only)
       const analyticsPromise = enterpriseAnalyticsService.getAnalyticsOverview(dateRange, forceFresh);
 
       const [smRes, umRes, qtRes, lsRes, anRes] = await Promise.all([
@@ -219,15 +222,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       console.error('[DashboardView] Failed to load authoritative metrics:', err);
       setError(err?.message || 'Unable to load Dashboard metrics. Please verify network and database connectivity.');
     } finally {
+      isFetchingRef.current = false;
       if (currentRequestId === activeRequestIdRef.current) {
         setLoading(false);
       }
     }
   }, [dateRange]);
 
+  // Debounced store subscription to prevent cascade loops
   useEffect(() => {
     loadDashboardData();
-    return store.subscribe(() => loadDashboardData());
+
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = store.subscribe(() => {
+      // Skip if fetch is currently active to avoid re-entrant loops
+      if (isFetchingRef.current) return;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadDashboardData(false);
+      }, 300);
+    });
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      unsubscribe();
+    };
   }, [loadDashboardData]);
 
   // Support manual refresh triggered via Header icon
@@ -247,7 +266,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     });
   }, [invoices, dateRange.startDateStr, dateRange.endDateStr]);
 
-  const pendingFollowups = followUps.filter((f) => f.status === 'Pending');
+  const pendingFollowups = useMemo(() => {
+    return followUps.filter((f) => f.status === 'Pending');
+  }, [followUps]);
+
+  // Memoized KPI Sparkline Data Arrays
+  const totalSalesSparkline = useMemo(() => {
+    return analyticsData?.salesTrend?.points?.map((p) => p.sales) || [40, 60, 55, 75, 90, 85, 110];
+  }, [analyticsData?.salesTrend?.points]);
+
+  const collectionsSparkline = useMemo(() => [30, 45, 40, 65, 70, 85, 95], []);
+  const grossProfitSparkline = useMemo(() => [20, 28, 25, 38, 42, 48, 52], []);
 
   // Cross-filter handlers
   const handleSelectChannel = (channel: string | null) => {
@@ -333,7 +362,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           icon={<DollarSign className="w-4 h-4" />}
           deltaPercent={12.4}
           deltaLabel="vs prior period"
-          sparklineData={analyticsData?.salesTrend?.points?.map((p) => p.sales) || [40, 60, 55, 75, 90, 85, 110]}
+          sparklineData={totalSalesSparkline}
           loading={loading}
           footer={
             <div className="flex justify-between items-center text-[11px]">
@@ -355,7 +384,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           icon={<CreditCard className="w-4 h-4" />}
           deltaPercent={8.1}
           deltaLabel="realized inflow"
-          sparklineData={[30, 45, 40, 65, 70, 85, 95]}
+          sparklineData={collectionsSparkline}
           loading={loading}
           footer={
             <div className="flex justify-between items-center text-[11px]">
@@ -373,7 +402,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           icon={<TrendingUp className="w-4 h-4" />}
           deltaPercent={analyticsData?.kpis?.profitMarginPercent ?? 24}
           deltaLabel="gross margin"
-          sparklineData={[20, 28, 25, 38, 42, 48, 52]}
+          sparklineData={grossProfitSparkline}
           loading={loading}
           footer={
             <div className="flex justify-between items-center text-[11px]">

@@ -130,6 +130,7 @@ export const ReceivablesAgingChart: React.FC<ReceivablesAgingChartProps> = ({
                 tick={{ fontSize: PBI_FONTS.axisSize, fill: '#888888', fontFamily: PBI_FONTS.family }}
                 axisLine={false}
                 tickLine={false}
+                domain={[0, Math.max(totalOutstanding, 1)]}
               />
               <Tooltip
                 content={

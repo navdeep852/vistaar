@@ -205,6 +205,7 @@ export const ExpenseAnalysisChart: React.FC<ExpenseAnalysisChartProps> = ({
                   tick={{ fontSize: PBI_FONTS.axisSize, fill: '#888888', fontFamily: PBI_FONTS.family }}
                   axisLine={false}
                   tickLine={false}
+                  domain={[0, Math.max(totalExpenses, 1)]}
                 />
                 <YAxis
                   type="category"

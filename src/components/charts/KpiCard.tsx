@@ -1,5 +1,5 @@
-import React from 'react';
-import { ResponsiveContainer, AreaChart, Area } from 'recharts';
+import React, { useMemo } from 'react';
+import { ResponsiveContainer, AreaChart, Area, YAxis } from 'recharts';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 
 export interface SparklinePoint {
@@ -33,9 +33,10 @@ export const KpiCard: React.FC<KpiCardProps> = ({
   loading = false,
   onClick,
 }) => {
-  const chartData = (sparklineData && sparklineData.length > 0 ? sparklineData : [10, 15, 12, 18, 20, 25, 22, 30]).map(
-    (v, i) => ({ i, val: v })
-  );
+  const chartData = useMemo(() => {
+    const raw = sparklineData && sparklineData.length > 0 ? sparklineData : [10, 15, 12, 18, 20, 25, 22, 30];
+    return raw.map((v, i) => ({ i, val: isNaN(Number(v)) ? 0 : Number(v) }));
+  }, [sparklineData]);
 
   const hasDelta = deltaPercent !== undefined && deltaPercent !== null;
   const isPositive = (deltaPercent ?? 0) >= 0;
@@ -105,8 +106,9 @@ export const KpiCard: React.FC<KpiCardProps> = ({
 
       {/* Tiny Power BI Area Sparkline at the bottom of the card */}
       <div className="h-9 -mx-5 -mb-2 mt-1 relative z-0 opacity-80 group-hover:opacity-100 transition-opacity">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" debounce={50} minHeight={28}>
           <AreaChart data={chartData} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+            <YAxis hide domain={[0, 'auto']} />
             <defs>
               <linearGradient id={`kpi-spark-${title.replace(/\s+/g, '')}`} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={color} stopOpacity={0.35} />

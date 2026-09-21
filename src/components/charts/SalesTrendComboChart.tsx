@@ -82,7 +82,7 @@ export const SalesTrendComboChart: React.FC<SalesTrendComboChartProps> = ({
     };
   }, [points, propPeakSales, propPeakLabel]);
 
-  const isEmpty = !chartData || chartData.length === 0;
+  const isEmpty = !chartData || chartData.length === 0 || chartData.every((p) => (p.sales || 0) === 0);
 
   const tableColumns = [
     { key: 'label', label: 'Period' },
@@ -166,20 +166,11 @@ export const SalesTrendComboChart: React.FC<SalesTrendComboChartProps> = ({
                 tickLine={false}
               />
               <YAxis
-                yAxisId="left"
                 tickFormatter={formatCompactInr}
                 tick={{ fontSize: PBI_FONTS.axisSize, fill: '#888888', fontFamily: PBI_FONTS.family }}
                 axisLine={false}
                 tickLine={false}
-              />
-              <YAxis
-                yAxisId="right"
-                orientation="right"
-                tickFormatter={formatCompactInr}
-                tick={{ fontSize: PBI_FONTS.axisSize, fill: '#888888', fontFamily: PBI_FONTS.family }}
-                axisLine={false}
-                tickLine={false}
-                hide={true}
+                domain={[0, Math.max(computedPeakSales, 1)]}
               />
 
               <Tooltip
@@ -194,7 +185,6 @@ export const SalesTrendComboChart: React.FC<SalesTrendComboChartProps> = ({
               {/* Dashed Average Reference Line */}
               {avgSales > 0 && (
                 <ReferenceLine
-                  yAxisId="left"
                   y={avgSales}
                   stroke="#94a3b8"
                   strokeDasharray="4 4"
@@ -204,7 +194,6 @@ export const SalesTrendComboChart: React.FC<SalesTrendComboChartProps> = ({
 
               {/* Clustered Column: Sales */}
               <Bar
-                yAxisId="left"
                 dataKey="sales"
                 name="Sales Revenue"
                 fill="url(#pbiSalesBarGrad)"
@@ -216,7 +205,6 @@ export const SalesTrendComboChart: React.FC<SalesTrendComboChartProps> = ({
 
               {/* Smooth Moving Average Line with Area Accent */}
               <Line
-                yAxisId="left"
                 type="monotone"
                 dataKey="movingAvg"
                 name="7-Day Moving Avg"

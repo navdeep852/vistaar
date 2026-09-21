@@ -135,6 +135,7 @@ export const ProfitabilityWaterfallChart: React.FC<ProfitabilityWaterfallChartPr
                 tick={{ fontSize: PBI_FONTS.axisSize, fill: '#888888', fontFamily: PBI_FONTS.family }}
                 axisLine={false}
                 tickLine={false}
+                domain={[0, Math.max(totalRevenue, 1)]}
               />
               <Tooltip
                 content={
