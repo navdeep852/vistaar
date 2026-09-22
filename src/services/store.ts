@@ -386,11 +386,18 @@ class StoreService {
     // 4. Audit & reconcile Converted Quotations with linked Invoices
     const quotations = targetState.quotations || [];
     for (const q of quotations) {
-      if (q.convertedInvoiceId || q.status === 'Converted') {
-        const matchingInv = invoices.find((i) => (q.convertedInvoiceId && i.id === q.convertedInvoiceId) || (i.quotationId && i.quotationId === q.id));
-        if (matchingInv) {
-          q.status = 'Converted';
-          q.convertedInvoiceId = matchingInv.id;
+      const matchingInv = invoices.find(
+        (i) =>
+          (q.convertedInvoiceId && i.id === q.convertedInvoiceId) ||
+          (i.quotationId && (i.quotationId === q.id || i.quotationId === q.quotationNumber))
+      );
+      if (matchingInv) {
+        q.status = 'Converted';
+        q.convertedInvoiceId = matchingInv.id;
+        if (!q.convertedAt) {
+          q.convertedAt = matchingInv.date || matchingInv.createdAt || new Date().toISOString();
+        }
+        if (!matchingInv.quotationId) {
           matchingInv.quotationId = q.id;
         }
       }
@@ -805,6 +812,9 @@ class StoreService {
     const qt = this.state.quotations.find((q) => q.id === id);
     if (qt) {
       qt.status = status;
+      if (status === 'Converted' && !qt.convertedAt) {
+        qt.convertedAt = new Date().toISOString();
+      }
       qt.updatedAt = new Date().toISOString();
       this.saveToStorage();
     }
@@ -859,8 +869,8 @@ class StoreService {
       discountTotal: qt.discountTotal,
       taxTotal: qt.taxTotal,
       grandTotal: fin.grandTotal,
-      paidAmount: fin.paidAmount,
-      balanceAmount: fin.balanceAmount,
+      paidAmount: fin.paidAmount > 0 ? 0 : fin.paidAmount,
+      balanceAmount: fin.grandTotal,
       notes: qt.notes,
       terms: qt.terms,
       footerText: qt.footerText,
@@ -878,6 +888,8 @@ class StoreService {
 
     qt.status = 'Converted';
     qt.convertedInvoiceId = inv.id;
+    qt.convertedAt = new Date().toISOString();
+    qt.updatedAt = new Date().toISOString();
 
     // Record payment if collected upfront
     if (fin.paidAmount > 0) {

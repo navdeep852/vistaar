@@ -26,6 +26,7 @@ import {
   enterpriseAnalyticsService,
   EnterpriseAnalyticsData,
 } from '../services/supabase/enterpriseAnalyticsService';
+import { store } from '../services/store';
 import {
   SalesTrendChart,
   SalesChannelChart,
@@ -110,6 +111,13 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateTab }) =
 
   useEffect(() => {
     loadAnalytics();
+  }, [loadAnalytics]);
+
+  // Live reactivity: re-calculate analytics when transactions, quotations, or invoices update
+  useEffect(() => {
+    return store.subscribe(() => {
+      loadAnalytics();
+    });
   }, [loadAnalytics]);
 
   return (

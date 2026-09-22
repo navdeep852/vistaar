@@ -608,16 +608,25 @@ export class InvoiceService {
 
         authoritativeInvoiceId = subRes.invoiceId;
 
-        if (payload.quotationId) {
-          await supabase
-            .from('quotations')
-            .update({
+        if (payload.quotationId || payload.quotationNumber) {
+          try {
+            const updatePayload: any = {
               status: 'Converted',
-              converted_invoice_id: authoritativeInvoiceId,
               updated_at: new Date().toISOString(),
-            })
-            .eq('id', payload.quotationId)
-            .eq('workspace_id', wsId);
+            };
+            if (isValidUuid(authoritativeInvoiceId)) {
+              updatePayload.converted_invoice_id = authoritativeInvoiceId;
+            }
+
+            let updateQuery = supabase.from('quotations').update(updatePayload).eq('workspace_id', wsId);
+            if (isValidUuid(payload.quotationId)) {
+              await updateQuery.eq('id', payload.quotationId);
+            } else if (payload.quotationNumber) {
+              await updateQuery.eq('quotation_number', payload.quotationNumber);
+            }
+          } catch (qtUpErr) {
+            console.warn('[finalizeAuthoritativeInvoice] Quotation Supabase status update notice:', qtUpErr);
+          }
         }
       }
 
@@ -647,13 +656,17 @@ export class InvoiceService {
       }
 
       // Link quotation in store
-      if (payload.quotationId) {
-        const qt = store.getQuotations().find((q) => q.id === payload.quotationId);
+      if (payload.quotationId || payload.quotationNumber) {
+        const qt = store.getQuotations().find(
+          (q) => q.id === payload.quotationId || (payload.quotationNumber && q.quotationNumber === payload.quotationNumber)
+        );
         if (qt) {
           qt.status = 'Converted';
           qt.convertedInvoiceId = inv.id;
+          qt.convertedAt = new Date().toISOString();
           qt.updatedAt = new Date().toISOString();
         }
+        store.saveAndNotify();
       }
 
       // Sync local tenant storage mirror

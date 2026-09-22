@@ -573,7 +573,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
       });
       showToast('Invoice saved as Draft!', 'success');
     } else {
-      store.addQuotation({
+      const qt = store.addQuotation({
         customerId: selectedCustomerId || undefined,
         customerName,
         customerPhone,
@@ -602,6 +602,12 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         },
         customization,
       });
+
+      // Synchronize quotation draft with Supabase in background
+      quotationService.createQuotation(qt, calculatedItems as QuotationItem[]).catch((err) => {
+        console.warn('[DocumentEditorView] Quotation draft sync notice:', err);
+      });
+
       showToast('Quotation saved as Draft!', 'success');
     }
     onSuccess?.() || onBack();

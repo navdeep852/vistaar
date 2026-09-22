@@ -33,6 +33,7 @@ export const QuotationFunnelChart: React.FC<QuotationFunnelChartProps> = ({
     PBI_PALETTE[1], // #12239E (Sent)
     PBI_PALETTE[5], // #744EC2 (Accepted)
     '#1AAB40',      // Emerald (Converted)
+    '#059669',      // Deep green (Fully Paid)
   ];
 
   const funnelData = (stages || []).map((s, idx) => ({
@@ -57,7 +58,7 @@ export const QuotationFunnelChart: React.FC<QuotationFunnelChartProps> = ({
       badge={`${conversionRatePercent}% Converted`}
       loading={loading}
       empty={isEmpty}
-      emptyMessage="No quotations recorded in this period."
+      emptyMessage="No quotation data for this period."
       tableData={stages}
       tableColumns={tableColumns}
       actionSlot={
@@ -128,9 +129,9 @@ export const QuotationFunnelChart: React.FC<QuotationFunnelChartProps> = ({
         </div>
 
         {/* Step-by-Step Conversion Progression Bar */}
-        <div className="grid grid-cols-4 gap-1 pt-2 border-t border-slate-100 dark:border-slate-800/80 text-center text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1 pt-2 border-t border-slate-100 dark:border-slate-800/80 text-center text-xs">
           {stages &&
-            stages.map((st, i) => (
+            stages.map((st) => (
               <div key={st.stage} className="p-1 rounded bg-slate-50 dark:bg-slate-800/40">
                 <span className="text-[10px] text-slate-400 block truncate">{st.stage}</span>
                 <span className="font-extrabold text-slate-800 dark:text-slate-200">{st.count}</span>

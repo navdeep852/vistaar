@@ -398,6 +398,7 @@ export interface Quotation {
   terms?: string;
   footerText?: string;
   convertedInvoiceId?: string;
+  convertedAt?: string;
   
   // Template & Branding Customizations
   templateId: string;

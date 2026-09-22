@@ -685,8 +685,72 @@ export class EnterpriseAnalyticsService {
     // -------------------------------------------------------------
     // CHART 7: QUOTATION CONVERSION FUNNEL
     // -------------------------------------------------------------
-    const allQuotations = (quotationsRes.data || store.getQuotations() || []).filter((q: any) => {
-      const d = (q.date || q.valid_until || q.createdAt || '').split('T')[0];
+    const remoteQuotations = Array.isArray(quotationsRes?.data) ? quotationsRes.data : [];
+    const localQuotations = store.getQuotations() || [];
+
+    const quotationMap = new Map<string, any>();
+    // 1. Seed local store quotations
+    localQuotations.forEach((q) => {
+      const key = (q.quotationNumber || q.id || '').trim();
+      if (key) quotationMap.set(key, q);
+      if (q.id) quotationMap.set(q.id, q);
+    });
+
+    // 2. Overlay remote quotations with preference for Converted state
+    remoteQuotations.forEach((rq: any) => {
+      const key = (rq.quotation_number || rq.quotationNumber || rq.id || '').trim();
+      const existing = (key ? quotationMap.get(key) : null) || (rq.id ? quotationMap.get(rq.id) : null);
+      const isConverted =
+        rq.status === 'Converted' ||
+        (existing && existing.status === 'Converted') ||
+        Boolean(rq.converted_invoice_id || (existing && existing.convertedInvoiceId));
+
+      if (existing) {
+        const merged = {
+          ...existing,
+          ...rq,
+          id: existing.id || rq.id,
+          quotationNumber: rq.quotation_number || existing.quotationNumber,
+          customerName: rq.customer_name || existing.customerName,
+          customerPhone: rq.customer_phone || existing.customerPhone,
+          customerEmail: rq.customer_email || existing.customerEmail,
+          status: isConverted ? 'Converted' : (rq.status || existing.status),
+          date: rq.date || existing.date,
+          validUntil: rq.valid_until || existing.validUntil,
+          grandTotal: Number(rq.grand_total ?? existing.grandTotal ?? 0),
+          convertedInvoiceId: rq.converted_invoice_id || existing.convertedInvoiceId,
+          convertedAt: existing.convertedAt || rq.updated_at || existing.updatedAt,
+        };
+        if (key) quotationMap.set(key, merged);
+        if (rq.id) quotationMap.set(rq.id, merged);
+      } else {
+        const mapped = {
+          ...rq,
+          id: rq.id,
+          quotationNumber: rq.quotation_number,
+          customerName: rq.customer_name,
+          customerPhone: rq.customer_phone,
+          customerEmail: rq.customer_email,
+          status: isConverted ? 'Converted' : (rq.status || 'Draft'),
+          date: rq.date,
+          validUntil: rq.valid_until,
+          grandTotal: Number(rq.grand_total || 0),
+          subtotal: Number(rq.subtotal || 0),
+          discountTotal: Number(rq.discount_total || 0),
+          taxTotal: Number(rq.tax_total || 0),
+          convertedInvoiceId: rq.converted_invoice_id,
+          items: rq.quotation_items || [],
+        };
+        if (key) quotationMap.set(key, mapped);
+        if (rq.id) quotationMap.set(rq.id, mapped);
+      }
+    });
+
+    const uniqueQuotations = Array.from(new Set(quotationMap.values()));
+
+    const allQuotations = uniqueQuotations.filter((q: any) => {
+      const rawDate = q.date || (q.created_at ? String(q.created_at).split('T')[0] : '') || (q.createdAt ? String(q.createdAt).split('T')[0] : '');
+      const d = (rawDate || '').split('T')[0];
       return d >= dateRange.startDateStr && d <= dateRange.endDateStr;
     });
 
@@ -697,9 +761,17 @@ export class EnterpriseAnalyticsService {
     let paidCount = 0;
     let convertedValue = 0;
 
-    // Fast O(1) invoice lookups for quotation conversion
+    // Fast O(1) invoice lookups across both period-scoped invoices and all store invoices
+    const allInvoices = store.getInvoices() || [];
     const invoicesById = new Map<string, any>();
     const invoicesByQuotationId = new Map<string, any>();
+
+    allInvoices.forEach((inv) => {
+      if (inv.id) invoicesById.set(inv.id, inv);
+      const qId = inv.quotationId;
+      if (qId) invoicesByQuotationId.set(qId, inv);
+    });
+
     invoices.forEach((inv) => {
       if (inv.id) invoicesById.set(inv.id, inv);
       const qId = inv.quotationId || inv.quotation_id;
@@ -708,7 +780,7 @@ export class EnterpriseAnalyticsService {
 
     allQuotations.forEach((q: any) => {
       const st = String(q.status || '').toLowerCase();
-      const val = Number(q.total || q.grand_total || q.grandTotal || 0);
+      const val = Number(q.grandTotal ?? q.grand_total ?? q.total ?? 0);
 
       if (['sent', 'viewed', 'accepted', 'converted'].includes(st)) sentCount += 1;
       if (['accepted', 'converted'].includes(st)) acceptedCount += 1;
@@ -717,8 +789,17 @@ export class EnterpriseAnalyticsService {
         convertedValue += val;
         // Check if converted invoice is paid via O(1) map
         const invId = q.invoice_id || q.invoiceId || q.converted_invoice_id || q.convertedInvoiceId;
-        const matchingInv = (invId ? invoicesById.get(invId) : null) || invoicesByQuotationId.get(q.id);
-        if (matchingInv && (matchingInv.status === 'Paid' || (Number(matchingInv.paidAmount || matchingInv.paid_amount || 0) >= Number(matchingInv.grandTotal || matchingInv.grand_total || 0) && Number(matchingInv.grandTotal || matchingInv.grand_total || 0) > 0))) {
+        const matchingInv =
+          (invId ? invoicesById.get(invId) : null) ||
+          invoicesByQuotationId.get(q.id) ||
+          (q.quotationNumber ? invoicesByQuotationId.get(q.quotationNumber) : null);
+        if (
+          matchingInv &&
+          (matchingInv.status === 'Paid' ||
+            (Number(matchingInv.paidAmount || matchingInv.paid_amount || 0) >=
+              Number(matchingInv.grandTotal || matchingInv.grand_total || 0) &&
+              Number(matchingInv.grandTotal || matchingInv.grand_total || 0) > 0))
+        ) {
           paidCount += 1;
         }
       }
@@ -730,11 +811,36 @@ export class EnterpriseAnalyticsService {
 
     const baseFunnel = Math.max(1, totalCreated);
     const funnelStages: QuotationFunnelStage[] = [
-      { stage: 'Created', count: totalCreated, value: allQuotations.reduce((sum, q) => sum + Number(q.total || q.grand_total || 0), 0), percentage: 100 },
-      { stage: 'Sent / Shared', count: Math.max(sentCount, convertedCount), value: 0, percentage: Math.round((Math.max(sentCount, convertedCount) / baseFunnel) * 100) },
-      { stage: 'Accepted', count: Math.max(acceptedCount, convertedCount), value: 0, percentage: Math.round((Math.max(acceptedCount, convertedCount) / baseFunnel) * 100) },
-      { stage: 'Converted to Invoice', count: convertedCount, value: convertedValue, percentage: Math.round((convertedCount / baseFunnel) * 100) },
-      { stage: 'Fully Paid', count: paidCount, value: 0, percentage: Math.round((paidCount / baseFunnel) * 100) },
+      {
+        stage: 'Created',
+        count: totalCreated,
+        value: allQuotations.reduce((sum, q) => sum + Number(q.grandTotal ?? q.grand_total ?? q.total ?? 0), 0),
+        percentage: 100,
+      },
+      {
+        stage: 'Sent / Shared',
+        count: Math.max(sentCount, convertedCount),
+        value: 0,
+        percentage: Math.round((Math.max(sentCount, convertedCount) / baseFunnel) * 100),
+      },
+      {
+        stage: 'Accepted',
+        count: Math.max(acceptedCount, convertedCount),
+        value: 0,
+        percentage: Math.round((Math.max(acceptedCount, convertedCount) / baseFunnel) * 100),
+      },
+      {
+        stage: 'Converted to Invoice',
+        count: convertedCount,
+        value: convertedValue,
+        percentage: Math.round((convertedCount / baseFunnel) * 100),
+      },
+      {
+        stage: 'Fully Paid',
+        count: paidCount,
+        value: 0,
+        percentage: Math.round((paidCount / baseFunnel) * 100),
+      },
     ];
 
     // -------------------------------------------------------------

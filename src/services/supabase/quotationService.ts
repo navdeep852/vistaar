@@ -60,6 +60,8 @@ export class QuotationService {
 
   public async getQuotations(explicitWsId?: string): Promise<{ data: any[]; error?: string }> {
     const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
+    const localStoreQuotations = store.getQuotations() || [];
+
     try {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
         const { data, error } = await supabase
@@ -70,97 +72,164 @@ export class QuotationService {
 
         if (error) {
           const errStr = handleSupabaseError(error, 'getQuotations');
-          const fallback = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
-          return { data: fallback, error: errStr };
+          return { data: localStoreQuotations, error: errStr };
         }
-        return { data: data || [] };
+
+        const remoteList = data || [];
+        if (remoteList.length === 0) {
+          return { data: localStoreQuotations };
+        }
+
+        // Authoritative seamless merge of Supabase and local store quotations
+        const mergedMap = new Map<string, any>();
+
+        // 1. Seed store quotations
+        localStoreQuotations.forEach((q) => {
+          const key = (q.quotationNumber || q.id || '').trim();
+          if (key) mergedMap.set(key, q);
+          if (q.id) mergedMap.set(q.id, q);
+        });
+
+        // 2. Merge remote quotations
+        remoteList.forEach((rq: any) => {
+          const key = (rq.quotation_number || rq.quotationNumber || rq.id || '').trim();
+          const existing = (key ? mergedMap.get(key) : null) || (rq.id ? mergedMap.get(rq.id) : null);
+          const isConverted =
+            rq.status === 'Converted' ||
+            (existing && existing.status === 'Converted') ||
+            Boolean(rq.converted_invoice_id || (existing && existing.convertedInvoiceId));
+
+          if (existing) {
+            const merged = {
+              ...existing,
+              ...rq,
+              id: existing.id || rq.id,
+              quotationNumber: rq.quotation_number || existing.quotationNumber,
+              customerName: rq.customer_name || existing.customerName,
+              customerPhone: rq.customer_phone || existing.customerPhone,
+              customerEmail: rq.customer_email || existing.customerEmail,
+              status: isConverted ? 'Converted' : (rq.status || existing.status),
+              date: rq.date || existing.date,
+              validUntil: rq.valid_until || existing.validUntil,
+              grandTotal: Number(rq.grand_total ?? existing.grandTotal ?? 0),
+              convertedInvoiceId: rq.converted_invoice_id || existing.convertedInvoiceId,
+              convertedAt: existing.convertedAt || rq.updated_at || existing.updatedAt,
+            };
+            if (key) mergedMap.set(key, merged);
+            if (rq.id) mergedMap.set(rq.id, merged);
+          } else {
+            const mapped = {
+              ...rq,
+              id: rq.id,
+              quotationNumber: rq.quotation_number,
+              customerName: rq.customer_name,
+              customerPhone: rq.customer_phone,
+              customerEmail: rq.customer_email,
+              status: isConverted ? 'Converted' : (rq.status || 'Draft'),
+              date: rq.date,
+              validUntil: rq.valid_until,
+              grandTotal: Number(rq.grand_total || 0),
+              subtotal: Number(rq.subtotal || 0),
+              discountTotal: Number(rq.discount_total || 0),
+              taxTotal: Number(rq.tax_total || 0),
+              convertedInvoiceId: rq.converted_invoice_id,
+              items: rq.quotation_items || [],
+            };
+            if (key) mergedMap.set(key, mapped);
+            if (rq.id) mergedMap.set(rq.id, mapped);
+          }
+        });
+
+        const deduplicated = Array.from(new Set(mergedMap.values()));
+        return { data: deduplicated.length > 0 ? deduplicated : localStoreQuotations };
       }
-      const fallback = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
-      return { data: fallback };
+      return { data: localStoreQuotations };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getQuotations');
-      const fallback = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
-      return { data: fallback, error: errStr };
+      return { data: localStoreQuotations, error: errStr };
     }
   }
 
   public async createQuotation(qt: Partial<Quotation>, items: QuotationItem[]): Promise<{ quotationId?: string; error?: string }> {
-    const wsId = this.getWorkspaceId();
+    const wsId = await this.getWorkspaceId();
     const qtNumber = qt.quotationNumber || `QT-${Date.now()}`;
 
     try {
-      const { data: parent, error: parentErr } = await supabase
-        .from('quotations')
-        .insert([{
-          workspace_id: wsId,
-          customer_id: qt.customerId || null,
-          quotation_number: qtNumber,
-          customer_name: qt.customerName || 'Walk-in Customer',
-          customer_phone: qt.customerPhone || '',
-          customer_email: qt.customerEmail || '',
-          status: qt.status || 'Draft',
-          valid_until: qt.validUntil || new Date().toISOString().split('T')[0],
-          date: qt.date || new Date().toISOString().split('T')[0],
-          subtotal: qt.subtotal || 0,
-          discount_total: qt.discountTotal || 0,
-          tax_total: qt.taxTotal || 0,
-          grand_total: qt.grandTotal || 0,
-          notes: qt.notes || null,
-        }])
-        .select('id')
-        .single();
+      if (isSupabaseConfigured() && isValidUuid(wsId)) {
+        const { data: parent, error: parentErr } = await supabase
+          .from('quotations')
+          .insert([{
+            workspace_id: wsId,
+            customer_id: (qt.customerId && isValidUuid(qt.customerId)) ? qt.customerId : null,
+            quotation_number: qtNumber,
+            customer_name: qt.customerName || 'Walk-in Customer',
+            customer_phone: qt.customerPhone || '',
+            customer_whatsapp: qt.customerWhatsapp || null,
+            customer_email: qt.customerEmail || null,
+            customer_address: qt.customerAddress || null,
+            customer_gstin: qt.customerGstin || null,
+            status: qt.status || 'Draft',
+            valid_until: qt.validUntil || new Date().toISOString().split('T')[0],
+            date: qt.date || new Date().toISOString().split('T')[0],
+            subtotal: qt.subtotal || 0,
+            discount_total: qt.discountTotal || 0,
+            tax_total: qt.taxTotal || 0,
+            grand_total: qt.grandTotal || 0,
+            notes: qt.notes || null,
+            terms: qt.terms || null,
+            footer_text: qt.footerText || null,
+            template_id: qt.templateId || 'qt-modern-blue',
+            branding: qt.branding || null,
+            theme: qt.theme || null,
+            customization: qt.customization || null,
+            snapshot: qt.snapshot || null,
+            is_snapshot_finalized: qt.isSnapshotFinalized ?? true,
+          }])
+          .select('id')
+          .single();
 
-      if (parentErr) {
-        const errStr = handleSupabaseError(parentErr, 'createQuotation');
-        if (errStr.startsWith('Network Error')) {
-          const newId = `qt-${Date.now()}`;
-          const localQt = { id: newId, quotation_number: qtNumber, ...qt, quotation_items: items, createdAt: new Date().toISOString() };
-          const local = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
-          local.unshift(localQt);
-          safeSaveTenantStorage(LOCAL_QUOTATIONS_KEY, local);
-          return { quotationId: newId };
+        if (parentErr) {
+          const errStr = handleSupabaseError(parentErr, 'createQuotation');
+          return { quotationId: qt.id, error: errStr };
         }
-        return { error: errStr };
+
+        const quotationId = parent.id;
+
+        if (items && items.length > 0) {
+          const itemRows = items.map((item) => ({
+            workspace_id: wsId,
+            quotation_id: quotationId,
+            item_type: item.itemType || (item.productId ? 'product' : 'custom'),
+            product_id: (item.productId && isValidUuid(item.productId)) ? item.productId : null,
+            product_name: item.productName,
+            description: item.description || null,
+            part_number: item.partNumber || null,
+            sku: item.sku || '',
+            unit: item.unit || 'Pcs',
+            quantity: item.quantity,
+            buy_price: item.buyPrice || 0,
+            selling_price: item.sellingPrice,
+            discount_amount: item.discountAmount || 0,
+            tax_percent: item.taxPercent || 0,
+            tax_amount: item.taxAmount || 0,
+            total: item.total,
+          }));
+
+          const { error: itemsErr } = await supabase.from('quotation_items').insert(itemRows);
+          if (itemsErr) {
+            handleSupabaseError(itemsErr, 'createQuotation.items');
+            await supabase.from('quotations').delete().eq('id', quotationId);
+            return { error: `Line item insert failed: ${itemsErr.message}` };
+          }
+        }
+
+        return { quotationId };
       }
 
-      const quotationId = parent.id;
-
-      if (items && items.length > 0) {
-        const itemRows = items.map((item) => ({
-          workspace_id: wsId,
-          quotation_id: quotationId,
-          item_type: item.itemType || (item.productId ? 'product' : 'custom'),
-          product_id: item.productId || null,
-          product_name: item.productName,
-          description: item.description || null,
-          part_number: item.partNumber || null,
-          sku: item.sku || '',
-          unit: item.unit || 'Pcs',
-          quantity: item.quantity,
-          buy_price: item.buyPrice || 0,
-          selling_price: item.sellingPrice,
-          tax_percent: item.taxPercent || 0,
-          tax_amount: item.taxAmount || 0,
-          total: item.total,
-        }));
-
-        const { error: itemsErr } = await supabase.from('quotation_items').insert(itemRows);
-        if (itemsErr) {
-          handleSupabaseError(itemsErr, 'createQuotation.items');
-          await supabase.from('quotations').delete().eq('id', quotationId);
-          return { error: `Line item insert failed: ${itemsErr.message}` };
-        }
-      }
-
-      return { quotationId };
+      return { quotationId: qt.id || `qt-${Date.now()}` };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'createQuotation');
-      const newId = `qt-${Date.now()}`;
-      const localQt = { id: newId, quotation_number: qtNumber, ...qt, quotation_items: items, createdAt: new Date().toISOString() };
-      const local = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
-      local.unshift(localQt);
-      safeSaveTenantStorage(LOCAL_QUOTATIONS_KEY, local);
-      return { quotationId: newId };
+      return { quotationId: qt.id || `qt-${Date.now()}`, error: errStr };
     }
   }
 
@@ -243,14 +312,19 @@ export class QuotationService {
       }
 
       // 1. Resolve quotation from store or Supabase
-      let targetQt: any = store.getQuotations().find((q) => q.id === qId);
+      let targetQt: any = store.getQuotations().find((q) => q.id === qId || q.quotationNumber === qId);
       if (!targetQt && isSupabaseConfigured() && isValidUuid(wsId)) {
-        const { data: dbQt } = await supabase
+        let dbQuery = supabase
           .from('quotations')
           .select('*, quotation_items(*)')
-          .eq('id', qId)
-          .maybeSingle();
-        targetQt = dbQt;
+          .eq('workspace_id', wsId);
+        if (isValidUuid(qId)) {
+          const { data: dbQt } = await dbQuery.eq('id', qId).maybeSingle();
+          targetQt = dbQt;
+        } else {
+          const { data: dbQt } = await dbQuery.eq('quotation_number', qId).maybeSingle();
+          targetQt = dbQt;
+        }
       }
 
       if (!targetQt) {
@@ -334,6 +408,10 @@ export class QuotationService {
         customization: targetQt.customization,
         snapshot: targetQt.snapshot,
       });
+
+      if (result.success) {
+        store.saveAndNotify();
+      }
 
       return result;
     } catch (err: any) {
