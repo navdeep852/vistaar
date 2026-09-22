@@ -4,6 +4,11 @@ import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { PaymentMethod } from '../../types';
 import { store } from '../store';
 import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
+import {
+  calculateInvoiceFinancials,
+  calculateUdhariFinancials,
+  validatePaymentAmount,
+} from '../financialCalculationService';
 
 export interface CustomerPaymentPayload {
   invoiceId?: string;
@@ -118,12 +123,12 @@ export class CustomerPaymentService {
     const resolvedUdhariId = (payload.udhariId && isValidUuid(payload.udhariId)) ? payload.udhariId : (targetUdhari?.id && isValidUuid(targetUdhari.id) ? targetUdhari.id : undefined);
     const resolvedCustomerId = (payload.customerId && isValidUuid(payload.customerId)) ? payload.customerId : (targetInvoice?.customerId && isValidUuid(targetInvoice.customerId) ? targetInvoice.customerId : (targetUdhari?.customerId && isValidUuid(targetUdhari.customerId) ? targetUdhari.customerId : undefined));
 
-    // Idempotency check: key = ws:ref:amount:date
-    const idempotencyKey = `${wsId}:${resolvedInvoiceId || resolvedUdhariId || invoiceNumber || customerName}:${amount}:${paymentDate}`;
+    // Idempotency check: key = ws:ref:amount:date:method:payRef
+    const idempotencyKey = `${wsId}:${resolvedInvoiceId || resolvedUdhariId || invoiceNumber || customerName}:${amount}:${paymentDate}:${paymentMethod}:${payload.reference || ''}`;
     const lastSubTime = activeSubmissions.get(idempotencyKey);
     const nowTs = Date.now();
-    if (lastSubTime && nowTs - lastSubTime < 5000) {
-      return { success: false, error: 'A payment with this exact amount and reference was just submitted. Please wait a moment to avoid duplicate transactions.' };
+    if (lastSubTime && nowTs - lastSubTime < 2000) {
+      return { success: false, error: 'A payment with this exact amount, payment method, and reference was just submitted. Please wait a moment to avoid duplicate transactions.' };
     }
     activeSubmissions.set(idempotencyKey, nowTs);
 
@@ -219,6 +224,41 @@ export class CustomerPaymentService {
                 .maybeSingle();
               dbUdhariRow = uByCode;
             }
+            if (!dbUdhariRow && (resolvedInvoiceId || dbInvRow?.id)) {
+              const targetInvId = resolvedInvoiceId || dbInvRow?.id;
+              const { data: uByInvId } = await supabase
+                .from('udhari_records')
+                .select('*')
+                .eq('workspace_id', wsId)
+                .eq('invoice_id', targetInvId)
+                .maybeSingle();
+              dbUdhariRow = uByInvId;
+            }
+
+            // Auto-create Udhari record in DB if missing for this invoice
+            if (!dbUdhariRow && dbInvRow) {
+              const uCode = `UD-${dbInvRow.invoice_number}`;
+              const { data: newURow } = await supabase
+                .from('udhari_records')
+                .insert([{
+                  workspace_id: wsId,
+                  customer_id: resolvedCustomerId || dbInvRow.customer_id || null,
+                  invoice_id: dbInvRow.id,
+                  udhari_code: uCode,
+                  customer_name_snapshot: customerName,
+                  phone_snapshot: customerPhone || '9999999999',
+                  original_amount: Number(dbInvRow.grand_total) || 0,
+                  total_received: Number(dbInvRow.paid_amount) || 0,
+                  outstanding_amount: Number(dbInvRow.balance_amount) || Number(dbInvRow.grand_total) || 0,
+                  due_date: dbInvRow.due_date || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
+                  status: (Number(dbInvRow.paid_amount) > 0 ? 'PARTIALLY PAID' : 'UNPAID'),
+                }])
+                .select('*')
+                .maybeSingle();
+              if (newURow) {
+                dbUdhariRow = newURow;
+              }
+            }
 
             // Check database-level overpayment
             if (dbUdhariRow && amount > (Number(dbUdhariRow.outstanding_amount) + 0.05)) {
@@ -297,13 +337,16 @@ export class CustomerPaymentService {
                 console.warn('[customerPaymentService] udhari_payments insert notice:', upErr.message);
               }
 
-              // Update public.udhari_records
-              const newRec = Number((Number(dbUdhariRow.total_received || 0) + amount).toFixed(2));
-              const newOut = Math.max(0, Number((Number(dbUdhariRow.original_amount) - newRec).toFixed(2)));
-              const newStatus = newOut <= 0.01 ? 'PAID' : 'PARTIALLY PAID';
+              // Update public.udhari_records using calculateUdhariFinancials
+              const curRec = Number(dbUdhariRow.total_received || 0);
+              const { originalAmount, totalReceived: newRec, outstandingAmount: newOut, status: newStatus } = calculateUdhariFinancials(
+                Number(dbUdhariRow.original_amount),
+                curRec + amount
+              );
               await supabase
                 .from('udhari_records')
                 .update({
+                  original_amount: originalAmount,
                   total_received: newRec,
                   outstanding_amount: newOut,
                   status: newStatus,
@@ -313,13 +356,23 @@ export class CustomerPaymentService {
             }
 
             // 5. Update public.invoices if linked
+            let updatedInvPaid = 0;
+            let updatedInvBal = 0;
+            let updatedInvTotal = 0;
             if (dbInvRow) {
-              const newPaid = Number((Number(dbInvRow.paid_amount || 0) + amount).toFixed(2));
-              const newBal = Math.max(0, Number((Number(dbInvRow.grand_total) - newPaid).toFixed(2)));
+              const curInvPaid = Number(dbInvRow.paid_amount || 0);
+              const { grandTotal, paidAmount: newPaid, balanceAmount: newBal } = calculateInvoiceFinancials(
+                Number(dbInvRow.grand_total),
+                curInvPaid + amount
+              );
+              updatedInvPaid = newPaid;
+              updatedInvBal = newBal;
+              updatedInvTotal = grandTotal;
               const newStatus = newBal <= 0.01 ? 'Paid' : 'Partially Paid';
               await supabase
                 .from('invoices')
                 .update({
+                  grand_total: grandTotal,
                   paid_amount: newPaid,
                   balance_amount: newBal,
                   status: newStatus,
@@ -328,34 +381,55 @@ export class CustomerPaymentService {
                 .eq('id', dbInvRow.id);
             }
 
-            // 6. Record Daybook Payment Event (strictly adhering to verified production columns)
-            // Upfront invoice payments ALREADY have a SALE entry recording cash inflow.
-            // Only subsequent customer payments create a CUSTOMER_PAYMENT entry to avoid double counting.
-            if (!payload.isUpfrontInvoicePayment) {
+            // 6. Record Daybook Payment Event & Synchronize Invoice SALE Entry
+            if (dbInvRow) {
               try {
-                const dbTxId = crypto.randomUUID ? crypto.randomUUID() : undefined;
-                const dtPayload: any = {
-                  workspace_id: wsId,
-                  transaction_code: `ACC-${paymentCode}`,
-                  transaction_date: paymentDate,
-                  transaction_type: 'CUSTOMER_PAYMENT',
-                  direction: 'IN',
-                  amount,
-                  payment_mode: paymentMethod,
-                  reference_type: 'PAYMENT',
-                  reference_id: paymentId,
-                  reference_number: invoiceNumber || paymentCode,
-                  party_type: 'customer',
-                  party_id: resolvedCustomerId || null,
-                  party_name: customerName,
-                  description: `Payment Received #${paymentCode} for ${invoiceNumber || customerName}`,
-                  notes: payload.reference ? `Ref: ${payload.reference}` : payload.notes,
-                };
-                if (dbTxId) dtPayload.id = dbTxId;
+                const pStatusTag = updatedInvBal <= 0.01 ? 'PAID' : (updatedInvPaid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+                const { data: existingDaybookSale } = await supabase
+                  .from('daybook_transactions')
+                  .select('id')
+                  .eq('workspace_id', wsId)
+                  .eq('reference_type', 'INVOICE')
+                  .or(`reference_id.eq.${dbInvRow.id},reference_number.eq.${dbInvRow.invoice_number}`)
+                  .maybeSingle();
 
-                await supabase.from('daybook_transactions').insert([dtPayload]);
+                if (existingDaybookSale?.id) {
+                  await supabase
+                    .from('daybook_transactions')
+                    .update({
+                      amount: updatedInvPaid,
+                      total_amount: updatedInvTotal,
+                      remaining_amount: updatedInvBal,
+                      payment_status: pStatusTag,
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq('id', existingDaybookSale.id);
+                } else {
+                  await supabase
+                    .from('daybook_transactions')
+                    .insert([{
+                      id: crypto.randomUUID ? crypto.randomUUID() : undefined,
+                      workspace_id: wsId,
+                      transaction_code: dbInvRow.invoice_number,
+                      transaction_date: dbInvRow.date || paymentDate,
+                      transaction_type: 'SALE',
+                      direction: 'IN',
+                      amount: updatedInvPaid,
+                      total_amount: updatedInvTotal,
+                      remaining_amount: updatedInvBal,
+                      payment_status: pStatusTag,
+                      payment_mode: paymentMethod,
+                      party_type: 'customer',
+                      party_id: dbInvRow.customer_id || resolvedCustomerId || null,
+                      party_name: customerName,
+                      reference_type: 'INVOICE',
+                      reference_id: dbInvRow.id,
+                      reference_number: dbInvRow.invoice_number,
+                      description: `Invoice #${dbInvRow.invoice_number}`,
+                    }]);
+                }
               } catch (dbErr) {
-                console.warn('[customerPaymentService] Daybook sync notice:', dbErr);
+                console.warn('[customerPaymentService] Daybook invoice sync notice:', dbErr);
               }
             }
 
@@ -411,22 +485,27 @@ export class CustomerPaymentService {
     }
 
     // Step 3: Authoritative Multi-Module Synchronization in Local Store
-    const syncRes = store.recordUnifiedCustomerPayment({
-      paymentId,
-      paymentCode,
-      invoiceId: targetInvoice?.id || payload.invoiceId,
-      invoiceNumber,
-      udhariId: targetUdhari?.id || payload.udhariId,
-      customerId: resolvedCustomerId || targetInvoice?.customerId || targetUdhari?.customerId,
-      customerName,
-      customerPhone,
-      amount,
-      paymentMethod: paymentMethod as any,
-      paymentDate,
-      reference: payload.reference,
-      notes: payload.notes,
-      isDbPersisted,
-    });
+    let syncRes: any;
+    try {
+      syncRes = store.recordUnifiedCustomerPayment({
+        paymentId,
+        paymentCode,
+        invoiceId: targetInvoice?.id || payload.invoiceId,
+        invoiceNumber,
+        udhariId: targetUdhari?.id || payload.udhariId,
+        customerId: resolvedCustomerId || targetInvoice?.customerId || targetUdhari?.customerId,
+        customerName,
+        customerPhone,
+        amount,
+        paymentMethod: paymentMethod as any,
+        paymentDate,
+        reference: payload.reference,
+        notes: payload.notes,
+        isDbPersisted,
+      });
+    } catch (storeErr: any) {
+      return { success: false, error: storeErr?.message || 'Payment recording failed.' };
+    }
 
     // Step 4: Cache invalidation
     try {

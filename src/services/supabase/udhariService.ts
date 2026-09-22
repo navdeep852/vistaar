@@ -4,6 +4,7 @@ import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
+import { calculateUdhariFinancials } from '../financialCalculationService';
 
 const LOCAL_UDHARI_KEY = 'vistaar_local_udharis_db';
 const LOCAL_UDHARI_PAYMENTS_KEY = 'vistaar_local_udhari_payments_db';
@@ -139,8 +140,11 @@ export class UdhariService {
   }): Promise<{ udhariId?: string; error?: string }> {
     const wsId = await this.getWorkspaceId();
     const effectiveDueDate = params.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0];
-    const isCleared = params.balanceAmount <= 0.01;
-    const udhariStatus = isCleared ? 'PAID' : (params.paidAmount > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+    const { originalAmount, totalReceived, outstandingAmount, status: udhariStatus } = calculateUdhariFinancials(
+      params.grandTotal,
+      params.paidAmount
+    );
+    const isCleared = outstandingAmount <= 0.01;
 
     try {
       if (isValidUuid(wsId) && isValidUuid(params.invoiceId)) {
@@ -177,13 +181,13 @@ export class UdhariService {
         if (existingUdhari) {
           // Update existing Udhari record
           const updatePayload: any = {
-            total_received: params.paidAmount,
-            outstanding_amount: Math.max(0, params.balanceAmount),
+            original_amount: originalAmount,
+            total_received: totalReceived,
+            outstanding_amount: outstandingAmount,
             status: udhariStatus,
             updated_at: new Date().toISOString(),
           };
           if (!isCleared) {
-            updatePayload.original_amount = params.grandTotal;
             updatePayload.due_date = effectiveDueDate;
           }
           await supabase.from('udhari_records').update(updatePayload).eq('id', existingUdhari.id);
@@ -195,9 +199,9 @@ export class UdhariService {
             invoiceId: params.invoiceId,
             customerNameSnapshot: params.customerName,
             phoneSnapshot: params.customerPhone || '9999999999',
-            originalAmount: params.grandTotal,
-            totalReceived: params.paidAmount,
-            outstandingAmount: params.balanceAmount,
+            originalAmount,
+            totalReceived,
+            outstandingAmount,
             dueDate: effectiveDueDate,
             status: udhariStatus as any,
           });

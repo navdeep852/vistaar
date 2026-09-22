@@ -23,8 +23,7 @@ import type {
   DaybookTransaction,
 } from '../../types';
 import { isValidUuid } from '../../lib/supabaseError';
-
-
+import { calculateInvoiceFinancials } from '../financialCalculationService';
 export interface DbWorkspace {
   id: string;
   company_name: string;
@@ -503,6 +502,75 @@ export function fromDbDaybookTransaction(row: DbDaybookTransaction): DaybookTran
     createdBy: row.created_by || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at || undefined,
+  };
+}
+
+export function fromDbInvoice(row: any): Invoice {
+  const { grandTotal, paidAmount, balanceAmount } = calculateInvoiceFinancials(
+    row.grand_total ?? row.grandTotal,
+    row.paid_amount ?? row.paidAmount
+  );
+  const items: InvoiceItem[] = (row.invoice_items || row.items || []).map((it: any) => ({
+    id: it.id,
+    itemType: it.item_type || it.itemType || 'product',
+    productId: it.product_id || it.productId,
+    productName: it.product_name || it.productName || '',
+    description: it.description || '',
+    partNumber: it.part_number || it.partNumber,
+    sku: it.sku,
+    unit: it.unit || 'pcs',
+    quantity: Number(it.quantity) || 0,
+    buyPrice: Number(it.buy_price ?? it.buyPrice) || 0,
+    sellingPrice: Number(it.selling_price ?? it.sellingPrice ?? it.unit_price ?? it.unitPrice) || 0,
+    discountAmount: Number(it.discount_amount ?? it.discountAmount) || 0,
+    taxPercent: Number(it.tax_percent ?? it.taxPercent) || 0,
+    taxAmount: Number(it.tax_amount ?? it.taxAmount) || 0,
+    total: Number(it.total) || 0,
+  }));
+
+  let status = row.status;
+  if (status !== 'Draft' && status !== 'Cancelled') {
+    if (balanceAmount <= 0.01) {
+      status = 'Paid';
+    } else if (paidAmount > 0) {
+      status = 'Partially Paid';
+    } else {
+      status = 'Issued';
+    }
+  }
+
+  return {
+    id: row.id,
+    invoiceNumber: row.invoice_number || row.invoiceNumber,
+    quotationId: row.quotation_id || row.quotationId,
+    customerId: row.customer_id || row.customerId,
+    customerName: row.customer_name || row.customerName || 'Customer',
+    customerPhone: row.customer_phone || row.customerPhone || '',
+    customerWhatsapp: row.customer_whatsapp || row.customerWhatsapp,
+    customerEmail: row.customer_email || row.customerEmail,
+    customerAddress: row.customer_address || row.customerAddress,
+    customerGstin: row.customer_gstin || row.customerGstin,
+    status: status,
+    date: row.date || row.invoice_date || (row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
+    dueDate: row.due_date || row.dueDate || row.date,
+    items,
+    subtotal: Number(row.subtotal) || 0,
+    discountTotal: Number(row.discount_total ?? row.discountTotal) || 0,
+    taxTotal: Number(row.tax_total ?? row.taxTotal) || 0,
+    grandTotal,
+    paidAmount,
+    balanceAmount,
+    notes: row.notes,
+    terms: row.terms,
+    footerText: row.footer_text || row.footerText,
+    templateId: row.template_id || row.templateId || 'modern',
+    branding: row.branding,
+    theme: row.theme,
+    customization: row.customization,
+    snapshot: row.snapshot,
+    isSnapshotFinalized: row.is_snapshot_finalized ?? row.isSnapshotFinalized,
+    createdAt: row.created_at || row.createdAt || new Date().toISOString(),
+    updatedAt: row.updated_at || row.updatedAt || new Date().toISOString(),
   };
 }
 

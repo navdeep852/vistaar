@@ -5,8 +5,8 @@ import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { store } from '../store';
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 import { productService } from './productService';
-
-
+import { fromDbInvoice } from './types';
+import { calculateInvoiceFinancials } from '../financialCalculationService';
 const LOCAL_INVOICES_KEY = 'vistaar_local_invoices_db';
 
 export class InvoiceService {
@@ -69,13 +69,16 @@ export class InvoiceService {
       if (error) {
         const errStr = handleSupabaseError(error, 'getInvoices');
         const fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
-        return { data: fallback, count: fallback.length, error: errStr };
+        const mappedFallback = fallback.map((inv: any) => fromDbInvoice(inv));
+        return { data: mappedFallback, count: mappedFallback.length, error: errStr };
       }
-      return { data: data || [], count: count || 0 };
+      const mapped = (data || []).map((row: any) => fromDbInvoice(row));
+      return { data: mapped, count: count || mapped.length };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getInvoices');
       const fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
-      return { data: fallback, count: fallback.length, error: errStr };
+      const mappedFallback = fallback.map((inv: any) => fromDbInvoice(inv));
+      return { data: mappedFallback, count: mappedFallback.length, error: errStr };
     }
   }
 
@@ -96,15 +99,15 @@ export class InvoiceService {
       if (error) {
         const errStr = handleSupabaseError(error, 'getInvoiceById');
         const fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
-        const match = fallback.find((inv) => inv.id === id);
-        return { invoice: match, error: match ? undefined : errStr };
+        const match = fallback.find((inv) => inv.id === id || inv.invoice_number === id);
+        return { invoice: match ? fromDbInvoice(match) : undefined, error: match ? undefined : errStr };
       }
-      return { invoice: data };
+      return { invoice: data ? fromDbInvoice(data) : undefined };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getInvoiceById');
       const fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
-      const match = fallback.find((inv) => inv.id === id);
-      return { invoice: match, error: match ? undefined : errStr };
+      const match = fallback.find((inv) => inv.id === id || inv.invoice_number === id);
+      return { invoice: match ? fromDbInvoice(match) : undefined, error: match ? undefined : errStr };
     }
   }
 
@@ -126,6 +129,10 @@ export class InvoiceService {
     try {
       // Step 1: Insert Parent Invoice (insert as 'Draft' if finalizing via RPC to ensure stock finalization executes)
       const initialStatus = isFinalized ? 'Draft' : (invoice.status || 'Draft');
+      const { grandTotal: normGrandTotal, paidAmount: normPaidAmount, balanceAmount: normBalanceAmount } = calculateInvoiceFinancials(
+        invoice.grandTotal,
+        invoice.paidAmount
+      );
 
       const { data: parent, error: parentErr } = await supabase
         .from('invoices')
@@ -143,9 +150,9 @@ export class InvoiceService {
           subtotal: invoice.subtotal || 0,
           discount_total: invoice.discountTotal || 0,
           tax_total: invoice.taxTotal || 0,
-          grand_total: invoice.grandTotal || 0,
-          paid_amount: invoice.paidAmount || 0,
-          balance_amount: invoice.balanceAmount || 0,
+          grand_total: normGrandTotal,
+          paid_amount: normPaidAmount,
+          balance_amount: normBalanceAmount,
         }])
         .select('id')
         .single();
@@ -209,11 +216,10 @@ export class InvoiceService {
             .eq('workspace_id', wsId);
         }
 
-        const total = Number(invoice.grandTotal) || 0;
-        const paid = Number(invoice.paidAmount) || 0;
-        const remaining = Number(invoice.balanceAmount) !== undefined && Number(invoice.balanceAmount) !== null
-          ? Number(invoice.balanceAmount)
-          : Math.max(0, total - paid);
+        const { grandTotal: total, paidAmount: paid, balanceAmount: remaining } = calculateInvoiceFinancials(
+          invoice.grandTotal,
+          invoice.paidAmount
+        );
         const pStatus = remaining <= 0.01 ? 'PAID' : (paid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
 
         // Record Daybook sale entry with strictly partitioned Inflow and Gross Total

@@ -1,5 +1,6 @@
 import { store } from './store';
 import { Invoice, Payment, UdhariRecord } from '../types';
+import { calculateInvoiceFinancials, calculateUdhariFinancials } from './financialCalculationService';
 
 export interface FinancialMismatch {
   type: 'INVOICE_PAYMENT_MISMATCH' | 'UDHARI_SUM_MISMATCH' | 'INVOICE_UDHARI_DESYNC';
@@ -146,23 +147,42 @@ export class FinancialReconciliationService {
             ? payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
             : Number(inv.paidAmount) || 0;
 
-          const grandTotal = Number(inv.grandTotal) || 0;
-          const correctBalance = Math.max(0, Number((grandTotal - totalPaid).toFixed(2)));
-          const correctStatus = correctBalance <= 0.01 ? 'Paid' : (totalPaid > 0 ? 'Partially Paid' : 'Issued');
+          const { grandTotal, paidAmount: correctPaid, balanceAmount: correctBalance } = calculateInvoiceFinancials(
+            inv.grandTotal,
+            totalPaid
+          );
+          const correctStatus = correctBalance <= 0.01 ? 'Paid' : (correctPaid > 0 ? 'Partially Paid' : 'Issued');
 
-          inv.paidAmount = totalPaid;
+          inv.grandTotal = grandTotal;
+          inv.paidAmount = correctPaid;
           inv.balanceAmount = correctBalance;
           inv.status = correctStatus;
           inv.updatedAt = new Date().toISOString();
 
-          // Sync linked Udhari
+          // Sync or auto-create linked Udhari
           const udhari = store.getUdharis().find((u) => u.invoiceId === inv.id || u.id === `UD-${inv.invoiceNumber}`);
           if (udhari) {
-            udhari.originalAmount = grandTotal;
-            udhari.totalReceived = totalPaid;
-            udhari.outstandingAmount = correctBalance;
-            udhari.status = correctBalance <= 0.01 ? 'PAID' : (totalPaid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+            const { originalAmount, totalReceived, outstandingAmount, status: uStatus } = calculateUdhariFinancials(
+              grandTotal,
+              correctPaid
+            );
+            udhari.originalAmount = originalAmount;
+            udhari.totalReceived = totalReceived;
+            udhari.outstandingAmount = outstandingAmount;
+            udhari.status = uStatus;
             udhari.updatedAt = new Date().toISOString();
+          } else if (correctBalance > 0.01) {
+            store.syncInvoiceUdhari({
+              invoiceId: inv.id,
+              invoiceNumber: inv.invoiceNumber,
+              customerId: inv.customerId,
+              customerName: inv.customerName,
+              customerPhone: inv.customerPhone,
+              grandTotal,
+              paidAmount: correctPaid,
+              balanceAmount: correctBalance,
+              dueDate: inv.dueDate,
+            });
           }
 
           // Sync linked Follow-up

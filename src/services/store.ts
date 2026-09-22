@@ -36,17 +36,18 @@ import { QUOTATION_TEMPLATES } from '../templates/quotationTemplates';
 import { safeGetTenantItem, safeSaveTenantItem, safeGetTenantStorage, safeSaveTenantStorage, clearTenantStorage } from './supabase/safeStorage';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { supabaseAuthService } from './supabaseAuth';
+import {
+  calculateInvoiceFinancials,
+  calculateUdhariFinancials,
+  calculateDaybookFinancials,
+  validatePaymentAmount,
+} from './financialCalculationService';
 
 const LOCAL_PRODUCTS_KEY = 'vistaar_local_products_db';
 
 
 export function calculateUdhariStatus(originalAmount: number, totalReceived: number, dueDate: string): UdhariStatus {
-  const outstanding = Math.max(0, originalAmount - totalReceived);
-  const todayStr = new Date().toISOString().split('T')[0];
-  if (outstanding <= 0) return 'PAID';
-  if (dueDate < todayStr) return 'OVERDUE';
-  if (totalReceived > 0) return 'PARTIALLY PAID';
-  return 'UNPAID';
+  return calculateUdhariFinancials(originalAmount, totalReceived, dueDate).status;
 }
 
 const STORAGE_KEY = 'vistaar_app_state_v2';
@@ -434,20 +435,54 @@ class StoreService {
       const id = r.id;
       const found = this.state.invoices.find((i) => i.id === id || (invNum && i.invoiceNumber === invNum));
 
+      const remoteGrand = Number(r.grand_total ?? r.grandTotal ?? 0);
+      const remotePaid = Number(r.paid_amount ?? r.paidAmount ?? 0);
+      const fin = calculateInvoiceFinancials(
+        remoteGrand > 0 ? remoteGrand : (found?.grandTotal || 0),
+        remotePaid,
+        (r.status as InvoiceStatus) || found?.status
+      );
+
       if (found) {
-        const remotePaid = Number(r.paid_amount ?? r.paidAmount) || 0;
-        const remoteBal = Number(r.balance_amount ?? r.balanceAmount) || 0;
-        const remoteStatus = (r.status as InvoiceStatus) || found.status;
         if (
-          Math.abs(found.paidAmount - remotePaid) > 0.001 ||
-          Math.abs(found.balanceAmount - remoteBal) > 0.001 ||
-          found.status !== remoteStatus
+          Math.abs(found.paidAmount - fin.paidAmount) > 0.001 ||
+          Math.abs(found.balanceAmount - fin.balanceAmount) > 0.001 ||
+          Math.abs(found.grandTotal - fin.grandTotal) > 0.001 ||
+          found.status !== fin.status
         ) {
-          found.paidAmount = remotePaid;
-          found.balanceAmount = remoteBal;
-          found.status = remoteStatus;
+          found.grandTotal = fin.grandTotal;
+          found.paidAmount = fin.paidAmount;
+          found.balanceAmount = fin.balanceAmount;
+          found.status = fin.status;
           changed = true;
         }
+      } else if (id && invNum) {
+        this.state.invoices.push({
+          id,
+          invoiceNumber: invNum,
+          customerId: r.customer_id || r.customerId || '',
+          customerName: r.customer_name || r.customerName || 'Customer',
+          customerPhone: r.customer_phone || r.customerPhone || '',
+          customerWhatsapp: r.customer_whatsapp || r.customerWhatsapp || '',
+          customerEmail: r.customer_email || r.customerEmail || '',
+          customerAddress: r.customer_address || r.customerAddress || '',
+          customerGstin: r.customer_gstin || r.customerGstin || '',
+          quotationId: r.quotation_id || r.quotationId,
+          status: fin.status,
+          date: r.date || new Date().toISOString().split('T')[0],
+          dueDate: r.due_date || r.dueDate || new Date().toISOString().split('T')[0],
+          items: r.invoice_items || r.items || [],
+          subtotal: Number(r.subtotal || 0),
+          discountTotal: Number(r.discount_total || r.discountTotal || 0),
+          taxTotal: Number(r.tax_total || r.taxTotal || 0),
+          grandTotal: fin.grandTotal,
+          paidAmount: fin.paidAmount,
+          balanceAmount: fin.balanceAmount,
+          templateId: r.template_id || r.templateId || 'inv-modern-blue',
+          createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+          updatedAt: r.updated_at || r.updatedAt || new Date().toISOString(),
+        });
+        changed = true;
       }
     }
 
@@ -793,26 +828,19 @@ class StoreService {
     const qt = this.state.quotations.find((q) => q.id === quotationId);
     if (!qt || qt.status === 'Converted') return null;
 
-    const grandTotal = Math.max(0, Number(qt.grandTotal) || 0);
-    const pStatus = options?.paymentStatus || (options?.paidAmount !== undefined && options.paidAmount > 0 ? (options.paidAmount >= grandTotal ? 'Fully Paid' : 'Partially Paid') : 'Unpaid');
+    const rawTotal = Math.max(0, Number(qt.grandTotal) || 0);
+    const pStatus = options?.paymentStatus || (options?.paidAmount !== undefined && options.paidAmount > 0 ? (options.paidAmount >= rawTotal ? 'Fully Paid' : 'Partially Paid') : 'Unpaid');
 
-    let paidAmount = 0;
-    let balanceAmount = grandTotal;
-    let invoiceStatus: InvoiceStatus = 'Issued';
-
+    let initialPaid = 0;
     if (pStatus === 'Fully Paid') {
-      paidAmount = grandTotal;
-      balanceAmount = 0;
-      invoiceStatus = 'Paid';
+      initialPaid = rawTotal;
     } else if (pStatus === 'Partially Paid') {
-      paidAmount = Math.max(0, Math.min(grandTotal, Number(options?.paidAmount) || 0));
-      balanceAmount = Math.max(0, Number((grandTotal - paidAmount).toFixed(2)));
-      invoiceStatus = balanceAmount <= 0.01 ? 'Paid' : 'Partially Paid';
+      initialPaid = Math.max(0, Math.min(rawTotal, Number(options?.paidAmount) || 0));
     } else {
-      paidAmount = 0;
-      balanceAmount = grandTotal;
-      invoiceStatus = 'Issued';
+      initialPaid = 0;
     }
+
+    const fin = calculateInvoiceFinancials(rawTotal, initialPaid);
 
     const inv = this.addInvoice({
       quotationId: qt.id,
@@ -823,16 +851,16 @@ class StoreService {
       customerEmail: qt.customerEmail,
       customerAddress: qt.customerAddress,
       customerGstin: qt.customerGstin,
-      status: invoiceStatus,
+      status: fin.status,
       date: options?.invoiceDate || new Date().toISOString().split('T')[0],
       dueDate: options?.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
       items: qt.items.map((i) => ({ ...i })),
       subtotal: qt.subtotal,
       discountTotal: qt.discountTotal,
       taxTotal: qt.taxTotal,
-      grandTotal: qt.grandTotal,
-      paidAmount,
-      balanceAmount,
+      grandTotal: fin.grandTotal,
+      paidAmount: fin.paidAmount,
+      balanceAmount: fin.balanceAmount,
       notes: qt.notes,
       terms: qt.terms,
       footerText: qt.footerText,
@@ -852,13 +880,13 @@ class StoreService {
     qt.convertedInvoiceId = inv.id;
 
     // Record payment if collected upfront
-    if (paidAmount > 0) {
+    if (fin.paidAmount > 0) {
       this.recordPayment({
         invoiceId: inv.id,
         invoiceNumber: inv.invoiceNumber,
         customerId: inv.customerId || qt.customerId || 'cust_direct',
         customerName: inv.customerName,
-        amount: paidAmount,
+        amount: fin.paidAmount,
         method: (options?.paymentMode as any) || 'Cash',
         date: options?.paymentDate || inv.date,
         referenceNo: options?.paymentReference,
@@ -866,8 +894,8 @@ class StoreService {
       });
     }
 
-    // Sync Udhari if balance remaining
-    if (balanceAmount > 0.01) {
+    // Authoritative Udhari ledger synchronization when balance is remaining
+    if (fin.balanceAmount > 0.01) {
       this.syncInvoiceUdhari({
         invoiceId: inv.id,
         invoiceNumber: inv.invoiceNumber,
@@ -917,25 +945,18 @@ class StoreService {
 
       // When payments are recorded, they are the authoritative source of truth
       const totalPaid = matchedPayments.length > 0 ? sumPaid : (Number(inv.paidAmount) || 0);
-      const balanceAmount = Math.max(0, Number((grandTotal - totalPaid).toFixed(2)));
-
-      let computedStatus: InvoiceStatus = inv.status;
-      if (balanceAmount <= 0.01 && grandTotal > 0) {
-        computedStatus = 'Paid';
-      } else if (totalPaid > 0) {
-        computedStatus = 'Partially Paid';
-      } else {
-        computedStatus = 'Issued';
-      }
+      const fin = calculateInvoiceFinancials(grandTotal, totalPaid, inv.status);
 
       if (
-        Math.abs((inv.paidAmount || 0) - totalPaid) > 0.001 ||
-        Math.abs((inv.balanceAmount || 0) - balanceAmount) > 0.001 ||
-        inv.status !== computedStatus
+        Math.abs((inv.paidAmount || 0) - fin.paidAmount) > 0.001 ||
+        Math.abs((inv.balanceAmount || 0) - fin.balanceAmount) > 0.001 ||
+        Math.abs((inv.grandTotal || 0) - fin.grandTotal) > 0.001 ||
+        inv.status !== fin.status
       ) {
-        inv.paidAmount = totalPaid;
-        inv.balanceAmount = balanceAmount;
-        inv.status = computedStatus;
+        inv.grandTotal = fin.grandTotal;
+        inv.paidAmount = fin.paidAmount;
+        inv.balanceAmount = fin.balanceAmount;
+        inv.status = fin.status;
         stateChanged = true;
       }
     }
@@ -950,22 +971,17 @@ class StoreService {
   public addInvoice(invoiceData: Omit<Invoice, 'id' | 'invoiceNumber' | 'createdAt' | 'updatedAt'>): Invoice {
     const count = this.state.invoices.length + 1;
     const year = new Date().getFullYear();
-    const invoiceNumber = `INV-${year}-${String(count).padStart(4, '0')}`;
+    const invoiceNumber = (invoiceData as any).invoiceNumber || `INV-${year}-${String(count).padStart(4, '0')}`;
 
-    const paidAmount = Math.max(0, Number(invoiceData.paidAmount) || 0);
-    const grandTotal = Math.max(0, Number(invoiceData.grandTotal) || 0);
-    const balanceAmount = Math.max(0, Number((grandTotal - paidAmount).toFixed(2)));
-
-    let status: InvoiceStatus = invoiceData.status || 'Issued';
-    if (status !== 'Cancelled' && status !== 'Draft') {
-      if (paidAmount >= grandTotal && grandTotal > 0) {
-        status = 'Paid';
-      } else if (paidAmount > 0) {
-        status = 'Partially Paid';
-      } else {
-        status = 'Issued';
-      }
-    }
+    const fin = calculateInvoiceFinancials(
+      Number(invoiceData.grandTotal) || 0,
+      Number(invoiceData.paidAmount) || 0,
+      invoiceData.status
+    );
+    const paidAmount = fin.paidAmount;
+    const grandTotal = fin.grandTotal;
+    const balanceAmount = fin.balanceAmount;
+    const status = fin.status;
 
     const snapshot = invoiceData.snapshot || this.buildSnapshot(
       invoiceData.templateId || 'inv-modern-blue',
@@ -978,8 +994,9 @@ class StoreService {
 
     const newInvoice: Invoice = {
       ...invoiceData,
-      id: `inv-${Date.now()}`,
+      id: (invoiceData as any).id || `inv-${Date.now()}`,
       invoiceNumber,
+      grandTotal,
       paidAmount,
       balanceAmount,
       status,
@@ -1017,6 +1034,28 @@ class StoreService {
     this.saveLastUsedTemplate('invoice', newInvoice.templateId);
     this.state.invoices.unshift(newInvoice);
     this.saveToStorage();
+
+    try {
+      const LOCAL_INVOICES_KEY = 'vistaar_local_invoices_db';
+      const localInvs = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
+      const idx = localInvs.findIndex((i: any) => i.id === newInvoice.id || i.invoiceNumber === newInvoice.invoiceNumber);
+      const row = {
+        ...newInvoice,
+        invoice_number: newInvoice.invoiceNumber,
+        grand_total: newInvoice.grandTotal,
+        paid_amount: newInvoice.paidAmount,
+        balance_amount: newInvoice.balanceAmount,
+      };
+      if (idx >= 0) {
+        localInvs[idx] = row;
+      } else {
+        localInvs.unshift(row);
+      }
+      safeSaveTenantStorage(LOCAL_INVOICES_KEY, localInvs);
+    } catch {
+      // ignore
+    }
+
     return newInvoice;
   }
 
@@ -1025,26 +1064,24 @@ class StoreService {
     if (invIndex === -1) return null;
 
     const existing = this.state.invoices[invIndex];
-    const paidAmount = updatedData.paidAmount !== undefined ? updatedData.paidAmount : existing.paidAmount;
-    const grandTotal = updatedData.grandTotal !== undefined ? updatedData.grandTotal : existing.grandTotal;
-    const balanceAmount = Math.max(0, Number((grandTotal - paidAmount).toFixed(2)));
-
-    let status = updatedData.status || existing.status;
-    if (status !== 'Cancelled' && status !== 'Draft') {
-      if (paidAmount >= grandTotal && grandTotal > 0) {
-        status = 'Paid';
-      } else if (paidAmount > 0) {
-        status = 'Partially Paid';
-      } else {
-        status = 'Issued';
-      }
-    }
+    const rawPaid = updatedData.paidAmount !== undefined ? updatedData.paidAmount : existing.paidAmount;
+    const rawTotal = updatedData.grandTotal !== undefined ? updatedData.grandTotal : existing.grandTotal;
+    const fin = calculateInvoiceFinancials(
+      Number(rawTotal) || 0,
+      Number(rawPaid) || 0,
+      updatedData.status || existing.status
+    );
+    const paidAmount = fin.paidAmount;
+    const grandTotal = fin.grandTotal;
+    const balanceAmount = fin.balanceAmount;
+    const status = fin.status;
 
     const updatedInvoice: Invoice = {
       ...existing,
       ...updatedData,
       id: existing.id,
       invoiceNumber: existing.invoiceNumber,
+      grandTotal,
       paidAmount,
       balanceAmount,
       status,
@@ -1103,8 +1140,11 @@ class StoreService {
       }
     });
 
-    inv.status = inv.paidAmount >= inv.grandTotal ? 'Paid' : inv.paidAmount > 0 ? 'Partially Paid' : 'Issued';
-    inv.balanceAmount = Math.max(0, Number((inv.grandTotal - inv.paidAmount).toFixed(2)));
+    const fin = calculateInvoiceFinancials(inv.grandTotal, inv.paidAmount, 'Issued');
+    inv.grandTotal = fin.grandTotal;
+    inv.paidAmount = fin.paidAmount;
+    inv.balanceAmount = fin.balanceAmount;
+    inv.status = fin.status;
     inv.updatedAt = new Date().toISOString();
     this.saveToStorage();
     return true;
@@ -1169,10 +1209,10 @@ class StoreService {
     }
 
     // Overpayment protection
-    if (udhari && amount > (udhari.outstandingAmount + 0.05)) {
-      throw new Error(`Amount received (₹${amount.toLocaleString('en-IN')}) cannot be greater than the outstanding balance (₹${udhari.outstandingAmount.toLocaleString('en-IN')}).`);
-    } else if (inv && !udhari && amount > (inv.balanceAmount + 0.05)) {
-      throw new Error(`Amount received (₹${amount.toLocaleString('en-IN')}) cannot be greater than the invoice balance (₹${inv.balanceAmount.toLocaleString('en-IN')}).`);
+    const maxPayable = inv ? inv.balanceAmount : (udhari ? udhari.outstandingAmount : 0);
+    const overpaymentCheck = validatePaymentAmount(maxPayable, amount);
+    if (!overpaymentCheck.valid) {
+      throw new Error(overpaymentCheck.error);
     }
 
     const customerName = data.customerName || inv?.customerName || udhari?.customerNameSnapshot || 'Customer';
@@ -1196,9 +1236,8 @@ class StoreService {
     };
     const existingPayIdx = this.state.payments.findIndex(
       (p) =>
-        (data.paymentId && p.id === data.paymentId) ||
-        (data.paymentCode && p.paymentNumber === data.paymentCode) ||
-        (invoiceNumber && p.invoiceNumber === invoiceNumber && Number(p.amount) === amount && p.date === payDate)
+        (data.paymentId && (p.id === data.paymentId || p.paymentNumber === data.paymentId)) ||
+        (data.paymentCode && (p.paymentNumber === data.paymentCode || p.id === data.paymentCode))
     );
     if (existingPayIdx >= 0) {
       this.state.payments[existingPayIdx] = newPayment;
@@ -1220,49 +1259,87 @@ class StoreService {
           sumPaid += Number(p.amount) || 0;
         }
       }
-      const updatedPaid = Number(sumPaid.toFixed(2));
-      const updatedBalance = Math.max(0, Number((inv.grandTotal - updatedPaid).toFixed(2)));
-      const newStatus: InvoiceStatus = (Math.abs(inv.grandTotal - updatedPaid) < 0.01 || updatedBalance <= 0)
-        ? 'Paid'
-        : (updatedPaid > 0 ? 'Partially Paid' : inv.status);
+      const fin = calculateInvoiceFinancials(inv.grandTotal, sumPaid);
 
-      inv.paidAmount = updatedPaid;
-      inv.balanceAmount = updatedBalance;
-      inv.status = newStatus;
+      inv.grandTotal = fin.grandTotal;
+      inv.paidAmount = fin.paidAmount;
+      inv.balanceAmount = fin.balanceAmount;
+      inv.status = fin.status;
       inv.updatedAt = now;
+
+      try {
+        const LOCAL_INVOICES_KEY = 'vistaar_local_invoices_db';
+        const localInvs = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
+        const idx = localInvs.findIndex((i: any) => i.id === inv!.id || i.invoiceNumber === inv!.invoiceNumber || i.invoice_number === inv!.invoiceNumber);
+        if (idx >= 0) {
+          localInvs[idx] = {
+            ...localInvs[idx],
+            paidAmount: inv.paidAmount,
+            paid_amount: inv.paidAmount,
+            balanceAmount: inv.balanceAmount,
+            balance_amount: inv.balanceAmount,
+            status: inv.status,
+            updatedAt: now,
+          };
+          safeSaveTenantStorage(LOCAL_INVOICES_KEY, localInvs);
+        }
+      } catch {
+        // ignore
+      }
     }
 
-    // 5. Update or link Udhari Record: Recompute from authoritative payments ledger
-    if (udhari) {
-      const matchingPayments = this.state.payments.filter((p) => {
-        if (udhari!.invoiceId && p.invoiceId === udhari!.invoiceId) return true;
-        if (p.invoiceNumber && udhari!.id === `UD-${p.invoiceNumber}`) return true;
-        if (p.invoiceNumber && udhari!.notes?.includes(p.invoiceNumber)) return true;
-        if (p.udhariId && p.udhariId === udhari!.id) return true;
-        return false;
-      });
-      const seenUdhariPayKeys = new Set<string>();
-      let sumUdhariPaid = 0;
-      for (const p of matchingPayments) {
-        const key = p.paymentNumber || p.id || `${p.date}-${p.amount}`;
-        if (!seenUdhariPayKeys.has(key)) {
-          seenUdhariPayKeys.add(key);
-          sumUdhariPaid += Number(p.amount) || 0;
-        }
-      }
-      const updatedRec = Number(sumUdhariPaid.toFixed(2));
-      const updatedOut = Math.max(0, Number((udhari.originalAmount - updatedRec).toFixed(2)));
-      const udStatus = updatedOut <= 0.01 ? 'PAID' : (updatedRec > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+    // 5. Update or AUTO-CREATE Udhari Record: Synchronized directly with Invoice
+    const effectiveTotal = inv ? inv.grandTotal : (udhari ? udhari.originalAmount : amount);
+    const effectivePaid = inv ? inv.paidAmount : (udhari ? Number((Number(udhari.totalReceived || 0) + amount).toFixed(2)) : amount);
+    const udFin = calculateUdhariFinancials(effectiveTotal, effectivePaid, udhari?.dueDate || inv?.dueDate);
 
-      udhari.totalReceived = updatedRec;
-      udhari.outstandingAmount = updatedOut;
-      udhari.status = udStatus as any;
+    if (udhari) {
+      udhari.originalAmount = udFin.originalAmount;
+      udhari.totalReceived = udFin.totalReceived;
+      udhari.outstandingAmount = udFin.outstandingAmount;
+      udhari.status = udFin.status;
       udhari.updatedAt = now;
       if (inv?.id && !udhari.invoiceId) {
         udhari.invoiceId = inv.id;
       }
+    } else if (inv) {
+      // Automatic Udhari record creation for invoice receivables
+      udhari = {
+        id: `UD-${inv.invoiceNumber}`,
+        invoiceId: inv.id,
+        customerId: inv.customerId || data.customerId,
+        customerNameSnapshot: inv.customerName || customerName,
+        phoneSnapshot: (inv.customerPhone || data.customerPhone || '9999999999').trim(),
+        originalAmount: udFin.originalAmount,
+        totalReceived: udFin.totalReceived,
+        outstandingAmount: udFin.outstandingAmount,
+        dueDate: inv.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
+        notes: `Invoice #${inv.invoiceNumber}`,
+        status: udFin.status,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.state.udharis.unshift(udhari);
+    }
 
-      // Record Udhari payment history
+    if (udhari) {
+      try {
+        const LOCAL_UDHARI_KEY = 'vistaar_local_udharis_db';
+        const localUdharis = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
+        const uIdx = localUdharis.findIndex((u: any) => u.id === udhari!.id || (udhari!.invoiceId && u.invoiceId === udhari!.invoiceId));
+        if (uIdx >= 0) {
+          localUdharis[uIdx] = { ...localUdharis[uIdx], ...udhari };
+        } else {
+          localUdharis.unshift(udhari);
+        }
+        safeSaveTenantStorage(LOCAL_UDHARI_KEY, localUdharis);
+      } catch {
+        // ignore
+      }
+    }
+
+    // Record Udhari payment history
+    if (udhari) {
       const udhariPay: UdhariPaymentRecord = {
         id: paymentNumber,
         udhariId: udhari.id,
@@ -1282,6 +1359,82 @@ class StoreService {
         this.state.udhariPayments[existingUdhariPayIdx] = udhariPay;
       } else {
         this.state.udhariPayments.unshift(udhariPay);
+      }
+    }
+
+    // 6. Synchronize Daybook SALE Entry for Invoice
+    if (inv) {
+      try {
+        const LOCAL_DAYBOOK_KEY = 'vistaar_local_daybook_db';
+        const localDaybook = safeGetTenantStorage<any>(LOCAL_DAYBOOK_KEY, []);
+        const dbFin = calculateDaybookFinancials(inv.grandTotal, inv.paidAmount);
+        const saleIdx = localDaybook.findIndex(
+          (t: any) => t.referenceType === 'INVOICE' && (t.referenceId === inv.id || t.referenceNumber === inv.invoiceNumber)
+        );
+        const entryNumber = `ACC-${inv.invoiceNumber}`;
+
+        const saleRow: any = {
+          id: saleIdx >= 0 ? localDaybook[saleIdx].id : `db-${Date.now()}`,
+          workspaceId: (inv as any).workspaceId || '',
+          transactionCode: entryNumber,
+          transactionDate: inv.date || payDate,
+          transactionType: 'SALE',
+          direction: 'IN',
+          amount: dbFin.amount, // Authoritative Inflow: cumulative cash collected
+          totalAmount: dbFin.totalAmount, // Grand Total
+          remainingAmount: dbFin.remainingAmount, // Outstanding remaining
+          paymentStatus: dbFin.paymentStatus,
+          paymentMode: data.paymentMethod || 'Cash',
+          partyType: 'customer',
+          partyId: inv.customerId,
+          partyName: inv.customerName,
+          referenceType: 'INVOICE',
+          referenceId: inv.id,
+          referenceNumber: inv.invoiceNumber,
+          description: `Invoice #${inv.invoiceNumber}`,
+          status: 'COMPLETED',
+          createdAt: inv.createdAt || now,
+          updatedAt: now,
+        };
+
+        if (saleIdx >= 0) {
+          localDaybook[saleIdx] = { ...localDaybook[saleIdx], ...saleRow };
+        } else {
+          localDaybook.unshift(saleRow);
+        }
+        safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, localDaybook);
+      } catch (dbErr) {
+        console.warn('[recordUnifiedCustomerPayment] Daybook sync notice:', dbErr);
+      }
+    }
+
+    // 7. Synchronize Cashbook Entry for Cash Inflow
+    if (amount > 0) {
+      try {
+        const LOCAL_CASHBOOK_KEY = 'vistaar_local_cashbook_entries_db';
+        const localCashbook = safeGetTenantStorage<any>(LOCAL_CASHBOOK_KEY, []);
+        const exists = localCashbook.some((cb: any) => cb.sourceId === paymentId || cb.referenceNumber === paymentNumber);
+        if (!exists) {
+          localCashbook.unshift({
+            id: `cb-${Date.now()}`,
+            workspaceId: (inv as any)?.workspaceId || (inv as any)?.companyId || '',
+            entryNumber: `CB-${paymentNumber}`,
+            entryDate: payDate,
+            sourceType: 'INVOICE_PAYMENT',
+            sourceId: paymentId,
+            referenceNumber: invoiceNumber || paymentNumber,
+            direction: 'IN',
+            amount,
+            paymentMethod: data.paymentMethod || 'Cash',
+            partyName: customerName,
+            description: `Payment received for ${invoiceNumber || customerName}`,
+            status: 'COMPLETED',
+            createdAt: now,
+          });
+          safeSaveTenantStorage(LOCAL_CASHBOOK_KEY, localCashbook);
+        }
+      } catch (cbErr) {
+        console.warn('[recordUnifiedCustomerPayment] Cashbook sync notice:', cbErr);
       }
     }
 
@@ -1622,22 +1775,22 @@ class StoreService {
 
     const effectiveDueDate = params.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0];
     const isCleared = params.balanceAmount <= 0.01;
-    const udhariStatus = isCleared ? 'PAID' : (params.paidAmount > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+    const udFin = calculateUdhariFinancials(params.grandTotal, params.paidAmount, effectiveDueDate);
 
     let udhari = this.state.udharis.find(
-      (u) => u.invoiceId === params.invoiceId || u.id === `UD-${params.invoiceNumber}`
+      (u) => u.invoiceId === params.invoiceId || u.id === `UD-${params.invoiceNumber}` || (u.notes && u.notes.includes(params.invoiceNumber))
     );
 
     const now = new Date().toISOString();
 
     if (udhari) {
       udhari.invoiceId = params.invoiceId;
-      udhari.totalReceived = params.paidAmount;
-      udhari.outstandingAmount = Math.max(0, params.balanceAmount);
-      udhari.status = udhariStatus;
+      udhari.originalAmount = udFin.originalAmount;
+      udhari.totalReceived = udFin.totalReceived;
+      udhari.outstandingAmount = udFin.outstandingAmount;
+      udhari.status = udFin.status;
       udhari.updatedAt = now;
       if (!isCleared) {
-        udhari.originalAmount = params.grandTotal;
         udhari.dueDate = effectiveDueDate;
       }
     } else if (!isCleared) {
@@ -1647,12 +1800,12 @@ class StoreService {
         customerId: params.customerId,
         customerNameSnapshot: params.customerName.trim(),
         phoneSnapshot: (params.customerPhone || '9999999999').trim(),
-        originalAmount: params.grandTotal,
-        totalReceived: params.paidAmount,
-        outstandingAmount: params.balanceAmount,
+        originalAmount: udFin.originalAmount,
+        totalReceived: udFin.totalReceived,
+        outstandingAmount: udFin.outstandingAmount,
         dueDate: effectiveDueDate,
         notes: `Invoice #${params.invoiceNumber}`,
-        status: udhariStatus,
+        status: udFin.status,
         createdAt: now,
         updatedAt: now,
       };
@@ -1698,6 +1851,22 @@ class StoreService {
           createdAt: now,
         };
         this.state.followUps.unshift(followUp);
+      }
+    }
+
+    if (udhari) {
+      try {
+        const LOCAL_UDHARI_KEY = 'vistaar_local_udharis_db';
+        const localUdharis = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
+        const uIdx = localUdharis.findIndex((u: any) => u.id === udhari!.id || (udhari!.invoiceId && u.invoiceId === udhari!.invoiceId));
+        if (uIdx >= 0) {
+          localUdharis[uIdx] = { ...localUdharis[uIdx], ...udhari };
+        } else {
+          localUdharis.unshift(udhari);
+        }
+        safeSaveTenantStorage(LOCAL_UDHARI_KEY, localUdharis);
+      } catch {
+        // ignore
       }
     }
 
