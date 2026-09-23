@@ -99,21 +99,32 @@ export function calculateUdhariFinancials(
 }
 
 /**
- * Calculates normalized Daybook sale financials from authoritative invoice numbers.
+ * Calculates normalized Daybook sale/payment financials from authoritative numbers.
+ * 
+ * Rules:
+ * - totalAmount = invoice.grand_total (never payment.amount)
+ * - amount = current transaction inflow (payment.amount)
+ * - remainingAmount = max(0, totalAmount - cumulativePaid)
  */
 export function calculateDaybookFinancials(
   totalAmountInput?: number | null,
-  inflowAmountInput?: number | null
+  inflowAmountInput?: number | null,
+  cumulativePaidInput?: number | null
 ): DaybookFinancials {
   const totalAmount = Math.max(0, Number((Number(totalAmountInput) || 0).toFixed(2)));
   const rawInflow = Math.max(0, Number((Number(inflowAmountInput) || 0).toFixed(2)));
   const amount = Math.min(totalAmount, rawInflow);
-  const remainingAmount = Math.max(0, Number((totalAmount - amount).toFixed(2)));
+  
+  const effectiveCumulativePaid = cumulativePaidInput !== undefined && cumulativePaidInput !== null
+    ? Math.max(0, Number((Number(cumulativePaidInput) || 0).toFixed(2)))
+    : amount;
+
+  const remainingAmount = Math.max(0, Number((totalAmount - effectiveCumulativePaid).toFixed(2)));
 
   let paymentStatus: 'PAID' | 'PARTIALLY PAID' | 'UNPAID' = 'UNPAID';
   if (remainingAmount <= 0.01 && totalAmount > 0) {
     paymentStatus = 'PAID';
-  } else if (amount > 0) {
+  } else if (effectiveCumulativePaid > 0) {
     paymentStatus = 'PARTIALLY PAID';
   } else {
     paymentStatus = 'UNPAID';

@@ -1064,6 +1064,43 @@ class StoreService {
         localInvs.unshift(row);
       }
       safeSaveTenantStorage(LOCAL_INVOICES_KEY, localInvs);
+
+      // Synchronize Daybook SALE entry for this invoice
+      const LOCAL_DAYBOOK_KEY = 'vistaar_local_daybook_db';
+      const localDaybook = safeGetTenantStorage<any>(LOCAL_DAYBOOK_KEY, []);
+      const saleIdx = localDaybook.findIndex(
+        (t: any) => t.referenceType === 'INVOICE' && (t.referenceId === newInvoice.id || t.referenceNumber === newInvoice.invoiceNumber)
+      );
+      const pStatus = newInvoice.balanceAmount <= 0.01 ? 'PAID' : (newInvoice.paidAmount > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+      const saleEntry = {
+        id: `db-sale-${newInvoice.id}`,
+        workspaceId: (newInvoice as any).workspaceId || '',
+        transactionCode: newInvoice.invoiceNumber,
+        transactionDate: newInvoice.date || new Date().toISOString().split('T')[0],
+        transactionType: 'SALE',
+        direction: 'IN',
+        amount: newInvoice.paidAmount,
+        totalAmount: newInvoice.grandTotal,
+        remainingAmount: newInvoice.balanceAmount,
+        paymentStatus: pStatus,
+        paymentMode: 'Cash',
+        partyType: 'customer',
+        partyId: newInvoice.customerId,
+        partyName: newInvoice.customerName,
+        referenceType: 'INVOICE',
+        referenceId: newInvoice.id,
+        referenceNumber: newInvoice.invoiceNumber,
+        description: `Invoice #${newInvoice.invoiceNumber}`,
+        status: 'COMPLETED',
+        createdAt: newInvoice.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      if (saleIdx >= 0) {
+        localDaybook[saleIdx] = { ...localDaybook[saleIdx], ...saleEntry, id: localDaybook[saleIdx].id };
+      } else {
+        localDaybook.unshift(saleEntry);
+      }
+      safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, localDaybook);
     } catch {
       // ignore
     }
@@ -1374,46 +1411,88 @@ class StoreService {
       }
     }
 
-    // 6. Synchronize Daybook SALE Entry for Invoice
+    // 6. Synchronize Daybook Entries for Payment & Invoice
     if (inv) {
       try {
         const LOCAL_DAYBOOK_KEY = 'vistaar_local_daybook_db';
         const localDaybook = safeGetTenantStorage<any>(LOCAL_DAYBOOK_KEY, []);
-        const dbFin = calculateDaybookFinancials(inv.grandTotal, inv.paidAmount);
-        const saleIdx = localDaybook.findIndex(
-          (t: any) => t.referenceType === 'INVOICE' && (t.referenceId === inv.id || t.referenceNumber === inv.invoiceNumber)
-        );
-        const entryNumber = `ACC-${inv.invoiceNumber}`;
+        const pStatus = inv.balanceAmount <= 0.01 ? 'PAID' : (inv.paidAmount > 0 ? 'PARTIALLY PAID' : 'UNPAID');
 
-        const saleRow: any = {
-          id: saleIdx >= 0 ? localDaybook[saleIdx].id : `db-${Date.now()}`,
+        // 6a. Record the Payment Inflow transaction on payDate
+        const payEntryNumber = paymentNumber;
+        const paymentRow: any = {
+          id: `db-pay-${paymentId}`,
           workspaceId: (inv as any).workspaceId || '',
-          transactionCode: entryNumber,
-          transactionDate: inv.date || payDate,
-          transactionType: 'SALE',
+          transactionCode: payEntryNumber,
+          transactionDate: payDate,
+          transactionType: 'CUSTOMER_PAYMENT',
           direction: 'IN',
-          amount: dbFin.amount, // Authoritative Inflow: cumulative cash collected
-          totalAmount: dbFin.totalAmount, // Grand Total
-          remainingAmount: dbFin.remainingAmount, // Outstanding remaining
-          paymentStatus: dbFin.paymentStatus,
+          amount: amount, // Inflow = actual money received in this specific transaction
+          totalAmount: inv.grandTotal, // Authoritative Invoice Grand Total
+          remainingAmount: inv.balanceAmount, // Outstanding remaining after this payment
+          paymentStatus: pStatus,
           paymentMode: data.paymentMethod || 'Cash',
           partyType: 'customer',
           partyId: inv.customerId,
           partyName: inv.customerName,
-          referenceType: 'INVOICE',
-          referenceId: inv.id,
+          referenceType: 'PAYMENT',
+          referenceId: paymentId,
           referenceNumber: inv.invoiceNumber,
           description: `Invoice #${inv.invoiceNumber}`,
+          notes: data.notes || (data.reference ? `Ref: ${data.reference}` : undefined),
           status: 'COMPLETED',
-          createdAt: inv.createdAt || now,
+          createdAt: now,
           updatedAt: now,
         };
 
-        if (saleIdx >= 0) {
-          localDaybook[saleIdx] = { ...localDaybook[saleIdx], ...saleRow };
+        const existingPayIdx = localDaybook.findIndex(
+          (t: any) => t.referenceType === 'PAYMENT' && t.referenceId === paymentId
+        );
+        if (existingPayIdx >= 0) {
+          localDaybook[existingPayIdx] = { ...localDaybook[existingPayIdx], ...paymentRow, id: localDaybook[existingPayIdx].id };
         } else {
-          localDaybook.unshift(saleRow);
+          localDaybook.unshift(paymentRow);
         }
+
+        // 6b. Keep any existing Daybook SALE entry synchronized with latest balance
+        const saleIdx = localDaybook.findIndex(
+          (t: any) => t.referenceType === 'INVOICE' && (t.referenceId === inv.id || t.referenceNumber === inv.invoiceNumber)
+        );
+        if (saleIdx >= 0) {
+          localDaybook[saleIdx] = {
+            ...localDaybook[saleIdx],
+            totalAmount: inv.grandTotal,
+            remainingAmount: inv.balanceAmount,
+            amount: inv.paidAmount,
+            paymentStatus: pStatus,
+            updatedAt: now,
+          };
+        } else {
+          localDaybook.push({
+            id: `db-sale-${inv.id}`,
+            workspaceId: (inv as any).workspaceId || '',
+            transactionCode: inv.invoiceNumber,
+            transactionDate: inv.date || payDate,
+            transactionType: 'SALE',
+            direction: 'IN',
+            amount: inv.paidAmount,
+            totalAmount: inv.grandTotal,
+            remainingAmount: inv.balanceAmount,
+            paymentStatus: pStatus,
+            paymentMode: data.paymentMethod || 'Cash',
+            partyType: 'customer',
+            partyId: inv.customerId,
+            partyName: inv.customerName,
+            referenceType: 'INVOICE',
+            referenceId: inv.id,
+            referenceNumber: inv.invoiceNumber,
+            description: `Invoice #${inv.invoiceNumber}`,
+            status: 'COMPLETED',
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+
         safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, localDaybook);
       } catch (dbErr) {
         console.warn('[recordUnifiedCustomerPayment] Daybook sync notice:', dbErr);

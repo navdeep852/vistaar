@@ -602,7 +602,13 @@ export const DaybookView: React.FC = () => {
                     const isOut = tx.direction === 'OUT';
                     const isNonCash = tx.direction === 'NON_CASH';
                     const isVoided = tx.status === 'VOID' || tx.paymentStatus === 'CANCELLED';
-                    const isSale = tx.transactionType === 'SALE' || tx.referenceType === 'INVOICE' || tx.referenceType === 'COUNTER_SALE';
+                    const isDocumentLinked =
+                      (tx.totalAmount !== null && tx.totalAmount !== undefined && tx.totalAmount > 0) ||
+                      tx.transactionType === 'SALE' ||
+                      tx.transactionType === 'CUSTOMER_PAYMENT' ||
+                      tx.referenceType === 'INVOICE' ||
+                      tx.referenceType === 'COUNTER_SALE' ||
+                      tx.referenceType === 'PAYMENT';
 
                     return (
                       <tr
@@ -642,9 +648,9 @@ export const DaybookView: React.FC = () => {
                           {tx.description || tx.notes || '—'}
                         </td>
 
-                        {/* Total: Rule 23 — Strictly filled for Invoice and Counter Sale only */}
+                        {/* Total: Authoritative Document Grand Total (Invoice / Counter Sale) */}
                         <td className="px-4 py-4 text-right whitespace-nowrap font-mono font-bold text-xs">
-                          {isSale ? (
+                          {isDocumentLinked && (tx.totalAmount !== null && tx.totalAmount !== undefined ? tx.totalAmount > 0 : tx.referenceType === 'COUNTER_SALE') ? (
                             <span className="text-slate-900 dark:text-slate-100 font-semibold">
                               {formatCurrency(tx.totalAmount !== null && tx.totalAmount !== undefined ? tx.totalAmount : tx.amount)}
                             </span>
@@ -653,7 +659,7 @@ export const DaybookView: React.FC = () => {
                           )}
                         </td>
 
-                        {/* Inflow (+₹): Actual money received */}
+                        {/* Inflow (+₹): Actual money received in this specific transaction */}
                         <td className="px-4 py-4 text-right whitespace-nowrap font-mono font-bold text-sm">
                           {!isOut && !isNonCash && !isVoided && tx.amount > 0 ? (
                             <span className="text-emerald-600 dark:text-emerald-400">
@@ -675,9 +681,9 @@ export const DaybookView: React.FC = () => {
                           )}
                         </td>
 
-                        {/* Remaining Amount: Rule 24 — Remaining for Sales, '—' for others */}
+                        {/* Remaining Amount: Invoice Grand Total - Cumulative Payments */}
                         <td className="px-4 py-4 text-right whitespace-nowrap font-mono font-bold text-xs">
-                          {isSale ? (
+                          {isDocumentLinked ? (
                             tx.remainingAmount !== null && tx.remainingAmount !== undefined ? (
                               tx.remainingAmount > 0 ? (
                                 <span className="text-amber-600 dark:text-amber-400 font-semibold">{formatCurrency(tx.remainingAmount)}</span>
@@ -741,7 +747,13 @@ export const DaybookView: React.FC = () => {
               {transactions.map((tx) => {
                 const isOut = tx.direction === 'OUT';
                 const isVoided = tx.status === 'VOID' || tx.paymentStatus === 'CANCELLED';
-                const isSale = tx.transactionType === 'SALE' || tx.referenceType === 'INVOICE' || tx.referenceType === 'COUNTER_SALE';
+                const isDocumentLinked =
+                  (tx.totalAmount !== null && tx.totalAmount !== undefined && tx.totalAmount > 0) ||
+                  tx.transactionType === 'SALE' ||
+                  tx.transactionType === 'CUSTOMER_PAYMENT' ||
+                  tx.referenceType === 'INVOICE' ||
+                  tx.referenceType === 'COUNTER_SALE' ||
+                  tx.referenceType === 'PAYMENT';
 
                 return (
                   <div
@@ -764,11 +776,11 @@ export const DaybookView: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Sale Totals and Balance for Sales */}
-                    {isSale && (
+                    {/* Document Totals and Balance */}
+                    {isDocumentLinked && (tx.totalAmount !== null && tx.totalAmount !== undefined ? tx.totalAmount > 0 : tx.referenceType === 'COUNTER_SALE') && (
                       <div className="grid grid-cols-2 gap-2 p-2 bg-slate-50 dark:bg-slate-800/40 rounded-xl text-[11px]">
                         <div>
-                          <span className="text-slate-400 block font-semibold uppercase text-[9px]">Sale Total</span>
+                          <span className="text-slate-400 block font-semibold uppercase text-[9px]">Document Total</span>
                           <span className="font-bold text-slate-800 dark:text-slate-200 font-mono">
                             {formatCurrency(tx.totalAmount !== null && tx.totalAmount !== undefined ? tx.totalAmount : tx.amount)}
                           </span>

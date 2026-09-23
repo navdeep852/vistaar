@@ -385,9 +385,58 @@ export class CustomerPaymentService {
             if (dbInvRow) {
               try {
                 const pStatusTag = updatedInvBal <= 0.01 ? 'PAID' : (updatedInvPaid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
-                const { data: existingDaybookSale } = await supabase
+                const paymentRefId = paymentId || dbPaymentId;
+
+                // 6a. Record authoritative Daybook transaction for this specific payment on paymentDate
+                const paymentDaybookPayload: any = {
+                  workspace_id: wsId,
+                  transaction_code: paymentCode,
+                  transaction_date: paymentDate,
+                  transaction_type: 'CUSTOMER_PAYMENT',
+                  direction: 'IN',
+                  amount: amount, // Inflow = actual money received in this payment transaction
+                  total_amount: updatedInvTotal || Number(dbInvRow.grand_total) || 0, // Authoritative Invoice Grand Total
+                  remaining_amount: updatedInvBal, // Remaining balance after this payment
+                  payment_status: pStatusTag,
+                  payment_mode: paymentMethod,
+                  party_type: 'customer',
+                  party_id: dbInvRow.customer_id || resolvedCustomerId || null,
+                  party_name: customerName,
+                  reference_type: 'PAYMENT',
+                  reference_id: paymentRefId,
+                  reference_number: dbInvRow.invoice_number,
+                  description: `Invoice #${dbInvRow.invoice_number}`,
+                  notes: payload.reference ? `Ref: ${payload.reference}` : payload.notes,
+                  status: 'COMPLETED',
+                  updated_at: new Date().toISOString(),
+                };
+
+                const { data: existingDaybookPay } = await supabase
                   .from('daybook_transactions')
                   .select('id')
+                  .eq('workspace_id', wsId)
+                  .eq('reference_type', 'PAYMENT')
+                  .eq('reference_id', paymentRefId)
+                  .maybeSingle();
+
+                if (existingDaybookPay?.id) {
+                  await supabase
+                    .from('daybook_transactions')
+                    .update(paymentDaybookPayload)
+                    .eq('id', existingDaybookPay.id);
+                } else {
+                  if (isValidUuid(paymentRefId)) {
+                    paymentDaybookPayload.id = paymentRefId;
+                  }
+                  await supabase
+                    .from('daybook_transactions')
+                    .insert([paymentDaybookPayload]);
+                }
+
+                // 6b. Keep existing Daybook SALE entry synchronized with latest balance
+                const { data: existingDaybookSale } = await supabase
+                  .from('daybook_transactions')
+                  .select('id, amount, transaction_date')
                   .eq('workspace_id', wsId)
                   .eq('reference_type', 'INVOICE')
                   .or(`reference_id.eq.${dbInvRow.id},reference_number.eq.${dbInvRow.invoice_number}`)
@@ -397,36 +446,12 @@ export class CustomerPaymentService {
                   await supabase
                     .from('daybook_transactions')
                     .update({
-                      amount: updatedInvPaid,
                       total_amount: updatedInvTotal,
                       remaining_amount: updatedInvBal,
                       payment_status: pStatusTag,
                       updated_at: new Date().toISOString(),
                     })
                     .eq('id', existingDaybookSale.id);
-                } else {
-                  await supabase
-                    .from('daybook_transactions')
-                    .insert([{
-                      id: crypto.randomUUID ? crypto.randomUUID() : undefined,
-                      workspace_id: wsId,
-                      transaction_code: dbInvRow.invoice_number,
-                      transaction_date: dbInvRow.date || paymentDate,
-                      transaction_type: 'SALE',
-                      direction: 'IN',
-                      amount: updatedInvPaid,
-                      total_amount: updatedInvTotal,
-                      remaining_amount: updatedInvBal,
-                      payment_status: pStatusTag,
-                      payment_mode: paymentMethod,
-                      party_type: 'customer',
-                      party_id: dbInvRow.customer_id || resolvedCustomerId || null,
-                      party_name: customerName,
-                      reference_type: 'INVOICE',
-                      reference_id: dbInvRow.id,
-                      reference_number: dbInvRow.invoice_number,
-                      description: `Invoice #${dbInvRow.invoice_number}`,
-                    }]);
                 }
               } catch (dbErr) {
                 console.warn('[customerPaymentService] Daybook invoice sync notice:', dbErr);
