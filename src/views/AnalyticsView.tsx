@@ -1,15 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   ArrowLeft,
-  Calendar,
   RefreshCw,
   AlertCircle,
   TrendingUp,
   DollarSign,
-  Receipt,
   Scale,
   CreditCard,
-  PieChart,
   BarChart3,
   ArrowUpRight,
 } from 'lucide-react';
@@ -18,7 +15,6 @@ import {
   ResolvedDateRange,
   resolveDateRange,
   getIstTodayString,
-  formatReportingPeriodSubtitle,
   formatIndianDate,
 } from '../lib/dateRange';
 import { formatInr } from '../lib/currency';
@@ -156,6 +152,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateTab }) =
           <div className="flex items-center gap-1 overflow-x-auto no-scrollbar p-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60">
             {[
               { id: 'today', label: 'Today' },
+              { id: 'yesterday', label: 'Yesterday' },
               { id: 'week', label: 'This Week' },
               { id: 'month', label: 'This Month' },
               { id: 'custom', label: 'Custom Range' },

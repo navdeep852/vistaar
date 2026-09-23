@@ -1,10 +1,5 @@
-import React, { useMemo } from 'react';
-import { ResponsiveContainer, AreaChart, Area, YAxis } from 'recharts';
-import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
-
-export interface SparklinePoint {
-  val: number;
-}
+import React from 'react';
+import { TrendingUp, TrendingDown } from 'lucide-react';
 
 export interface KpiCardProps {
   title: string;
@@ -26,25 +21,19 @@ export const KpiCard: React.FC<KpiCardProps> = ({
   subValue,
   deltaPercent,
   deltaLabel = 'vs previous',
-  sparklineData,
   color = '#118DFF',
   icon,
   footer,
   loading = false,
   onClick,
 }) => {
-  const chartData = useMemo(() => {
-    const raw = sparklineData && sparklineData.length > 0 ? sparklineData : [10, 15, 12, 18, 20, 25, 22, 30];
-    return raw.map((v, i) => ({ i, val: isNaN(Number(v)) ? 0 : Number(v) }));
-  }, [sparklineData]);
-
   const hasDelta = deltaPercent !== undefined && deltaPercent !== null;
   const isPositive = (deltaPercent ?? 0) >= 0;
 
   return (
     <div
       onClick={onClick}
-      className={`bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between min-h-[175px] relative overflow-hidden group ${
+      className={`bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between min-h-[140px] relative overflow-hidden group ${
         onClick ? 'cursor-pointer hover:border-slate-300 dark:hover:border-slate-700' : ''
       }`}
     >
@@ -104,36 +93,13 @@ export const KpiCard: React.FC<KpiCardProps> = ({
         )}
       </div>
 
-      {/* Tiny Power BI Area Sparkline at the bottom of the card */}
-      <div className="h-9 -mx-5 -mb-2 mt-1 relative z-0 opacity-80 group-hover:opacity-100 transition-opacity">
-        <ResponsiveContainer width="100%" height="100%" debounce={50} minHeight={28}>
-          <AreaChart data={chartData} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
-            <YAxis hide domain={[0, 'auto']} />
-            <defs>
-              <linearGradient id={`kpi-spark-${title.replace(/\s+/g, '')}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={color} stopOpacity={0.35} />
-                <stop offset="100%" stopColor={color} stopOpacity={0.0} />
-              </linearGradient>
-            </defs>
-            <Area
-              type="monotone"
-              dataKey="val"
-              stroke={color}
-              strokeWidth={1.75}
-              fill={`url(#kpi-spark-${title.replace(/\s+/g, '')})`}
-              isAnimationActive={true}
-              animationDuration={800}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-
       {/* Optional Card Footer */}
       {footer && (
-        <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 text-xs text-slate-500 dark:text-slate-400 z-10">
+        <div className="pt-2.5 mt-auto border-t border-slate-100 dark:border-slate-800/80 text-xs text-slate-500 dark:text-slate-400 z-10">
           {footer}
         </div>
       )}
     </div>
   );
 };
+

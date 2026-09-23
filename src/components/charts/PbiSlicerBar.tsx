@@ -28,9 +28,8 @@ export const PbiSlicerBar: React.FC<PbiSlicerBarProps> = ({
   const presets: Array<{ id: DatePresetType; label: string }> = [
     { id: 'today', label: 'Today' },
     { id: 'yesterday', label: 'Yesterday' },
-    { id: 'week', label: '7D' },
-    { id: 'month', label: '30D' },
-    { id: 'last_month', label: 'Last Month' },
+    { id: 'week', label: 'This Week' },
+    { id: 'month', label: 'This Month' },
     { id: 'custom', label: 'Custom' },
   ];
 
@@ -44,7 +43,7 @@ export const PbiSlicerBar: React.FC<PbiSlicerBarProps> = ({
           </div>
           <div>
             <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">
-              Reporting Scope (Slicer)
+              KPI Reporting Scope
             </span>
             <div className="flex items-center gap-2">
               <span className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-slate-100">

@@ -1,10 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   DollarSign,
-  FileText,
-  AlertTriangle,
   Plus,
-  ArrowUpRight,
   Clock,
   CheckCircle2,
   Receipt,
@@ -16,13 +13,11 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { store } from '../services/store';
-import { Product, Invoice, FollowUp } from '../types';
+import { Invoice, FollowUp } from '../types';
 import {
-  productService,
   salesAnalyticsService,
   SalesMetrics,
   udhariService,
-  quotationService,
 } from '../services/supabase';
 import {
   enterpriseAnalyticsService,
@@ -40,14 +35,6 @@ import { formatInr } from '../lib/currency';
 import {
   PbiSlicerBar,
   KpiCard,
-  SalesTrendComboChart,
-  ChannelDonutChart,
-  ReceivablesAgingChart,
-  TopProductsBarChart,
-  InventoryHealthGauge,
-  ProfitabilityWaterfallChart,
-  QuotationFunnelChart,
-  ExpenseAnalysisChart,
   ExecutiveSummaryCards,
   PBI_PALETTE,
   PBI_SEMANTIC,
@@ -128,9 +115,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const [invoices, setInvoices] = useState<Invoice[]>(store.getInvoices());
   const [followUps, setFollowUps] = useState<FollowUp[]>(store.getFollowUps());
-  const [lowStockProducts, setLowStockProducts] = useState<Product[]>([]);
-  const [lowStockCount, setLowStockCount] = useState<number>(0);
-  const [openQuotationsCount, setOpenQuotationsCount] = useState<number>(0);
 
   const [salesMetrics, setSalesMetrics] = useState<SalesMetrics>({
     totalSales: 0,
@@ -161,12 +145,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const [analyticsData, setAnalyticsData] = useState<EnterpriseAnalyticsData | null>(null);
 
-  // Power BI Cross-Filtering State
-  const [crossFilter, setCrossFilter] = useState<{
-    type: 'channel' | 'product' | 'period' | 'bucket';
-    value: string;
-  } | null>(null);
-
   // Authoritative Data Fetching Pipeline (Guarded against re-entrant fetches)
   const loadDashboardData = useCallback(async (forceFresh = false) => {
     if (isFetchingRef.current) return;
@@ -188,20 +166,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       // 2. Outstanding Udhari
       const udhariPromise = udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId);
 
-      // 3. Open Quotations
-      const quotationsPromise = quotationService.getOpenQuotationsCountAsOf(dateRange.endDateStr, wsId);
-
-      // 4. Low Stock Products
-      const lowStockPromise = productService.getLowStockProductsAsOf(dateRange.endDateStr, wsId);
-
-      // 5. Enterprise Analytics Overview (Power BI visuals data - strictly read-only)
+      // 3. Enterprise Analytics Overview (kpis & signals - strictly read-only)
       const analyticsPromise = enterpriseAnalyticsService.getAnalyticsOverview(dateRange, forceFresh);
 
-      const [smRes, umRes, qtRes, lsRes, anRes] = await Promise.all([
+      const [smRes, umRes, anRes] = await Promise.all([
         salesPromise,
         udhariPromise,
-        quotationsPromise,
-        lowStockPromise,
         analyticsPromise,
       ]);
 
@@ -209,12 +179,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       setSalesMetrics(smRes);
       setUdhariMetrics(umRes);
-      setOpenQuotationsCount(qtRes.count);
-      setLowStockCount(lsRes.lowStockCount);
-      setLowStockProducts(lsRes.lowStockProducts);
       setAnalyticsData(anRes);
 
-      // 6. Invoices & Follow-ups from Store
+      // 4. Invoices & Follow-ups from Store
       setInvoices(store.getInvoices());
       setFollowUps(store.getFollowUps());
     } catch (err: any) {
@@ -270,67 +237,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return followUps.filter((f) => f.status === 'Pending');
   }, [followUps]);
 
-  // Memoized KPI Sparkline Data Arrays
-  const totalSalesSparkline = useMemo(() => {
-    return analyticsData?.salesTrend?.points?.map((p) => p.sales) || [40, 60, 55, 75, 90, 85, 110];
-  }, [analyticsData?.salesTrend?.points]);
-
-  const collectionsSparkline = useMemo(() => [30, 45, 40, 65, 70, 85, 95], []);
-  const grossProfitSparkline = useMemo(() => [20, 28, 25, 38, 42, 48, 52], []);
-
-  // Cross-filter handlers
-  const handleSelectChannel = (channel: string | null) => {
-    setCrossFilter(channel ? { type: 'channel', value: channel } : null);
-  };
-
-  const handleSelectProduct = (productId: string | null) => {
-    setCrossFilter(productId ? { type: 'product', value: productId } : null);
-  };
-
-  const handleSelectAgingBucket = (bucket: string | null) => {
-    setCrossFilter(bucket ? { type: 'bucket', value: bucket } : null);
-  };
-
-  const handleSelectPeriod = (period: string | null) => {
-    setCrossFilter(period ? { type: 'period', value: period } : null);
-  };
-
   return (
     <div className="space-y-6 animate-fade-in pb-16">
-      {/* ========================================================================= */}
-      {/* 1. POWER BI SLICER BAR (TOP REPORTING SCOPE FILTER)                       */}
-      {/* ========================================================================= */}
-      <PbiSlicerBar
-        rangePreset={rangePreset}
-        onPresetChange={setRangePreset}
-        dateRange={dateRange}
-        customStartDate={customStartDate}
-        customEndDate={customEndDate}
-        onCustomStartChange={setCustomStartDate}
-        onCustomEndChange={setCustomEndDate}
-        onRefresh={() => loadDashboardData(true)}
-        loading={loading}
-      />
-
-      {/* Cross-Filter Active Banner */}
-      {crossFilter && (
-        <div className="px-4 py-2 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900/60 flex items-center justify-between text-xs text-blue-800 dark:text-blue-300">
-          <div className="flex items-center gap-2">
-            <span className="font-bold">Cross-Filtering Active:</span>
-            <span>
-              {crossFilter.type.toUpperCase()} = &ldquo;{crossFilter.value}&rdquo;
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setCrossFilter(null)}
-            className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline"
-          >
-            Clear Filter ✕
-          </button>
-        </div>
-      )}
-
       {/* Error Alert with Retry */}
       {error && (
         <div className="p-4 rounded-2xl border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 flex items-center justify-between gap-3 text-rose-800 dark:text-rose-300">
@@ -351,7 +259,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 2. POWER BI KPI ROW (4 Cards with Area Sparklines)                         */}
+      {/* 1. KPI SUMMARY (4 Cards without sparklines)                               */}
       {/* ========================================================================= */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
         {/* KPI 1: Total Sales */}
@@ -362,7 +270,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           icon={<DollarSign className="w-4 h-4" />}
           deltaPercent={12.4}
           deltaLabel="vs prior period"
-          sparklineData={totalSalesSparkline}
           loading={loading}
           footer={
             <div className="flex justify-between items-center text-[11px]">
@@ -384,7 +291,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           icon={<CreditCard className="w-4 h-4" />}
           deltaPercent={8.1}
           deltaLabel="realized inflow"
-          sparklineData={collectionsSparkline}
           loading={loading}
           footer={
             <div className="flex justify-between items-center text-[11px]">
@@ -402,7 +308,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           icon={<TrendingUp className="w-4 h-4" />}
           deltaPercent={analyticsData?.kpis?.profitMarginPercent ?? 24}
           deltaLabel="gross margin"
-          sparklineData={grossProfitSparkline}
           loading={loading}
           footer={
             <div className="flex justify-between items-center text-[11px]">
@@ -439,219 +344,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* 3. 12-COLUMN POWER BI VISUAL REPORT GRID                                  */}
+      {/* 2. KPI DATE FILTERS (SLICER BAR)                                          */}
       {/* ========================================================================= */}
-      <div className="space-y-6">
-        {/* ROW A: Sales Trend Combo Chart (8 cols) + Channel Donut (4 cols) */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-8">
-            <SalesTrendComboChart
-              points={analyticsData?.salesTrend?.points || []}
-              granularity={analyticsData?.salesTrend?.granularity || 'daily'}
-              totalSales={analyticsData?.salesTrend?.totalSales || salesMetrics.totalSales}
-              peakSales={analyticsData?.salesTrend?.peakSales}
-              peakLabel={analyticsData?.salesTrend?.peakLabel}
-              selectedLabel={crossFilter?.type === 'period' ? crossFilter.value : null}
-              onSelectPoint={handleSelectPeriod}
-              loading={loading}
-            />
-          </div>
-          <div className="lg:col-span-4">
-            <ChannelDonutChart
-              totalInvoiceSales={analyticsData?.channelBreakdown?.totalInvoiceSales || salesMetrics.invoiceSales}
-              totalCounterSales={analyticsData?.channelBreakdown?.totalCounterSales || salesMetrics.counterSales}
-              invoicePercentage={analyticsData?.channelBreakdown?.invoicePercentage || 60}
-              counterPercentage={analyticsData?.channelBreakdown?.counterPercentage || 40}
-              points={analyticsData?.channelBreakdown?.points || []}
-              selectedChannel={crossFilter?.type === 'channel' ? crossFilter.value : null}
-              onSelectChannel={handleSelectChannel}
-              onDrillDown={(ch) => setActiveTab(ch)}
-              loading={loading}
-            />
-          </div>
-        </div>
-
-        {/* ROW B: Receivables Aging (6 cols) + Top Selling Products (6 cols) */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-6">
-            <ReceivablesAgingChart
-              totalOutstanding={analyticsData?.receivablesAging?.totalOutstanding || udhariMetrics.outstanding}
-              overdueAmount={analyticsData?.receivablesAging?.overdueAmount || udhariMetrics.overdue}
-              buckets={analyticsData?.receivablesAging?.buckets || []}
-              selectedBucket={crossFilter?.type === 'bucket' ? crossFilter.value : null}
-              onSelectBucket={handleSelectAgingBucket}
-              onDrillDown={() => setActiveTab('udhari')}
-              loading={loading}
-            />
-          </div>
-          <div className="lg:col-span-6">
-            <TopProductsBarChart
-              byValue={analyticsData?.topProducts?.byValue || []}
-              byQuantity={analyticsData?.topProducts?.byQuantity || []}
-              selectedProductId={crossFilter?.type === 'product' ? crossFilter.value : null}
-              onSelectProduct={handleSelectProduct}
-              onDrillDown={() => setActiveTab('products')}
-              loading={loading}
-            />
-          </div>
-        </div>
-
-        {/* ROW C: Inventory Health (6 cols) + Profitability Waterfall (6 cols) */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-6">
-            <InventoryHealthGauge
-              metrics={
-                analyticsData?.inventoryHealth || {
-                  healthyCount: 10,
-                  lowStockCount: lowStockCount,
-                  outOfStockCount: 0,
-                  totalCount: 10,
-                  criticalItems: lowStockProducts.map((p) => ({
-                    id: p.id,
-                    name: p.name,
-                    sku: p.sku || '',
-                    currentStock: p.currentStock,
-                    minimumStock: p.minimumStock,
-                    unit: p.unit,
-                  })),
-                }
-              }
-              onDrillDown={() => setActiveTab('stock')}
-              loading={loading}
-            />
-          </div>
-          <div className="lg:col-span-6">
-            <ProfitabilityWaterfallChart
-              totalRevenue={analyticsData?.profitability?.totalRevenue || salesMetrics.totalSales}
-              totalCogs={analyticsData?.profitability?.totalCogs || 0}
-              totalGrossProfit={analyticsData?.profitability?.totalGrossProfit || 0}
-              totalExpenses={analyticsData?.profitability?.totalExpenses || 0}
-              totalNetProfit={analyticsData?.profitability?.totalNetProfit || 0}
-              overallMarginPercent={analyticsData?.profitability?.overallMarginPercent || 0}
-              points={analyticsData?.profitability?.points || []}
-              loading={loading}
-            />
-          </div>
-        </div>
-
-        {/* ROW D: Quotation Funnel (6 cols) + Expense Analysis (6 cols) */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-6">
-            <QuotationFunnelChart
-              conversionRatePercent={analyticsData?.quotationFunnel?.conversionRatePercent || 0}
-              stages={analyticsData?.quotationFunnel?.stages || []}
-              totalQuotations={analyticsData?.quotationFunnel?.totalQuotations || openQuotationsCount}
-              convertedCount={analyticsData?.quotationFunnel?.convertedCount || 0}
-              convertedValue={analyticsData?.quotationFunnel?.convertedValue || 0}
-              onDrillDown={() => setActiveTab('quotations')}
-              loading={loading}
-            />
-          </div>
-          <div className="lg:col-span-6">
-            <ExpenseAnalysisChart
-              totalExpenses={analyticsData?.expenseAnalysis?.totalExpenses || 0}
-              categories={analyticsData?.expenseAnalysis?.categories || []}
-              onDrillDown={() => setActiveTab('expenses')}
-              loading={loading}
-            />
-          </div>
-        </div>
-
-        {/* ROW E: Executive Summary (6 cols) + Pending Customer Follow-ups (6 cols) */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-6">
-            <ExecutiveSummaryCards
-              data={analyticsData}
-              onNavigateTab={setActiveTab}
-              loading={loading}
-            />
-          </div>
-
-          <div className="lg:col-span-6">
-            <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs transition-colors flex flex-col justify-between h-full">
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <CalendarCheck className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                      Pending Customer Follow-ups
-                    </h3>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('follow-ups')}
-                    className="text-xs text-blue-600 dark:text-blue-400 font-semibold hover:underline"
-                  >
-                    View All
-                  </button>
-                </div>
-
-                {pendingFollowups.length === 0 ? (
-                  <div className="text-center py-8 text-slate-400 dark:text-slate-500 text-xs">
-                    No pending follow-ups right now. Good job!
-                  </div>
-                ) : (
-                  <div className="space-y-2.5">
-                    {pendingFollowups.slice(0, 3).map((f) => (
-                      <div
-                        key={f.id}
-                        className="p-3 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 flex items-center justify-between gap-3"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-xs text-slate-900 dark:text-slate-100 truncate">
-                              {f.customerName}
-                            </span>
-                            <span
-                              className={`px-2 py-0.5 text-[9px] font-bold rounded-md ${
-                                f.priority === 'High' || f.priority === 'Urgent'
-                                  ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
-                                  : 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
-                              }`}
-                            >
-                              {f.priority}
-                            </span>
-                          </div>
-                          <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5 truncate">
-                            {f.title}
-                          </p>
-                          <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5 flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            <span>
-                              Due: {f.dueDate} at {f.dueTime}
-                            </span>
-                          </p>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => store.updateFollowUpStatus(f.id, 'Completed')}
-                          className="p-2 rounded-xl text-slate-400 dark:text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
-                          title="Mark Completed"
-                        >
-                          <CheckCircle2 className="w-5 h-5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <PbiSlicerBar
+        rangePreset={rangePreset}
+        onPresetChange={setRangePreset}
+        dateRange={dateRange}
+        customStartDate={customStartDate}
+        customEndDate={customEndDate}
+        onCustomStartChange={setCustomStartDate}
+        onCustomEndChange={setCustomEndDate}
+        onRefresh={() => loadDashboardData(true)}
+        loading={loading}
+      />
 
       {/* ========================================================================= */}
-      {/* 4. QUICK ACTIONS & BUSINESS OPERATIONS BANNER                             */}
+      {/* 3. QUICK ACTIONS & BUSINESS OPERATIONS BANNER                             */}
       {/* ========================================================================= */}
       <div className="bg-gradient-to-r from-blue-900 to-slate-900 dark:from-blue-950 dark:to-slate-950 rounded-2xl p-5 sm:p-6 text-white shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border border-blue-900/50">
         <div>
           <h3 className="text-base sm:text-lg font-bold">Quick Actions & Business Operations</h3>
           <p className="text-xs text-blue-200 dark:text-blue-300 mt-1">
-            Create documents, log payments, or manage your catalog instantly
+            Create documents, log payments, or manage your business operations instantly
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
             onClick={() => openModal?.('quotation')}
@@ -680,7 +397,94 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* 5. RECENT SALES & INVOICES TABLE (FILTERED STRICTLY BY SELECTED PERIOD)    */}
+      {/* 4 & 5. EXECUTIVE SUMMARY & SIGNALS + PENDING CUSTOMER FOLLOW-UPS          */}
+      {/* ========================================================================= */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* 4. Executive Summary & Signals */}
+        <div>
+          <ExecutiveSummaryCards
+            data={analyticsData}
+            onNavigateTab={setActiveTab}
+            loading={loading}
+          />
+        </div>
+
+        {/* 5. Pending Customer Follow-ups */}
+        <div>
+          <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs transition-colors flex flex-col justify-between h-full">
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <CalendarCheck className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                    Pending Customer Follow-ups
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('follow-ups')}
+                  className="text-xs text-blue-600 dark:text-blue-400 font-semibold hover:underline"
+                >
+                  View All
+                </button>
+              </div>
+
+              {pendingFollowups.length === 0 ? (
+                <div className="text-center py-8 text-slate-400 dark:text-slate-500 text-xs">
+                  No pending follow-ups right now. Good job!
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {pendingFollowups.slice(0, 3).map((f) => (
+                    <div
+                      key={f.id}
+                      className="p-3 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 flex items-center justify-between gap-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-xs text-slate-900 dark:text-slate-100 truncate">
+                            {f.customerName}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 text-[9px] font-bold rounded-md ${
+                              f.priority === 'High' || f.priority === 'Urgent'
+                                ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
+                                : 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                            }`}
+                          >
+                            {f.priority}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5 truncate">
+                          {f.title}
+                        </p>
+                        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5 flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          <span>
+                            Due: {f.dueDate} at {f.dueTime}
+                          </span>
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => store.updateFollowUpStatus(f.id, 'Completed')}
+                        className="p-2 rounded-xl text-slate-400 dark:text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
+                        title="Mark Completed"
+                      >
+                        <CheckCircle2 className="w-5 h-5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* 6. RECENT SALES & INVOICES TABLE (FILTERED STRICTLY BY SELECTED PERIOD)    */}
       {/* ========================================================================= */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs overflow-hidden transition-colors">
         <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between flex-wrap gap-2">
