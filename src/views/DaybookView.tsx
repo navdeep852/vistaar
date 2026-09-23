@@ -24,6 +24,9 @@ import {
 import { daybookService } from '../services/supabase/daybookService';
 import { DaybookTransaction, DaybookFilterOptions, DaybookSummaryMetrics } from '../types';
 import { showToast } from '../components/Toast';
+import { DownloadReportDropdown } from '../components/DownloadReportDropdown';
+import { downloadDaybookReport } from '../services/reportExportService';
+import { store } from '../services/store';
 
 export const DaybookView: React.FC = () => {
 
@@ -189,6 +192,33 @@ export const DaybookView: React.FC = () => {
       currency: 'INR',
       maximumFractionDigits: 2,
     }).format(val || 0);
+  };
+
+  const handleExportReport = (format: 'pdf' | 'print' | 'excel') => {
+    const settings = store.getSettings();
+    downloadDaybookReport(
+      transactions,
+      metrics,
+      {
+        dateRange,
+        startDate: dateRange === 'custom' ? startDate : undefined,
+        endDate: dateRange === 'custom' ? endDate : undefined,
+        transactionType,
+        paymentMode,
+        paymentStatus,
+        search,
+      },
+      {
+        businessName: settings.businessName,
+        legalName: settings.legalName,
+        address: settings.address,
+        phone: settings.phone,
+        email: settings.email,
+        gstin: settings.gstin,
+        logoUrl: settings.logoUrl,
+      },
+      format
+    );
   };
 
   const renderPaymentModeIcon = (mode: string) => {
@@ -415,31 +445,40 @@ export const DaybookView: React.FC = () => {
 
       {/* Filter & Toolbar Area */}
       <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-4">
-        {/* Preset Date Range Buttons */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
-          <span className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider shrink-0 mr-1 flex items-center gap-1">
-            <Calendar className="w-3.5 h-3.5" /> Date:
-          </span>
-          {[
-            { id: 'today', label: 'Today' },
-            { id: 'yesterday', label: 'Yesterday' },
-            { id: 'week', label: 'This Week' },
-            { id: 'month', label: 'This Month' },
-            { id: 'last_month', label: 'Last Month' },
-            { id: 'custom', label: 'Custom Range' },
-          ].map((btn) => (
-            <button
-              key={btn.id}
-              onClick={() => setDateRange(btn.id as any)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                dateRange === btn.id
-                  ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-              }`}
-            >
-              {btn.label}
-            </button>
-          ))}
+        {/* Preset Date Range Buttons & Download Report */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+            <span className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider shrink-0 mr-1 flex items-center gap-1">
+              <Calendar className="w-3.5 h-3.5" /> Date:
+            </span>
+            {[
+              { id: 'today', label: 'Today' },
+              { id: 'yesterday', label: 'Yesterday' },
+              { id: 'week', label: 'This Week' },
+              { id: 'month', label: 'This Month' },
+              { id: 'last_month', label: 'Last Month' },
+              { id: 'custom', label: 'Custom Range' },
+            ].map((btn) => (
+              <button
+                key={btn.id}
+                onClick={() => setDateRange(btn.id as any)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                  dateRange === btn.id
+                    ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                {btn.label}
+              </button>
+            ))}
+          </div>
+
+          <DownloadReportDropdown
+            recordCount={transactions.length}
+            reportName="Daybook Report"
+            onExport={handleExportReport}
+            className="self-end sm:self-auto shrink-0"
+          />
         </div>
 
         {/* Custom Date Pickers */}

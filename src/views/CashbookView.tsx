@@ -31,6 +31,9 @@ import {
   CashbookSummaryMetrics,
 } from '../types';
 import { showToast } from '../components/Toast';
+import { DownloadReportDropdown } from '../components/DownloadReportDropdown';
+import { downloadCashbookReport } from '../services/reportExportService';
+import { store } from '../services/store';
 
 export const CashbookView: React.FC = () => {
   const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
@@ -214,6 +217,35 @@ export const CashbookView: React.FC = () => {
     }
   };
 
+  const handleExportReport = (format: 'pdf' | 'print' | 'excel') => {
+    const settings = store.getSettings();
+    const activeAcc = accounts.find((a) => a.id === selectedAccountId);
+    downloadCashbookReport(
+      transactions,
+      metrics,
+      accounts,
+      {
+        accountName: activeAcc ? activeAcc.name : 'All Accounts',
+        financialYear: selectedFY === 'CURRENT_FY' ? 'Current FY (2026–27)' : selectedFY === 'PREVIOUS_FY' ? 'Previous FY (2025–26)' : 'All Time',
+        dateRange: dateRangePreset,
+        startDate: dateRangePreset === 'custom' ? startDate : undefined,
+        endDate: dateRangePreset === 'custom' ? endDate : undefined,
+        paymentMode: paymentModeFilter !== 'ALL' ? paymentModeFilter : undefined,
+        search: searchQuery || undefined,
+      },
+      {
+        businessName: settings.businessName,
+        legalName: settings.legalName,
+        address: settings.address,
+        phone: settings.phone,
+        email: settings.email,
+        gstin: settings.gstin,
+        logoUrl: settings.logoUrl,
+      },
+      format
+    );
+  };
+
   return (
     <div className="space-y-6 animate-fade-in pb-16">
       {/* Top Banner & Main Actions */}
@@ -322,30 +354,39 @@ export const CashbookView: React.FC = () => {
             <span>Cashbook Filters</span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setSelectedAccountId('ALL')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
-                selectedAccountId === 'ALL'
-                  ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
-              }`}
-            >
-              All Accounts
-            </button>
-            {accounts.map((acc) => (
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 overflow-x-auto">
               <button
-                key={acc.id}
-                onClick={() => setSelectedAccountId(acc.id)}
+                onClick={() => setSelectedAccountId('ALL')}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
-                  selectedAccountId === acc.id
-                    ? 'bg-emerald-600 text-white'
+                  selectedAccountId === 'ALL'
+                    ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900'
                     : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
                 }`}
               >
-                {acc.name}
+                All Accounts
               </button>
-            ))}
+              {accounts.map((acc) => (
+                <button
+                  key={acc.id}
+                  onClick={() => setSelectedAccountId(acc.id)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+                    selectedAccountId === acc.id
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                  }`}
+                >
+                  {acc.name}
+                </button>
+              ))}
+            </div>
+
+            <DownloadReportDropdown
+              recordCount={transactions.length}
+              reportName="Cashbook Report"
+              onExport={handleExportReport}
+              className="ml-auto"
+            />
           </div>
         </div>
 
