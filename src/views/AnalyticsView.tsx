@@ -294,9 +294,13 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateTab }) =
               </h3>
             )}
           </div>
-          <div className="text-[11px] text-slate-400 flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800/80">
-            <span>Cash + UPI Inflows</span>
-            <span className="text-emerald-600 font-semibold">Realized</span>
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800/80">
+            <span>
+              Cash: <strong className="text-slate-800 dark:text-slate-200">{formatInr(data?.kpis.cashCollections ?? 0)}</strong>
+            </span>
+            <span>
+              UPI: <strong className="text-slate-800 dark:text-slate-200">{formatInr(data?.kpis.upiCollections ?? 0)}</strong>
+            </span>
           </div>
         </div>
 

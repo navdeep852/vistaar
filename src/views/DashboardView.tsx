@@ -294,8 +294,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           loading={loading}
           footer={
             <div className="flex justify-between items-center text-[11px]">
-              <span>Cash & UPI Inflows</span>
-              <span className="text-emerald-600 dark:text-emerald-400 font-semibold">Realized</span>
+              <span>
+                Cash: <strong className="text-slate-800 dark:text-slate-200">{formatInr(analyticsData?.kpis?.cashCollections ?? salesMetrics.cashSales ?? 0)}</strong>
+              </span>
+              <span>
+                UPI: <strong className="text-slate-800 dark:text-slate-200">{formatInr(analyticsData?.kpis?.upiCollections ?? salesMetrics.bankUpiSales ?? 0)}</strong>
+              </span>
             </div>
           }
         />

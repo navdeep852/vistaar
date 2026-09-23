@@ -985,8 +985,12 @@ class StoreService {
     const year = new Date().getFullYear();
     const invoiceNumber = (invoiceData as any).invoiceNumber || `INV-${year}-${String(count).padStart(4, '0')}`;
 
+    const calculatedTotal = invoiceData.grandTotal !== undefined && invoiceData.grandTotal !== null
+      ? Number(invoiceData.grandTotal)
+      : (invoiceData.items || []).reduce((acc, it: any) => acc + (Number(it.total ?? it.amount) || ((Number(it.quantity) || 0) * (Number(it.sellingPrice) || 0)) || 0), 0);
+
     const fin = calculateInvoiceFinancials(
-      Number(invoiceData.grandTotal) || 0,
+      calculatedTotal,
       Number(invoiceData.paidAmount) || 0,
       invoiceData.status
     );
@@ -1045,6 +1049,51 @@ class StoreService {
 
     this.saveLastUsedTemplate('invoice', newInvoice.templateId);
     this.state.invoices.unshift(newInvoice);
+
+    if (newInvoice.paidAmount > 0) {
+      if (!this.state.payments) this.state.payments = [];
+      const hasInitPay = this.state.payments.some(
+        (p) => (p.invoiceId === newInvoice.id || (newInvoice.invoiceNumber && p.invoiceNumber === newInvoice.invoiceNumber))
+      );
+      if (!hasInitPay) {
+        const count = this.state.payments.length + 1;
+        const year = new Date().getFullYear();
+        const initPay: Payment = {
+          id: `pay-init-${newInvoice.id}`,
+          paymentNumber: `PAY-${year}-${String(count).padStart(4, '0')}`,
+          customerId: newInvoice.customerId || '',
+          customerName: newInvoice.customerName || 'Customer',
+          invoiceId: newInvoice.id,
+          invoiceNumber: newInvoice.invoiceNumber,
+          amount: newInvoice.paidAmount,
+          date: newInvoice.date || new Date().toISOString().split('T')[0],
+          method: ((newInvoice as any).paymentMethod || 'Cash') as any,
+          notes: `Initial payment for Invoice #${newInvoice.invoiceNumber}`,
+          createdAt: newInvoice.createdAt || new Date().toISOString(),
+        };
+        this.state.payments.unshift(initPay);
+
+        try {
+          const LOCAL_PAYMENTS_KEY = 'vistaar_local_payments_db';
+          const localPays = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
+          localPays.unshift({
+            ...initPay,
+            payment_number: initPay.paymentNumber,
+            customer_id: initPay.customerId,
+            customer_name: initPay.customerName,
+            invoice_id: initPay.invoiceId,
+            invoice_number: initPay.invoiceNumber,
+            payment_date: initPay.date,
+            payment_method: initPay.method,
+            created_at: initPay.createdAt,
+          });
+          safeSaveTenantStorage(LOCAL_PAYMENTS_KEY, localPays);
+        } catch {
+          // ignore
+        }
+      }
+    }
+
     this.saveToStorage();
 
     try {

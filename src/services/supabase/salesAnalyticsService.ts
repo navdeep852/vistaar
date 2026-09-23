@@ -220,6 +220,15 @@ export class SalesAnalyticsService {
       paidSalesVal += paid;
       creditSalesVal += bal;
       totalTransactions += 1;
+
+      if (paid > 0) {
+        const invMethod = String(inv.payment_method ?? inv.paymentMethod ?? 'Cash').toLowerCase();
+        if (invMethod.includes('cash')) {
+          cashSalesVal += paid;
+        } else {
+          bankUpiSalesVal += paid;
+        }
+      }
     }
 
     const totalSales = totalCounterSalesVal + totalInvoiceSalesVal;

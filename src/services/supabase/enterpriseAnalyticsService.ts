@@ -12,6 +12,8 @@ import { Invoice, Product, Expense } from '../../types';
 export interface AnalyticsKPIs {
   totalSales: number;
   collections: number;
+  cashCollections: number;
+  upiCollections: number;
   grossProfit: number;
   outstandingUdhari: number;
   profitMarginPercent: number;
@@ -161,8 +163,8 @@ export class EnterpriseAnalyticsService {
 
     // 1. Fetch Authoritative Dashboard Sales Metrics & Raw Invoices / Counter Sales (Read-Only)
     const [salesMetricsRes, udhariMetricsRes, quotationsRes] = await Promise.all([
-      salesAnalyticsService.getSalesMetrics(dateRange, forceFresh),
-      udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr),
+      salesAnalyticsService.getSalesMetrics(dateRange, forceFresh, wsId),
+      udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId),
       quotationService.getQuotations(),
     ]);
 
@@ -231,7 +233,7 @@ export class EnterpriseAnalyticsService {
     }
 
     // Fallback to local storage / memory if empty or offline
-    if (invoices.length === 0 && counterSales.length === 0) {
+    if (invoices.length === 0) {
       const localInvoices: Invoice[] = store.getInvoices().length > 0
         ? store.getInvoices()
         : safeGetTenantStorage<Invoice>(LOCAL_INVOICES_KEY, []);
@@ -241,14 +243,20 @@ export class EnterpriseAnalyticsService {
         const d = (inv.date || inv.createdAt || '').split('T')[0];
         return d >= dateRange.startDateStr && d <= dateRange.endDateStr;
       });
+    }
 
-      const localCS = safeGetTenantStorage<any>(LOCAL_SALES_KEY, []);
+    if (counterSales.length === 0) {
+      const localCS = store.getCounterSales().length > 0
+        ? store.getCounterSales()
+        : safeGetTenantStorage<any>(LOCAL_SALES_KEY, []);
       counterSales = localCS.filter((cs: any) => {
         if (cs.status === 'CANCELLED') return false;
         const d = (cs.sale_date ?? cs.saleDate ?? cs.created_at ?? '').split('T')[0];
         return d >= dateRange.startDateStr && d <= dateRange.endDateStr;
       });
+    }
 
+    if (payments.length === 0) {
       const localPayments = store.getPayments().length > 0
         ? store.getPayments()
         : safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
@@ -870,20 +878,69 @@ export class EnterpriseAnalyticsService {
     // SUMMARY KPIS (Strictly Consistent with Dashboard & Ledgers)
     // -------------------------------------------------------------
     // Collections = Payments received in period + completed counter sale cash/upi
-    let collectionsVal = 0;
+    let cashCollectionsVal = 0;
+    let upiCollectionsVal = 0;
+
+    // 1. Process customer/invoice/udhari payments received in this period
     payments.forEach((p) => {
-      collectionsVal += Number(p.amount || 0);
-    });
-    counterSales.forEach((cs) => {
-      const method = String(cs.payment_method ?? cs.paymentMethod ?? '').toLowerCase();
-      if (!method.includes('credit') && !method.includes('udhari')) {
-        collectionsVal += Number(cs.amount_received ?? cs.amountReceived ?? cs.final_total ?? cs.finalTotal ?? 0);
+      const totalAmt = Number(p.amount || 0);
+      if (totalAmt <= 0) return;
+
+      // Handle split payment if present on the record
+      const splitCash = Number(p.cash_amount ?? p.cashAmount ?? 0);
+      const splitUpi = Number(p.upi_amount ?? p.upiAmount ?? 0);
+
+      if (splitCash > 0 || splitUpi > 0) {
+        cashCollectionsVal += splitCash;
+        upiCollectionsVal += splitUpi;
+      } else {
+        const method = String(p.payment_method || p.method || '').toLowerCase();
+        if (method.includes('cash')) {
+          cashCollectionsVal += totalAmt;
+        } else {
+          // UPI, Bank Transfer, Card, etc. attributed to UPI/Digital
+          upiCollectionsVal += totalAmt;
+        }
       }
     });
 
+    // 2. Process counter sales in this period
+    counterSales.forEach((cs) => {
+      const method = String(cs.payment_method ?? cs.paymentMethod ?? '').toLowerCase();
+      if (method.includes('credit') || method.includes('udhari')) {
+        // Credit counter sale: no cash/upi collected upfront.
+        // If cleared later, payment is recorded in `payments` on clearance date.
+        return;
+      }
+
+      const rec = Number(cs.amount_received ?? cs.amountReceived ?? cs.final_total ?? cs.finalTotal ?? 0);
+      if (rec <= 0) return;
+
+      // Handle split payment if present on counter sale
+      const splitCash = Number(cs.cash_amount ?? cs.cashAmount ?? 0);
+      const splitUpi = Number(cs.upi_amount ?? cs.upiAmount ?? 0);
+
+      if (splitCash > 0 || splitUpi > 0) {
+        cashCollectionsVal += splitCash;
+        upiCollectionsVal += splitUpi;
+      } else {
+        if (method.includes('cash')) {
+          cashCollectionsVal += rec;
+        } else {
+          upiCollectionsVal += rec;
+        }
+      }
+    });
+
+    const roundedCash = Math.round(cashCollectionsVal);
+    const roundedUpi = Math.round(upiCollectionsVal);
+    const totalCollections = roundedCash + roundedUpi;
+
     const kpis: AnalyticsKPIs = {
       totalSales: salesMetricsRes.totalSales,
-      collections: Math.round(collectionsVal),
+      collections: totalCollections,
+      cashCollections: roundedCash,
+      upiCollections: roundedUpi,
       grossProfit: totalGrossProfit,
       outstandingUdhari: udhariMetricsRes.outstanding,
       profitMarginPercent: overallMarginPercent,
