@@ -34,10 +34,10 @@ export const ExecutiveSummaryCards: React.FC<ExecutiveSummaryCardsProps> = ({
         onNavigateTab ? (
           <button
             type="button"
-            onClick={() => onNavigateTab('reports')}
+            onClick={() => onNavigateTab('profit-loss')}
             className="flex items-center gap-1 text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline"
           >
-            <span>Reports</span>
+            <span>Financial Statements</span>
             <ArrowUpRight className="w-3.5 h-3.5" />
           </button>
         ) : null

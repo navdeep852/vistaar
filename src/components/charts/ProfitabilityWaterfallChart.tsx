@@ -44,26 +44,26 @@ export const ProfitabilityWaterfallChart: React.FC<ProfitabilityWaterfallChartPr
   // Step 4: Operating Expenses (start=NetProfit, amount=OpEx, negative deduction)
   // Step 5: Net Profit (start=0, amount=NetProfit, final total)
   const waterfallData = useMemo(() => {
-    const rev = Math.max(0, totalRevenue);
-    const cogs = Math.max(0, totalCogs);
-    const gp = Math.max(0, rev - cogs);
-    const opex = Math.max(0, totalExpenses);
-    const np = Math.max(0, gp - opex);
+    const rev = totalRevenue;
+    const cogs = totalCogs;
+    const gp = totalGrossProfit !== undefined ? totalGrossProfit : (rev - cogs);
+    const opex = totalExpenses;
+    const np = totalNetProfit !== undefined ? totalNetProfit : (gp - opex);
 
     return [
       {
         name: 'Revenue',
         stepType: 'total',
         base: 0,
-        amount: rev,
+        amount: Math.max(0, rev),
         actualValue: rev,
         color: PBI_PALETTE[0], // #118DFF
       },
       {
         name: 'COGS',
         stepType: 'deduction',
-        base: gp,
-        amount: cogs,
+        base: Math.max(0, gp),
+        amount: Math.abs(cogs),
         actualValue: -cogs,
         color: PBI_SEMANTIC.negative, // #D64550
       },
@@ -71,15 +71,15 @@ export const ProfitabilityWaterfallChart: React.FC<ProfitabilityWaterfallChartPr
         name: 'Gross Profit',
         stepType: 'subtotal',
         base: 0,
-        amount: gp,
+        amount: Math.abs(gp),
         actualValue: gp,
-        color: PBI_PALETTE[1], // #12239E
+        color: gp >= 0 ? PBI_PALETTE[1] : PBI_SEMANTIC.negative,
       },
       {
         name: 'OpEx',
         stepType: 'deduction',
-        base: np,
-        amount: opex,
+        base: Math.max(0, np),
+        amount: Math.abs(opex),
         actualValue: -opex,
         color: PBI_SEMANTIC.negative, // #D64550
       },
@@ -87,9 +87,9 @@ export const ProfitabilityWaterfallChart: React.FC<ProfitabilityWaterfallChartPr
         name: 'Net Profit',
         stepType: 'total',
         base: 0,
-        amount: np,
+        amount: Math.abs(np),
         actualValue: np,
-        color: PBI_SEMANTIC.positive, // #1AAB40
+        color: np >= 0 ? PBI_SEMANTIC.positive : PBI_SEMANTIC.negative,
       },
     ];
   }, [totalRevenue, totalCogs, totalGrossProfit, totalExpenses, totalNetProfit]);

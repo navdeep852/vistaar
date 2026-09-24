@@ -109,14 +109,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ],
     },
     {
-      title: 'FINANCE & ANALYTICS',
+      title: 'FINANCE & STATEMENTS',
       items: [
         { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+        { id: 'profit-loss', label: 'Financial Statements', icon: PieChart },
         { id: 'daybook', label: 'Daybook', icon: BookOpen },
         { id: 'cashbook', label: 'Cashbook', icon: Wallet },
         { id: 'expenses', label: 'Expenses', icon: TrendingDown },
-        { id: 'profit-loss', label: 'Profit & Loss', icon: PieChart },
-        { id: 'reports', label: 'Reports', icon: BarChart3 },
       ],
     },
 
@@ -159,7 +158,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="space-y-1">
               {group.items.map((item) => {
                 const Icon = item.icon;
-                const isActive = activeTab === item.id;
+                const isActive = activeTab === item.id || (item.id === 'profit-loss' && activeTab === 'financial-statements');
                 return (
                   <button
                     key={item.id}

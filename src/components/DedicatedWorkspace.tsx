@@ -103,11 +103,10 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
       ],
     },
     {
-      title: 'FINANCE & ANALYTICS',
+      title: 'FINANCE & STATEMENTS',
       items: [
         { id: 'expenses', label: 'Expenses', icon: TrendingDown },
-        { id: 'profit-loss', label: 'Profit & Loss', icon: PieChart },
-        { id: 'reports', label: 'Reports', icon: BarChart3 },
+        { id: 'profit-loss', label: 'Financial Statements', icon: PieChart },
       ],
     },
     {

@@ -495,10 +495,10 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateTab }) =
               <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-xs">
                 <span className="text-slate-400">All data reconciled across ledgers</span>
                 <button
-                  onClick={() => onNavigateTab('reports')}
+                  onClick={() => onNavigateTab('profit-loss')}
                   className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
                 >
-                  <span>Detailed Reports</span>
+                  <span>Financial Statements</span>
                   <ArrowUpRight className="w-3.5 h-3.5" />
                 </button>
               </div>

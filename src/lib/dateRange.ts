@@ -5,7 +5,26 @@
  * DATE columns (YYYY-MM-DD) and TIMESTAMPTZ columns (ISO).
  */
 
-export type DatePresetType = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
+export type DatePresetType =
+  | 'today'
+  | 'yesterday'
+  | 'this_week'
+  | 'week'
+  | 'this_month'
+  | 'month'
+  | 'last_month'
+  | 'this_quarter'
+  | 'quarter'
+  | 'this_year'
+  | 'year'
+  | 'custom';
+
+export type ComparisonType =
+  | 'previous_period'
+  | 'previous_month'
+  | 'previous_year'
+  | 'custom'
+  | 'none';
 
 export interface ResolvedDateRange {
   rangeType: DatePresetType;
@@ -132,6 +151,7 @@ export function resolveDateRange(
       break;
     }
 
+    case 'this_week':
     case 'week': {
       // Find Monday of the current week
       const [year, month, day] = today.split('-').map(Number);
@@ -143,6 +163,7 @@ export function resolveDateRange(
       break;
     }
 
+    case 'this_month':
     case 'month': {
       const parts = today.split('-');
       startDateStr = `${parts[0]}-${parts[1]}-01`;
@@ -162,6 +183,24 @@ export function resolveDateRange(
 
       startDateStr = `${prevYear}-${prevMonth}-01`;
       endDateStr = `${prevYear}-${prevMonth}-${lastDay}`;
+      break;
+    }
+
+    case 'this_quarter':
+    case 'quarter': {
+      const [year, month] = today.split('-').map(Number);
+      const qIndex = Math.floor((month - 1) / 3);
+      const qStartMonth = String(qIndex * 3 + 1).padStart(2, '0');
+      startDateStr = `${year}-${qStartMonth}-01`;
+      endDateStr = today;
+      break;
+    }
+
+    case 'this_year':
+    case 'year': {
+      const year = today.split('-')[0];
+      startDateStr = `${year}-01-01`;
+      endDateStr = today;
       break;
     }
 
@@ -199,12 +238,16 @@ export function resolveDateRange(
     formattedLabel = `Today (${formatFriendlyDate(today)})`;
   } else if (preset === 'yesterday') {
     formattedLabel = `Yesterday (${formatFriendlyDate(startDateStr)})`;
-  } else if (preset === 'week') {
+  } else if (preset === 'this_week' || preset === 'week') {
     formattedLabel = `This Week (${periodBadge})`;
-  } else if (preset === 'month') {
+  } else if (preset === 'this_month' || preset === 'month') {
     formattedLabel = `This Month (${periodBadge})`;
   } else if (preset === 'last_month') {
     formattedLabel = `Last Month (${periodBadge})`;
+  } else if (preset === 'this_quarter' || preset === 'quarter') {
+    formattedLabel = `This Quarter (${periodBadge})`;
+  } else if (preset === 'this_year' || preset === 'year') {
+    formattedLabel = `This Year (${periodBadge})`;
   } else if (preset === 'custom') {
     formattedLabel = `Custom Range (${periodBadge})`;
   }
@@ -222,4 +265,53 @@ export function resolveDateRange(
     periodBadge,
     isHistorical,
   };
+}
+
+/**
+ * Resolves an authoritative comparison date range matching the selected baseline
+ */
+export function resolveComparisonRange(
+  currentRange: ResolvedDateRange,
+  comparisonType: ComparisonType,
+  customCompStart?: string,
+  customCompEnd?: string
+): ResolvedDateRange | null {
+  if (comparisonType === 'none') return null;
+
+  if (comparisonType === 'custom') {
+    if (!customCompStart || !customCompEnd) return null;
+    return resolveDateRange('custom', customCompStart, customCompEnd);
+  }
+
+  const [curStartY, curStartM, curStartD] = currentRange.startDateStr.split('-').map(Number);
+  const [curEndY, curEndM, curEndD] = currentRange.endDateStr.split('-').map(Number);
+
+  if (comparisonType === 'previous_month') {
+    // Shift back by 1 calendar month safely
+    const startObj = new Date(curStartY, curStartM - 2, curStartD);
+    const endObj = new Date(curEndY, curEndM - 2, curEndD);
+    const sStr = startObj.toISOString().split('T')[0];
+    const eStr = endObj.toISOString().split('T')[0];
+    return resolveDateRange('custom', sStr, eStr);
+  }
+
+  if (comparisonType === 'previous_year') {
+    // Shift back by 1 year
+    const sStr = `${curStartY - 1}-${String(curStartM).padStart(2, '0')}-${String(curStartD).padStart(2, '0')}`;
+    const eStr = `${curEndY - 1}-${String(curEndM).padStart(2, '0')}-${String(curEndD).padStart(2, '0')}`;
+    return resolveDateRange('custom', sStr, eStr);
+  }
+
+  if (comparisonType === 'previous_period') {
+    // Exactly same duration in days immediately preceding the current range
+    const startMs = new Date(currentRange.startDateStr).getTime();
+    const endMs = new Date(currentRange.endDateStr).getTime();
+    const diffDays = Math.max(1, Math.round((endMs - startMs) / 86400000) + 1);
+
+    const compEndStr = addDays(currentRange.startDateStr, -1);
+    const compStartStr = addDays(compEndStr, -(diffDays - 1));
+    return resolveDateRange('custom', compStartStr, compEndStr);
+  }
+
+  return null;
 }

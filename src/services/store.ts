@@ -1761,19 +1761,63 @@ class StoreService {
     return { invoices, payments, totalDebit, totalCredit, outstanding };
   }
 
-  // P&L calculation
+  // P&L calculation (Consistent with authoritative financialStatementService)
   public calculatePL() {
     const issuedInvoices = (this.state.invoices || []).filter((i) => i.status !== 'Cancelled' && i.status !== 'Draft');
-    const revenue = issuedInvoices.reduce((acc, inv) => acc + (inv.grandTotal || 0), 0);
-    const cogs = issuedInvoices.reduce((acc, inv) => {
-      const invoiceCogs = (inv.items || []).reduce((itemAcc, item) => itemAcc + (item.quantity * (item.buyPrice || 0)), 0);
-      return acc + invoiceCogs;
+    const counterSales = (this.state.counterSales || []).filter((cs) => cs.status !== 'CANCELLED');
+
+    const invoiceGross = issuedInvoices.reduce((acc, inv) => acc + (Number(inv.grandTotal) || 0), 0);
+    const counterGross = counterSales.reduce((acc, cs) => acc + (Number(cs.finalTotal) || 0), 0);
+    const grossRevenue = invoiceGross + counterGross;
+
+    const invoiceTax = issuedInvoices.reduce((acc, inv) => acc + (Number(inv.taxTotal) || 0), 0);
+    const counterTax = counterSales.reduce((acc, cs) => acc + (Number((cs as any).taxAmount) || 0), 0);
+    const taxCollected = invoiceTax + counterTax;
+    const netRevenue = Math.max(0, grossRevenue - taxCollected);
+
+    const productMap = new Map<string, number>();
+    (this.state.products || []).forEach((p) => {
+      productMap.set(p.id, Number(p.buyPrice) || 0);
+    });
+
+    const invoiceCogs = issuedInvoices.reduce((acc, inv) => {
+      const itemsCogs = (inv.items || []).reduce((itemAcc, item) => {
+        const q = Number(item.quantity) || 0;
+        let buy = Number(item.buyPrice) || 0;
+        if (buy <= 0 && item.productId && productMap.has(item.productId)) {
+          buy = productMap.get(item.productId) || 0;
+        }
+        return itemAcc + (q * buy);
+      }, 0);
+      return acc + itemsCogs;
     }, 0);
-    const grossProfit = revenue - cogs;
-    const totalExpenses = (this.state.expenses || []).reduce((acc, exp) => acc + (exp.amount || 0), 0);
+
+    const counterCogs = counterSales.reduce((acc, cs) => {
+      const itemsCogs = (cs.items || []).reduce((itemAcc, item) => {
+        const q = Number(item.quantity) || 0;
+        let buy = Number(item.buyPriceSnapshot) || 0;
+        if (buy <= 0 && item.productId && productMap.has(item.productId)) {
+          buy = productMap.get(item.productId) || 0;
+        }
+        return itemAcc + (q * buy);
+      }, 0);
+      return acc + itemsCogs;
+    }, 0);
+
+    const totalCogs = invoiceCogs + counterCogs;
+    const grossProfit = netRevenue - totalCogs;
+    const totalExpenses = (this.state.expenses || []).reduce((acc, exp) => acc + (Number(exp.amount) || 0), 0);
     const netProfit = grossProfit - totalExpenses;
 
-    return { revenue, cogs, grossProfit, expenses: totalExpenses, netProfit };
+    return {
+      revenue: netRevenue,
+      grossSales: grossRevenue,
+      taxCollected,
+      cogs: totalCogs,
+      grossProfit,
+      expenses: totalExpenses,
+      netProfit,
+    };
   }
 
   // --- UDHARI LEDGER METHODS ---

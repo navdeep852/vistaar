@@ -89,7 +89,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
     { id: 'expenses', label: 'Expenses', icon: TrendingDown },
     { id: 'daybook', label: 'Daybook Journal', icon: BookOpen },
     { id: 'cashbook', label: 'Cashbook', icon: Wallet },
-    { id: 'profit-loss', label: 'Profit & Loss', icon: PieChart },
+    { id: 'profit-loss', label: 'Financial Statements', icon: PieChart },
 
 
     { id: 'feedback', label: 'Customer Feedback', icon: Star },
@@ -165,7 +165,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
         <nav className="flex-1 overflow-y-auto p-4 space-y-1">
           {allDrawerItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.id;
+            const isActive = activeTab === item.id || (item.id === 'profit-loss' && activeTab === 'financial-statements');
             return (
               <button
                 key={item.id}

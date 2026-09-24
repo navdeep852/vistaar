@@ -104,10 +104,11 @@ export const Header: React.FC<HeaderProps> = ({
     categories: { title: 'Categories', desc: 'Product category taxonomy' },
     suppliers: { title: 'Suppliers', desc: 'Vendor directory & contacts' },
     expenses: { title: 'Expenses', desc: 'Business operational expenses' },
-    'profit-loss': { title: 'Profit & Loss', desc: 'Financial revenue & profit breakdown' },
+    'financial-statements': { title: 'Financial Statements', desc: 'Authoritative Profit & Loss statement & financial performance' },
+    'profit-loss': { title: 'Profit & Loss', desc: 'Financial performance and profitability analysis' },
     feedback: { title: 'Customer Feedback', desc: 'Client reviews & star ratings' },
     offers: { title: 'Offers', desc: 'Discounts & promotional campaigns' },
-    reports: { title: 'Reports', desc: 'Detailed business analytics' },
+    reports: { title: 'Financial Statements', desc: 'Financial performance and profitability analysis' },
     settings: { title: 'Settings', desc: 'Business profile & invoice setup' },
   };
 

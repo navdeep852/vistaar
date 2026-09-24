@@ -32,6 +32,7 @@ import { SupplierCatalogueView } from './views/SupplierCatalogueView';
 
 import { CategoriesView } from './views/CategoriesView';
 import { SuppliersView } from './views/SuppliersView';
+import { FinancialStatementsView } from './views/FinancialStatementsView';
 import { ProfitLossView } from './views/ProfitLossView';
 import { FollowUpsView } from './views/FollowUpsView';
 import { FeedbackView } from './views/FeedbackView';
@@ -238,10 +239,9 @@ function MainAppContent() {
         return <DaybookView />;
       case 'cashbook':
         return <CashbookView />;
+      case 'financial-statements':
       case 'profit-loss':
-
-
-        return <ProfitLossView />;
+        return <FinancialStatementsView onNavigateTab={setActiveTab} />;
       case 'follow-ups':
         return <FollowUpsView />;
       case 'feedback':
@@ -249,7 +249,8 @@ function MainAppContent() {
       case 'offers':
         return <OffersView />;
       case 'reports':
-        return <ReportsView />;
+        // Backward-compatibility redirect:
+        return <FinancialStatementsView onNavigateTab={setActiveTab} />;
       case 'settings':
         return <SettingsView />;
       default:

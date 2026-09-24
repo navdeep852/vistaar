@@ -6,6 +6,7 @@ import { ResolvedDateRange, resolveDateRange, formatFriendlyDate, formatIndianDa
 import { salesAnalyticsService } from './salesAnalyticsService';
 import { udhariService } from './udhariService';
 import { quotationService } from './quotationService';
+import { financialStatementService } from '../financialStatementService';
 import { store } from '../store';
 import { Invoice, Product, Expense } from '../../types';
 
@@ -584,63 +585,32 @@ export class EnterpriseAnalyticsService {
     const topByQuantity = [...allAggregatedProducts].sort((a, b) => b.quantitySold - a.quantitySold).slice(0, 10);
 
     // -------------------------------------------------------------
-    // CHART 5: PROFITABILITY (Revenue vs COGS vs Gross Profit)
+    // CHART 5: PROFITABILITY (Revenue vs COGS vs Gross Profit - Shared Authoritative Layer)
     // -------------------------------------------------------------
-    let totalCogs = 0;
-
-    // Calculate COGS from Invoices
-    invoices.forEach((inv) => {
-      const num = String(inv.invoice_number ?? inv.invoiceNumber ?? '').trim().toLowerCase();
-      if (num && seenCounterInvoiceNumbers.has(num)) return;
-
-      const items = inv.invoice_items || inv.items || [];
-      items.forEach((item: any) => {
-        const q = Number(item.quantity || 0);
-        const buy = Number(item.buy_price || item.buyPrice || 0);
-        totalCogs += q * buy;
-      });
+    const periodFinancials = financialStatementService.computePeriodFinancials(dateRange, {
+      invoices,
+      counterSales,
+      expenses: expensesList,
+      products: productsList,
     });
 
-    // Calculate COGS from Counter Sales
-    counterSales.forEach((cs) => {
-      const items = cs.counter_sale_items || cs.items || [];
-      items.forEach((item: any) => {
-        const q = Number(item.quantity || 0);
-        const buy = Number(item.buy_price_snapshot || item.buyPriceSnapshot || 0);
-        totalCogs += q * buy;
-      });
-    });
-
-    // Fallback if buyPrice not specified: standard 65% COGS benchmark
-    if (totalCogs === 0 && salesMetricsRes.totalSales > 0) {
-      totalCogs = Math.round(salesMetricsRes.totalSales * 0.65);
-    }
-
+    const totalCogs = periodFinancials.cogs.totalCogs;
     const totalRevenue = salesMetricsRes.totalSales;
-    const totalGrossProfit = Math.max(0, totalRevenue - totalCogs);
+    const totalGrossProfit = periodFinancials.grossProfit.grossProfit;
+    const totalExpenseAmount = periodFinancials.operatingExpenses.totalExpenses;
+    const totalNetProfit = periodFinancials.netProfit.netProfit;
+    const overallMarginPercent = periodFinancials.grossProfit.grossMarginPercent;
 
-    // Aggregate period expenses (read-only)
-    const periodExpenses = expensesList;
-
-    const totalExpenseAmount = periodExpenses.reduce((sum: number, e: any) => sum + Number(e.amount || 0), 0);
-    const totalNetProfit = totalGrossProfit - totalExpenseAmount;
-    const overallMarginPercent = totalRevenue > 0 ? Math.round((totalGrossProfit / totalRevenue) * 1000) / 10 : 0;
-
-    // Build trend profitability points
-    const profitabilityPoints: ProfitabilityDataPoint[] = trendPoints.slice(0, 10).map((p) => {
-      const rev = p.sales;
-      const cogs = Math.round(rev * (totalRevenue > 0 ? totalCogs / totalRevenue : 0.65));
-      const gp = Math.max(0, rev - cogs);
-      return {
-        periodLabel: p.label,
-        revenue: rev,
-        cogs,
-        grossProfit: gp,
-        expenses: Math.round(totalExpenseAmount / Math.max(1, trendPoints.length)),
-        netProfit: gp - Math.round(totalExpenseAmount / Math.max(1, trendPoints.length)),
-        marginPercent: rev > 0 ? Math.round((gp / rev) * 100) : 0,
-      };
-    });
+    // Build trend profitability points from shared calculation
+    const profitabilityPoints: ProfitabilityDataPoint[] = periodFinancials.trend.slice(0, 10).map((p) => ({
+      periodLabel: p.label,
+      revenue: p.revenue,
+      cogs: p.cogs,
+      grossProfit: p.grossProfit,
+      expenses: p.expenses,
+      netProfit: p.netProfit,
+      marginPercent: p.marginPercent,
+    }));
 
     // -------------------------------------------------------------
     // CHART 6: INVENTORY HEALTH
@@ -852,27 +822,14 @@ export class EnterpriseAnalyticsService {
     ];
 
     // -------------------------------------------------------------
-    // CHART 8: EXPENSE ANALYSIS BY CATEGORY
+    // CHART 8: EXPENSE ANALYSIS BY CATEGORY (Shared Authoritative Layer)
     // -------------------------------------------------------------
-    const expenseCatMap = new Map<string, { amount: number; count: number }>();
-    periodExpenses.forEach((exp: any) => {
-      const cat = exp.category || 'Other';
-      const amt = Number(exp.amount || 0);
-      const existing = expenseCatMap.get(cat) || { amount: 0, count: 0 };
-      existing.amount += amt;
-      existing.count += 1;
-      expenseCatMap.set(cat, existing);
-    });
-
-    const safeTotalExp = Math.max(0.01, totalExpenseAmount);
-    const expenseCategories: ExpenseCategoryBreakdown[] = Array.from(expenseCatMap.entries())
-      .map(([category, info]) => ({
-        category,
-        amount: info.amount,
-        count: info.count,
-        percentage: Math.round((info.amount / safeTotalExp) * 100),
-      }))
-      .sort((a, b) => b.amount - a.amount);
+    const expenseCategories: ExpenseCategoryBreakdown[] = periodFinancials.operatingExpenses.categories.map((c) => ({
+      category: c.category,
+      amount: c.amount,
+      count: c.count,
+      percentage: Math.round(c.percentage),
+    }));
 
     // -------------------------------------------------------------
     // SUMMARY KPIS (Strictly Consistent with Dashboard & Ledgers)
