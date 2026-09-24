@@ -39,6 +39,7 @@ import { FeedbackView } from './views/FeedbackView';
 import { OffersView } from './views/OffersView';
 import { ReportsView } from './views/ReportsView';
 import { SettingsView } from './views/SettingsView';
+import { SalaryPayrollView } from './views/SalaryPayrollView';
 
 import { ThemeProvider } from './context/ThemeContext';
 import { WorkspaceProvider, useWorkspace } from './context/WorkspaceContext';
@@ -242,6 +243,9 @@ function MainAppContent() {
       case 'financial-statements':
       case 'profit-loss':
         return <FinancialStatementsView onNavigateTab={setActiveTab} />;
+      case 'salary-payroll':
+      case 'payroll':
+        return <SalaryPayrollView onNavigateTab={setActiveTab} activeTab={activeTab} />;
       case 'follow-ups':
         return <FollowUpsView />;
       case 'feedback':

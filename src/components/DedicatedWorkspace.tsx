@@ -20,6 +20,7 @@ import {
   FolderTree,
   Truck,
   PieChart,
+  Banknote,
 } from 'lucide-react';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useTheme } from '../context/ThemeContext';
@@ -103,9 +104,10 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
       ],
     },
     {
-      title: 'FINANCE & STATEMENTS',
+      title: 'FINANCE & HR',
       items: [
         { id: 'expenses', label: 'Expenses', icon: TrendingDown },
+        { id: 'salary-payroll', label: 'Salary & Payroll', icon: Banknote },
         { id: 'profit-loss', label: 'Financial Statements', icon: PieChart },
       ],
     },

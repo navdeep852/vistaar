@@ -428,6 +428,10 @@ export const FinancialStatementsView: React.FC<FinancialStatementsViewProps> = (
                 <span>✓ Daybook reconciled</span>
                 <span>•</span>
                 <span>✓ Cashbook reconciled</span>
+                <span>•</span>
+                <span className={auditReport.payrollReconciled !== false ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700'}>
+                  {auditReport.payrollReconciled !== false ? '✓ Payroll reconciled' : '⚠ Payroll variance'}
+                </span>
               </div>
             </div>
           </div>
@@ -842,13 +846,25 @@ export const FinancialStatementsView: React.FC<FinancialStatementsViewProps> = (
                       <div
                         key={cat.category}
                         onClick={() => {
+                          if (cat.category.toLowerCase() === 'salary' && onNavigateTab) {
+                            onNavigateTab('salary-payroll');
+                            return;
+                          }
                           setSelectedCategory(cat);
                           setDrillDownType('category');
                         }}
                         className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                        title={cat.category.toLowerCase() === 'salary' ? 'Click to inspect in Salary & Payroll' : undefined}
                       >
                         <div className="flex items-center justify-between text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
-                          <span>{cat.category}</span>
+                          <span className="flex items-center gap-1.5">
+                            <span>{cat.category}</span>
+                            {cat.category.toLowerCase() === 'salary' && (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
+                                Payroll
+                              </span>
+                            )}
+                          </span>
                           <span>{formatInr(cat.amount)}</span>
                         </div>
                         <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">

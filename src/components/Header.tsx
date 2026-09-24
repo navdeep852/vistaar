@@ -104,6 +104,7 @@ export const Header: React.FC<HeaderProps> = ({
     categories: { title: 'Categories', desc: 'Product category taxonomy' },
     suppliers: { title: 'Suppliers', desc: 'Vendor directory & contacts' },
     expenses: { title: 'Expenses', desc: 'Business operational expenses' },
+    'salary-payroll': { title: 'Salary & Payroll', desc: 'Employee compensation, disbursements & payroll ledger' },
     'financial-statements': { title: 'Financial Statements', desc: 'Authoritative Profit & Loss statement & financial performance' },
     'profit-loss': { title: 'Profit & Loss', desc: 'Financial performance and profitability analysis' },
     feedback: { title: 'Customer Feedback', desc: 'Client reviews & star ratings' },

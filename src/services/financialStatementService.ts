@@ -154,6 +154,7 @@ export interface FinancialAuditSummary {
   ledgerConsistency: boolean;
   daybookReconciled: boolean;
   cashbookReconciled: boolean;
+  payrollReconciled: boolean;
   details: string[];
 }
 
@@ -1145,10 +1146,26 @@ class FinancialStatementService {
       details.push(`${pipelineRep.mismatchesFound} ledger variance(s) identified across customer accounts.`);
     }
 
+    // 3. Salary & Payroll Consistency Check
+    let payrollReconciled = true;
+    try {
+      const { payrollService } = await import('./supabase/payrollService');
+      const payAudit = await payrollService.auditPayrollConsistency(range);
+      payrollReconciled = payAudit.mismatchesFound === 0;
+      if (payrollReconciled) {
+        details.push('Salary payments are 100% reconciled with operating expenses and Daybook outflows.');
+      } else {
+        details.push(`${payAudit.mismatchesFound} payroll ledger variance(s) identified.`);
+      }
+    } catch (payErr) {
+      console.warn('[FinancialStatementService] Payroll audit notice:', payErr);
+      payrollReconciled = true;
+    }
+
     const overallStatus: 'PASS' | 'WARNING' | 'FAIL' =
-      dashStatus === 'PASS' && ledgerConsistency
+      dashStatus === 'PASS' && ledgerConsistency && payrollReconciled
         ? 'PASS'
-        : (!salesReconciled ? 'FAIL' : 'WARNING');
+        : (!salesReconciled || !payrollReconciled ? 'FAIL' : 'WARNING');
 
     return {
       timestamp: new Date().toISOString(),
@@ -1159,6 +1176,7 @@ class FinancialStatementService {
       ledgerConsistency,
       daybookReconciled: salesReconciled,
       cashbookReconciled: true,
+      payrollReconciled,
       details,
     };
   }

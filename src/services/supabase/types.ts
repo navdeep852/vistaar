@@ -679,6 +679,8 @@ export function fromDbExpense(row: any): Expense {
     paidTo: row.paid_to || undefined,
     referenceNo: row.reference_no || undefined,
     notes: row.notes || undefined,
+    sourceType: row.source_type || undefined,
+    sourceId: row.source_id || undefined,
     createdAt: row.created_at || new Date().toISOString(),
   };
 }

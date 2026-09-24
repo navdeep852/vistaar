@@ -553,6 +553,8 @@ export interface Expense {
   paidTo?: string;
   referenceNo?: string;
   notes?: string;
+  sourceType?: 'MANUAL' | 'SALARY_PAYMENT' | string;
+  sourceId?: string;
   createdAt: string;
 }
 
@@ -734,6 +736,7 @@ export type DaybookTransactionType =
   | 'CUSTOMER_PAYMENT'
   | 'SUPPLIER_PAYMENT'
   | 'EXPENSE'
+  | 'SALARY'
   | 'REFUND'
   | 'OTHER_INCOME'
   | 'OTHER_PAYMENT'
@@ -757,7 +760,7 @@ export interface DaybookTransaction {
   partyType?: 'customer' | 'supplier' | 'other';
   partyId?: string;
   partyName?: string;
-  referenceType: 'COUNTER_SALE' | 'PAYMENT' | 'EXPENSE' | 'UDHARI_PAYMENT' | 'INVOICE' | 'MANUAL';
+  referenceType: 'COUNTER_SALE' | 'PAYMENT' | 'EXPENSE' | 'UDHARI_PAYMENT' | 'INVOICE' | 'SALARY' | 'MANUAL';
   referenceId?: string;
   referenceNumber?: string;
   description?: string;
@@ -1320,7 +1323,4 @@ export interface ImportPreviewRow {
   rawData: Record<string, any>;
 }
 
-
-
-
-
+export * from './payroll.ts';

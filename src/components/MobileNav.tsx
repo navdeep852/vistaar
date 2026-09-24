@@ -24,6 +24,7 @@ import {
   Truck,
   ShoppingCart,
   BarChart3,
+  Banknote,
 } from 'lucide-react';
 
 
@@ -86,10 +87,11 @@ export const MobileNav: React.FC<MobileNavProps> = ({
     { id: 'products', label: 'Products', icon: Package },
     { id: 'stock', label: 'Stock Movement', icon: Boxes },
     { id: 'counter-sale', label: 'Counter Sale', icon: ShoppingBag },
+    { id: 'profit-loss', label: 'Financial Statements', icon: PieChart },
+    { id: 'salary-payroll', label: 'Salary & Payroll', icon: Banknote },
     { id: 'expenses', label: 'Expenses', icon: TrendingDown },
     { id: 'daybook', label: 'Daybook Journal', icon: BookOpen },
     { id: 'cashbook', label: 'Cashbook', icon: Wallet },
-    { id: 'profit-loss', label: 'Financial Statements', icon: PieChart },
 
 
     { id: 'feedback', label: 'Customer Feedback', icon: Star },

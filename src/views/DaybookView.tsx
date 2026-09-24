@@ -248,6 +248,7 @@ export const DaybookView: React.FC = () => {
       CUSTOMER_PAYMENT: 'Customer Payment',
       SUPPLIER_PAYMENT: 'Supplier Payment',
       EXPENSE: 'Expense',
+      SALARY: 'Salary',
       REFUND: 'Refund',
       OTHER_INCOME: 'Other Income',
       OTHER_PAYMENT: 'Other Payment',
@@ -522,6 +523,7 @@ export const DaybookView: React.FC = () => {
               <option value="CUSTOMER_PAYMENT">Customer Payments</option>
               <option value="SUPPLIER_PAYMENT">Supplier Payments</option>
               <option value="EXPENSE">Expenses</option>
+              <option value="SALARY">Salaries</option>
               <option value="REFUND">Refunds</option>
               <option value="OTHER_INCOME">Other Income</option>
               <option value="OTHER_PAYMENT">Other Payment</option>

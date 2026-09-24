@@ -21,6 +21,7 @@ import {
   BookOpen,
   Wallet,
   ShoppingCart,
+  Banknote,
 } from 'lucide-react';
 
 
@@ -109,13 +110,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ],
     },
     {
-      title: 'FINANCE & STATEMENTS',
+      title: 'FINANCE & HR',
       items: [
         { id: 'analytics', label: 'Analytics', icon: BarChart3 },
         { id: 'profit-loss', label: 'Financial Statements', icon: PieChart },
+        { id: 'salary-payroll', label: 'Salary & Payroll', icon: Banknote },
+        { id: 'expenses', label: 'Expenses', icon: TrendingDown },
         { id: 'daybook', label: 'Daybook', icon: BookOpen },
         { id: 'cashbook', label: 'Cashbook', icon: Wallet },
-        { id: 'expenses', label: 'Expenses', icon: TrendingDown },
       ],
     },
 

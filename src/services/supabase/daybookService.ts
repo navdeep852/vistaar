@@ -707,7 +707,7 @@ export class DaybookService {
    * Writes to public.accounting_entries with full multi-tenant isolation and idempotency.
    */
   public async recordFinancialTransaction(params: {
-    referenceType: 'COUNTER_SALE' | 'PAYMENT' | 'EXPENSE' | 'UDHARI_PAYMENT' | 'INVOICE' | 'MANUAL';
+    referenceType: 'COUNTER_SALE' | 'PAYMENT' | 'EXPENSE' | 'UDHARI_PAYMENT' | 'INVOICE' | 'SALARY' | 'MANUAL';
     referenceId: string;
     referenceNumber?: string;
     transactionType: DaybookTransaction['transactionType'];
