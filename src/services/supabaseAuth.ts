@@ -1349,10 +1349,21 @@ export class SupabaseAuthService {
   private employees: UserAccount[] = [];
 
   public async loadEmployees(): Promise<UserAccount[]> {
-    const workspaceId = this.getCurrentCompanyId();
-    if (!workspaceId || !isSupabaseConfigured()) {
+    const workspaceId = this.getCurrentCompanyId() || 'default_ws';
+    const localKey = `vistaar_local_employees_db_${workspaceId}`;
+    let localEmployees: UserAccount[] = [];
+    try {
+      const stored = safeStorageGet(localKey);
+      if (stored) {
+        localEmployees = JSON.parse(stored);
+      }
+    } catch (e) {}
+
+    if (!workspaceId || !isSupabaseConfigured() || !isValidUuid(workspaceId)) {
+      this.employees = localEmployees;
       return this.employees;
     }
+
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -1370,7 +1381,14 @@ export class SupabaseAuthService {
           department: p.department || '',
           designation: p.designation || '',
           employeeId: p.employee_id || `VST-${p.id.slice(0, 5)}`,
-          status: p.status || 'Active',
+          status: (p.employment_status || p.status || 'Active') as any,
+          joiningDate: p.joining_date || undefined,
+          employmentType: p.employment_type || 'Full Time',
+          dateOfBirth: p.date_of_birth || undefined,
+          gender: p.gender || undefined,
+          address: p.address || undefined,
+          isArchived: Boolean(p.is_archived),
+          archivedAt: p.archived_at || undefined,
           avatarUrl: p.avatar_url || '',
           passwordHash: '',
           createdAt: p.created_at || new Date().toISOString(),
@@ -1379,15 +1397,19 @@ export class SupabaseAuthService {
 
         // Merge any locally added employees that haven't synced yet
         const remoteIds = new Set(remoteEmployees.map((e) => e.id));
-        const remoteEmpIds = new Set(remoteEmployees.map((e) => e.employeeId.toUpperCase()));
-        const localRemaining = this.employees.filter(
-          (e) => !remoteIds.has(e.id) && !remoteEmpIds.has(e.employeeId.toUpperCase())
+        const remoteEmpIds = new Set(remoteEmployees.map((e) => (e.employeeId || '').toUpperCase()));
+        const localRemaining = localEmployees.filter(
+          (e) => !remoteIds.has(e.id) && !remoteEmpIds.has((e.employeeId || '').toUpperCase())
         );
 
         this.employees = [...remoteEmployees, ...localRemaining];
+        safeStorageSet(localKey, JSON.stringify(this.employees));
+      } else {
+        this.employees = localEmployees;
       }
     } catch (err) {
       console.error('Error fetching employees:', err);
+      this.employees = localEmployees;
     }
     return this.employees;
   }
@@ -1397,37 +1419,46 @@ export class SupabaseAuthService {
   }
 
   /**
-   * Generates a deterministic, workspace-scoped sequential Employee ID (VST-00001, VST-00002, ...)
+   * Generates a deterministic, workspace-scoped sequential Employee ID (VST-EMP-001, VST-EMP-002, ...)
    */
-  public async generateNextEmployeeId(workspaceId: string): Promise<string> {
+  public async generateNextEmployeeId(workspaceId?: string): Promise<string> {
+    const wsId = workspaceId || this.getCurrentCompanyId() || '';
     let maxNum = 0;
 
-    if (isSupabaseConfigured() && workspaceId && isValidUuid(workspaceId)) {
+    if (isSupabaseConfigured() && wsId && isValidUuid(wsId)) {
       try {
         const { data, error } = await supabase.rpc('generate_next_employee_id', {
-          p_workspace_id: workspaceId,
+          p_workspace_id: wsId,
         });
         if (!error && data) {
-          const match = String(data).match(/^VST-(\d+)$/i);
-          if (match) {
-            const num = parseInt(match[1], 10) - 1;
+          const matchEmp = String(data).match(/^VST-EMP-(\d+)$/i);
+          const matchVst = String(data).match(/^VST-(\d+)$/i);
+          if (matchEmp) {
+            const num = parseInt(matchEmp[1], 10) - 1;
+            if (num > maxNum) maxNum = num;
+          } else if (matchVst) {
+            const num = parseInt(matchVst[1], 10) - 1;
             if (num > maxNum) maxNum = num;
           }
         }
       } catch {
-        // Fallback to query
+        // Fallback
       }
 
       try {
         const { data: profiles } = await supabase
           .from('profiles')
           .select('employee_id')
-          .eq('workspace_id', workspaceId);
+          .eq('workspace_id', wsId);
 
         (profiles || []).forEach((p: any) => {
-          const match = (p.employee_id || '').match(/^VST-(\d+)$/i);
-          if (match) {
-            const num = parseInt(match[1], 10);
+          const mEmp = (p.employee_id || '').match(/^VST-EMP-(\d+)$/i);
+          const mVst = (p.employee_id || '').match(/^VST-(\d+)$/i);
+          if (mEmp) {
+            const num = parseInt(mEmp[1], 10);
+            if (num > maxNum) maxNum = num;
+          } else if (mVst) {
+            const num = parseInt(mVst[1], 10);
             if (num > maxNum) maxNum = num;
           }
         });
@@ -1438,21 +1469,24 @@ export class SupabaseAuthService {
 
     // Always check in-memory/local employees as well to prevent local collision
     this.employees
-      .filter((e) => !workspaceId || e.companyId === workspaceId)
+      .filter((e) => !wsId || e.companyId === wsId)
       .forEach((e) => {
-        const match = (e.employeeId || '').match(/^VST-(\d+)$/i);
-        if (match) {
-          const num = parseInt(match[1], 10);
+        const mEmp = (e.employeeId || '').match(/^VST-EMP-(\d+)$/i);
+        const mVst = (e.employeeId || '').match(/^VST-(\d+)$/i);
+        if (mEmp) {
+          const num = parseInt(mEmp[1], 10);
+          if (num > maxNum) maxNum = num;
+        } else if (mVst) {
+          const num = parseInt(mVst[1], 10);
           if (num > maxNum) maxNum = num;
         }
       });
 
-    return `VST-${String(maxNum + 1).padStart(5, '0')}`;
+    return `VST-EMP-${String(maxNum + 1).padStart(3, '0')}`;
   }
 
   /**
-   * Secure Employee Creation Workflow:
-   * Owner/Admin -> Validations -> Supabase Auth User -> Profile Record -> Sequential Employee ID
+   * Authoritative Employee Creation Workflow for Employee Master
    */
   public async createEmployee(empData: any): Promise<{
     success: boolean;
@@ -1463,19 +1497,19 @@ export class SupabaseAuthService {
   }> {
     // 1. Name validation
     if (!empData.name || !empData.name.trim()) {
-      return { success: false, error: 'Employee name is required.' };
+      return { success: false, error: 'Employee full name is required.' };
     }
 
-    // 2. Email validation
+    // 2. Email validation (Optional for businesses who don't use employee email)
     const cleanEmail = (empData.email || '').trim().toLowerCase();
-    if (!cleanEmail || !validateEmailFormat(cleanEmail)) {
+    if (cleanEmail && !validateEmailFormat(cleanEmail)) {
       return { success: false, error: 'Please enter a valid email address.' };
     }
 
     // 3. Phone validation (Indian 10-digit)
     let cleanPhone = '';
-    if (empData.phone) {
-      const pRes = validateIndianPhoneNumber(empData.phone, false);
+    if (empData.phone && String(empData.phone).trim()) {
+      const pRes = validateIndianPhoneNumber(String(empData.phone).trim(), false);
       if (!pRes.isValid) {
         return { success: false, error: pRes.error || 'Employee phone number must contain exactly 10 digits.' };
       }
@@ -1492,115 +1526,95 @@ export class SupabaseAuthService {
       }
     }
     if (!workspaceId) {
-      return { success: false, error: 'Cannot create employee: Active company workspace could not be identified.' };
+      workspaceId = 'default_ws';
     }
 
-    // 5. Pre-check for duplicate email in local cache & Supabase
-    const emailInUseLocally = this.employees.some(
-      (e) => (e.email || '').toLowerCase() === cleanEmail
-    );
-    if (emailInUseLocally) {
-      return { success: false, error: 'An account with this email address already exists in this workspace.' };
-    }
-
-    if (isSupabaseConfigured()) {
-      try {
-        const { data: existingProf } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('email', cleanEmail)
-          .maybeSingle();
-
-        if (existingProf) {
-          return { success: false, error: 'An account with this email address already exists in the system.' };
-        }
-      } catch {
-        // ignore
+    // 5. Employee ID resolution & uniqueness check
+    let assignedEmpId = (empData.employeeId || '').trim();
+    if (!assignedEmpId) {
+      assignedEmpId = await this.generateNextEmployeeId(workspaceId);
+    } else {
+      // Check for duplicate employee ID in this workspace
+      const duplicateEmpId = this.employees.some(
+        (e) => (!workspaceId || e.companyId === workspaceId) && (e.employeeId || '').toUpperCase() === assignedEmpId.toUpperCase()
+      );
+      if (duplicateEmpId) {
+        return { success: false, error: `An employee with Employee ID "${assignedEmpId}" already exists.` };
       }
     }
 
-    const tempPass = 'TempPass@2026';
+    // 6. Pre-check for duplicate email if provided
+    if (cleanEmail) {
+      const emailInUseLocally = this.employees.some(
+        (e) => (e.email || '').toLowerCase() === cleanEmail && (!workspaceId || e.companyId === workspaceId)
+      );
+      if (emailInUseLocally) {
+        return { success: false, error: 'An account with this email address already exists in this workspace.' };
+      }
+    }
+
     const assignedRole = (empData.role && ['employee', 'manager', 'admin', 'staff'].includes(empData.role))
       ? empData.role
       : 'employee';
+    const assignedStatus = empData.status || 'Active';
+    const profileId = empData.id || (crypto.randomUUID ? crypto.randomUUID() : `emp-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`);
+    const tempPass = 'TempPass@2026';
 
-    // 6. Tier 1: Supabase Edge Function (Production Cloud Workflow)
-    if (isSupabaseConfigured()) {
+    // 7. Direct Database Upsert into public.profiles
+    if (isSupabaseConfigured() && isValidUuid(workspaceId)) {
       try {
-        const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke('create-employee', {
-          body: {
-            workspaceId,
-            name: empData.name.trim(),
-            email: cleanEmail,
-            phone: cleanPhone,
-            role: assignedRole,
-            department: (empData.department || '').trim(),
-            designation: (empData.designation || '').trim(),
-            tempPassword: tempPass,
-          },
-        });
+        const { error: insertErr } = await supabase.from('profiles').upsert({
+          id: profileId,
+          workspace_id: workspaceId,
+          employee_id: assignedEmpId,
+          name: empData.name.trim(),
+          email: cleanEmail || `${assignedEmpId.toLowerCase().replace(/[^a-z0-9]/g, '')}@noemail.local`,
+          phone: cleanPhone || '',
+          department: (empData.department || '').trim() || null,
+          designation: (empData.designation || '').trim() || null,
+          role: assignedRole,
+          status: assignedStatus,
+          employment_type: empData.employmentType || 'Full Time',
+          employment_status: assignedStatus,
+          joining_date: empData.joiningDate || new Date().toISOString().split('T')[0],
+          date_of_birth: empData.dateOfBirth || null,
+          gender: empData.gender || null,
+          address: empData.address || null,
+          is_archived: false,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'id' });
 
-        if (!edgeErr && edgeRes && edgeRes.success) {
-          await this.loadEmployees();
-          return {
-            success: true,
-            empId: edgeRes.empId,
-            tempPass: edgeRes.tempPass || tempPass,
-            userId: edgeRes.user?.id,
-          };
-        }
-
-        if (edgeRes && !edgeRes.success && edgeRes.error) {
-          return { success: false, error: edgeRes.error };
-        }
-      } catch (edgeEx: any) {
-        console.warn('[CreateEmployee] Edge function attempt notification:', edgeEx?.message || edgeEx);
-      }
-
-      // 7. Tier 2: Local dev / Vite middleware server endpoint (/api/create-employee)
-      if (typeof window !== 'undefined') {
-        try {
-          const apiRes = await fetch('/api/create-employee', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              workspaceId,
+        if (insertErr) {
+          console.warn('[CreateEmployee] Direct profiles upsert notice:', insertErr.message);
+          // If remote schema has not run migration 043 yet, retry with base profile columns
+          try {
+            await supabase.from('profiles').upsert({
+              id: profileId,
+              workspace_id: workspaceId,
+              employee_id: assignedEmpId,
               name: empData.name.trim(),
-              email: cleanEmail,
-              phone: cleanPhone,
+              email: cleanEmail || `${assignedEmpId.toLowerCase().replace(/[^a-z0-9]/g, '')}@noemail.local`,
+              phone: cleanPhone || '',
+              department: (empData.department || '').trim() || null,
+              designation: (empData.designation || '').trim() || null,
               role: assignedRole,
-              department: (empData.department || '').trim(),
-              designation: (empData.designation || '').trim(),
-              tempPassword: tempPass,
-            }),
-          });
-
-          if (apiRes.ok) {
-            const apiData = await apiRes.json();
-            if (apiData.success) {
-              await this.loadEmployees();
-              return {
-                success: true,
-                empId: apiData.empId,
-                tempPass: apiData.tempPass || tempPass,
-                userId: apiData.userId,
-              };
-            } else if (apiData.error) {
-              return { success: false, error: apiData.error };
-            }
+              status: assignedStatus,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'id' });
+          } catch (retryEx) {
+            console.warn('[CreateEmployee] Base profile upsert fallback notice:', retryEx);
           }
-        } catch {
-          // fetch endpoint not available
         }
+      } catch (dbEx: any) {
+        console.warn('[CreateEmployee] Remote profiles write fallback:', dbEx?.message || dbEx);
       }
     }
 
-    // 8. Tier 3: Deterministic Workspace-Scoped Sequential ID Generation & Local Store Fallback
-    const nextEmpId = await this.generateNextEmployeeId(workspaceId);
-    const mockId = `emp-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
-
+    // 8. In-memory and local tenant storage persistence
     const newLocalEmp: UserAccount = {
-      id: mockId,
+      id: profileId,
       email: cleanEmail,
       name: empData.name.trim(),
       companyId: workspaceId,
@@ -1608,8 +1622,14 @@ export class SupabaseAuthService {
       phone: cleanPhone,
       department: (empData.department || '').trim(),
       designation: (empData.designation || '').trim(),
-      employeeId: nextEmpId,
-      status: 'Active',
+      employeeId: assignedEmpId,
+      status: assignedStatus,
+      joiningDate: empData.joiningDate || new Date().toISOString().split('T')[0],
+      employmentType: empData.employmentType || 'Full Time',
+      dateOfBirth: empData.dateOfBirth || undefined,
+      gender: empData.gender || undefined,
+      address: empData.address || undefined,
+      isArchived: false,
       avatarUrl: '',
       passwordHash: '',
       createdAt: new Date().toISOString(),
@@ -1617,33 +1637,189 @@ export class SupabaseAuthService {
     };
 
     this.employees.push(newLocalEmp);
+    const localKey = `vistaar_local_employees_db_${workspaceId}`;
+    safeStorageSet(localKey, JSON.stringify(this.employees));
+
+    // 9. Optional Salary Structure Setup during Employee Creation
+    // (CRITICAL: Does NOT create Expense, Daybook, or Cashbook entries)
+    if (empData.salarySetup && (Number(empData.salarySetup.baseSalary) > 0 || Number(empData.salarySetup.hraAllowance) > 0)) {
+      try {
+        const { payrollService } = await import('./supabase/payrollService');
+        await payrollService.upsertSalaryStructure({
+          employeeId: profileId,
+          salaryFrequency: empData.salarySetup.salaryFrequency || 'Monthly',
+          baseSalary: Math.max(0, Number(empData.salarySetup.baseSalary) || 0),
+          hraAllowance: Math.max(0, Number(empData.salarySetup.hraAllowance) || 0),
+          otherAllowances: Math.max(0, Number(empData.salarySetup.otherAllowances) || 0),
+          standardDeductions: Math.max(0, Number(empData.salarySetup.standardDeductions) || 0),
+          paymentMode: empData.salarySetup.paymentMode || 'Bank Transfer',
+          bankName: empData.salarySetup.bankName || undefined,
+          bankAccountNo: empData.salarySetup.bankAccountNo || undefined,
+          bankIfsc: empData.salarySetup.bankIfsc || undefined,
+          upiId: empData.salarySetup.upiId || undefined,
+          effectiveFrom: empData.salarySetup.effectiveFrom || empData.joiningDate || new Date().toISOString().split('T')[0],
+        });
+      } catch (salaryErr) {
+        console.warn('[CreateEmployee] Optional salary structure setup notice:', salaryErr);
+      }
+    }
 
     return {
       success: true,
-      empId: nextEmpId,
+      empId: assignedEmpId,
       tempPass,
-      userId: mockId,
+      userId: profileId,
+      employee: newLocalEmp,
     };
   }
 
-  public async updateEmployeeStatus(empId: string, status: string): Promise<{ success: boolean; error?: string }> {
-    const emp = this.employees.find((e) => e.id === empId || e.employeeId === empId);
-    if (emp) {
-      emp.status = status as any;
+  /**
+   * Update Employee Information
+   */
+  public async updateEmployee(
+    empId: string,
+    updates: Partial<UserAccount>
+  ): Promise<{ success: boolean; error?: string }> {
+    const workspaceId = this.getCurrentCompanyId() || 'default_ws';
+    const idx = this.employees.findIndex((e) => e.id === empId || e.employeeId === empId);
+    if (idx === -1) {
+      return { success: false, error: 'Employee not found.' };
     }
 
-    if (isSupabaseConfigured() && isValidUuid(empId)) {
-      try {
-        const { error } = await supabase.from('profiles').update({ status }).eq('id', empId);
-        if (error) {
-          console.warn('[updateEmployeeStatus] Supabase status update note:', error.message);
-        }
-      } catch (err: any) {
-        console.warn('[updateEmployeeStatus] Supabase status update exception:', err?.message || err);
+    // Check Employee ID uniqueness if being modified
+    if (updates.employeeId && updates.employeeId !== this.employees[idx].employeeId) {
+      const targetEmpId = updates.employeeId.trim().toUpperCase();
+      const duplicate = this.employees.some(
+        (e) => e.id !== empId && (e.employeeId || '').toUpperCase() === targetEmpId
+      );
+      if (duplicate) {
+        return { success: false, error: `An employee with Employee ID "${updates.employeeId}" already exists.` };
       }
     }
-    await this.loadEmployees();
+
+    // Phone validation if updated
+    if (updates.phone && updates.phone.trim()) {
+      const pRes = validateIndianPhoneNumber(updates.phone.trim(), false);
+      if (!pRes.isValid) {
+        return { success: false, error: pRes.error || 'Employee phone number must contain exactly 10 digits.' };
+      }
+      updates.phone = pRes.normalized;
+    }
+
+    // Email validation if updated
+    if (updates.email && updates.email.trim()) {
+      if (!validateEmailFormat(updates.email.trim())) {
+        return { success: false, error: 'Please enter a valid email address.' };
+      }
+    }
+
+    const updatedEmp: UserAccount = {
+      ...this.employees[idx],
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    this.employees[idx] = updatedEmp;
+
+    const localKey = `vistaar_local_employees_db_${workspaceId}`;
+    safeStorageSet(localKey, JSON.stringify(this.employees));
+
+    if (isSupabaseConfigured() && isValidUuid(this.employees[idx].id)) {
+      try {
+        const payload: any = {
+          updated_at: new Date().toISOString(),
+        };
+        if (updates.name) payload.name = updates.name.trim();
+        if (updates.employeeId) payload.employee_id = updates.employeeId.trim();
+        if (updates.phone !== undefined) payload.phone = updates.phone;
+        if (updates.email !== undefined) payload.email = updates.email;
+        if (updates.department !== undefined) payload.department = updates.department;
+        if (updates.designation !== undefined) payload.designation = updates.designation;
+        if (updates.status !== undefined) {
+          payload.status = updates.status;
+          payload.employment_status = updates.status;
+        }
+        if (updates.joiningDate !== undefined) payload.joining_date = updates.joiningDate;
+        if (updates.employmentType !== undefined) payload.employment_type = updates.employmentType;
+        if (updates.dateOfBirth !== undefined) payload.date_of_birth = updates.dateOfBirth;
+        if (updates.gender !== undefined) payload.gender = updates.gender;
+        if (updates.address !== undefined) payload.address = updates.address;
+        if (updates.isArchived !== undefined) {
+          payload.is_archived = updates.isArchived;
+          if (updates.isArchived) payload.archived_at = new Date().toISOString();
+        }
+
+        await supabase.from('profiles').update(payload).eq('id', this.employees[idx].id);
+      } catch (err: any) {
+        console.warn('Error updating profile in Supabase:', err);
+      }
+    }
+
     return { success: true };
+  }
+
+  /**
+   * Archive an Employee (Mark Inactive while preserving historical payroll)
+   */
+  public async archiveEmployee(empId: string): Promise<{ success: boolean; error?: string }> {
+    return this.updateEmployee(empId, {
+      isArchived: true,
+      archivedAt: new Date().toISOString(),
+      status: 'Inactive',
+    });
+  }
+
+  /**
+   * Unarchive an Employee (Restore to Active)
+   */
+  public async unarchiveEmployee(empId: string): Promise<{ success: boolean; error?: string }> {
+    return this.updateEmployee(empId, {
+      isArchived: false,
+      archivedAt: undefined,
+      status: 'Active',
+    });
+  }
+
+  /**
+   * Delete Employee (Protected: If financial history exists, archives instead)
+   */
+  public async deleteEmployee(empId: string): Promise<{
+    success: boolean;
+    archivedInstead?: boolean;
+    error?: string;
+  }> {
+    const { payrollService } = await import('./supabase/payrollService');
+    const finCheck = await payrollService.hasEmployeeFinancialHistory(empId);
+
+    if (finCheck.hasHistory) {
+      await this.archiveEmployee(empId);
+      return {
+        success: false,
+        archivedInstead: true,
+        error: `Cannot delete employee: ${finCheck.paymentsCount} salary payment record(s) and payroll transactions exist. The employee has been archived as Inactive to preserve financial audit integrity.`,
+      };
+    }
+
+    const workspaceId = this.getCurrentCompanyId() || 'default_ws';
+    const idx = this.employees.findIndex((e) => e.id === empId || e.employeeId === empId);
+    if (idx !== -1) {
+      const realId = this.employees[idx].id;
+      this.employees.splice(idx, 1);
+      const localKey = `vistaar_local_employees_db_${workspaceId}`;
+      safeStorageSet(localKey, JSON.stringify(this.employees));
+
+      if (isSupabaseConfigured() && isValidUuid(realId)) {
+        try {
+          await supabase.from('profiles').delete().eq('id', realId);
+        } catch (e) {
+          console.warn('Error deleting profile:', e);
+        }
+      }
+    }
+    return { success: true };
+  }
+
+  public async updateEmployeeStatus(empId: string, status: string): Promise<{ success: boolean; error?: string }> {
+    return this.updateEmployee(empId, { status: status as any });
   }
 
   /**

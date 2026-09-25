@@ -24,6 +24,19 @@ import {
   Wallet,
   ArrowRight,
   Trash2,
+  UserPlus,
+  UploadCloud,
+  AlertTriangle,
+  Archive,
+  Briefcase,
+  Phone,
+  Mail,
+  Edit3,
+  MoreVertical,
+  RefreshCw,
+  FileSpreadsheet,
+  UserCheck,
+  UserX,
 } from 'lucide-react';
 import { payrollService } from '../services/supabase/payrollService';
 import { supabaseAuthService } from '../services/supabaseAuth';
@@ -35,15 +48,20 @@ import {
   SalaryFilterOptions,
   PayrollAuditSummary,
 } from '../types/payroll';
-import { UserAccount } from '../types';
+import { UserAccount, EmploymentType, EmployeeStatus } from '../types';
 import { showToast } from '../components/Toast';
 import { Modal } from '../components/Modal';
 import {
   downloadPayslipPdf,
   downloadPayrollReportPdf,
   downloadPayrollReportExcel,
+  downloadEmployeeDirectoryExcel,
   formatInr,
 } from '../services/payrollExportService';
+import { AddEmployeeModal } from '../components/payroll/AddEmployeeModal';
+import { EditEmployeeModal } from '../components/payroll/EditEmployeeModal';
+import { EmployeeProfileModal } from '../components/payroll/EmployeeProfileModal';
+import { BulkImportEmployeesModal } from '../components/payroll/BulkImportEmployeesModal';
 
 interface SalaryPayrollViewProps {
   onNavigateTab: (tab: string, extraParam?: string) => void;
@@ -71,16 +89,23 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
   const currentMonth = String(today.getMonth() + 1).padStart(2, '0');
   const currentYear = String(today.getFullYear());
 
-  // Navigation Sub-tab
-  const [activeSubTab, setActiveSubTab] = useState<'history' | 'calendar' | 'structures'>('history');
+  // Navigation Sub-tab: 4 authoritative modules
+  const [activeSubTab, setActiveSubTab] = useState<'employees' | 'history' | 'structures' | 'calendar'>('employees');
 
-  // Filter States
+  // Filter States (Payroll History)
   const [filterMonth, setFilterMonth] = useState<string>(currentMonth);
   const [filterYear, setFilterYear] = useState<string>(currentYear);
   const [filterDepartment, setFilterDepartment] = useState<string>('ALL');
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [filterPaymentMode, setFilterPaymentMode] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Employee Master Directory Filters
+  const [empSearchQuery, setEmpSearchQuery] = useState<string>('');
+  const [empDepartmentFilter, setEmpDepartmentFilter] = useState<string>('ALL');
+  const [empStatusFilter, setEmpStatusFilter] = useState<string>('ALL');
+  const [empEmploymentTypeFilter, setEmpEmploymentTypeFilter] = useState<string>('ALL');
+  const [empViewMode, setEmpViewMode] = useState<'active' | 'archived'>('active');
 
   // Data States
   const [loading, setLoading] = useState<boolean>(true);
@@ -99,7 +124,16 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
     monthLabel: `${MONTH_NAMES.find((m) => m.value === currentMonth)?.label} ${currentYear}`,
   });
 
-  // Modal States
+  // Modal States - Employee Master
+  const [isAddEmployeeModalOpen, setIsAddEmployeeModalOpen] = useState<boolean>(false);
+  const [isEditEmployeeModalOpen, setIsEditEmployeeModalOpen] = useState<boolean>(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState<boolean>(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
+  const [selectedEmployee, setSelectedEmployee] = useState<UserAccount | null>(null);
+  const [employeeToDelete, setEmployeeToDelete] = useState<UserAccount | null>(null);
+  const [deletingEmployee, setDeletingEmployee] = useState<boolean>(false);
+
+  // Modal States - Payroll & Payments
   const [isRecordModalOpen, setIsRecordModalOpen] = useState<boolean>(false);
   const [isStructureModalOpen, setIsStructureModalOpen] = useState<boolean>(false);
   const [selectedPayslipPayment, setSelectedPayslipPayment] = useState<SalaryPayment | null>(null);
@@ -186,9 +220,17 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
     loadData();
   }, [loadData]);
 
-  // Active employees for selection
+  // Active employees for selection (excludes archived)
   const activeEmployees = useMemo(() => {
-    return employees.filter((e) => (e.status || 'Active') === 'Active');
+    return employees.filter((e) => !e.isArchived && (e.status || 'Active') === 'Active');
+  }, [employees]);
+
+  const activeEmployeeCount = useMemo(() => {
+    return employees.filter((e) => !e.isArchived).length;
+  }, [employees]);
+
+  const archivedEmployeeCount = useMemo(() => {
+    return employees.filter((e) => Boolean(e.isArchived)).length;
   }, [employees]);
 
   // Departments list
@@ -200,12 +242,144 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
     return Array.from(set);
   }, [employees]);
 
-  // Structure map
+  // Structure map (employeeId -> SalaryStructure)
   const structureMap = useMemo(() => {
     const map = new Map<string, SalaryStructure>();
     structures.forEach((s) => map.set(s.employeeId, s));
     return map;
   }, [structures]);
+
+  // Unconfigured salary count
+  const unconfiguredCount = useMemo(() => {
+    return employees.filter((e) => !e.isArchived && !structureMap.has(e.id)).length;
+  }, [employees, structureMap]);
+
+  // Filtered employees for Employee Master Tab
+  const filteredEmployees = useMemo(() => {
+    return employees.filter((emp) => {
+      // 1. Active vs Archived
+      const isArchived = Boolean(emp.isArchived);
+      if (empViewMode === 'active' && isArchived) return false;
+      if (empViewMode === 'archived' && !isArchived) return false;
+
+      // 2. Department filter
+      if (empDepartmentFilter !== 'ALL') {
+        if ((emp.department || '').toLowerCase() !== empDepartmentFilter.toLowerCase()) return false;
+      }
+
+      // 3. Status filter
+      if (empStatusFilter !== 'ALL') {
+        const status = emp.status || 'Active';
+        if (status !== empStatusFilter) return false;
+      }
+
+      // 4. Employment Type filter
+      if (empEmploymentTypeFilter !== 'ALL') {
+        const type = emp.employmentType || 'Full Time';
+        if (type !== empEmploymentTypeFilter) return false;
+      }
+
+      // 5. Search query
+      if (empSearchQuery.trim()) {
+        const q = empSearchQuery.toLowerCase();
+        const matchName = (emp.name || '').toLowerCase().includes(q);
+        const matchId = (emp.employeeId || '').toLowerCase().includes(q);
+        const matchPhone = (emp.phone || '').toLowerCase().includes(q);
+        const matchEmail = (emp.email || '').toLowerCase().includes(q);
+        const matchDesignation = (emp.designation || '').toLowerCase().includes(q);
+        const matchDept = (emp.department || '').toLowerCase().includes(q);
+        if (!matchName && !matchId && !matchPhone && !matchEmail && !matchDesignation && !matchDept) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [employees, empViewMode, empDepartmentFilter, empStatusFilter, empEmploymentTypeFilter, empSearchQuery]);
+
+  // ---------------------------------------------------------------------------
+  // EMPLOYEE MASTER ACTION HANDLERS
+  // ---------------------------------------------------------------------------
+
+  const handleOpenAddEmployee = () => {
+    setIsAddEmployeeModalOpen(true);
+  };
+
+  const handleOpenEditEmployee = (emp: UserAccount) => {
+    setSelectedEmployee(emp);
+    setIsEditEmployeeModalOpen(true);
+  };
+
+  const handleOpenProfile = (emp: UserAccount) => {
+    setSelectedEmployee(emp);
+    setIsProfileModalOpen(true);
+  };
+
+  const handleArchiveToggle = async (emp: UserAccount) => {
+    try {
+      if (emp.isArchived) {
+        const res = await supabaseAuthService.unarchiveEmployee(emp.id);
+        if (res.success) {
+          showToast(`${emp.name} restored to active employee directory`, 'success');
+          await loadData();
+        } else {
+          showToast(res.error || 'Failed to restore employee', 'error');
+        }
+      } else {
+        const res = await supabaseAuthService.archiveEmployee(emp.id);
+        if (res.success) {
+          showToast(`${emp.name} archived. Removed from active payroll cycles.`, 'info');
+          await loadData();
+        } else {
+          showToast(res.error || 'Failed to archive employee', 'error');
+        }
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error updating employee status', 'error');
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!employeeToDelete) return;
+    setDeletingEmployee(true);
+    try {
+      const res = await supabaseAuthService.deleteEmployee(employeeToDelete.id);
+      if (res.success) {
+        showToast(`Employee ${employeeToDelete.name} deleted successfully`, 'success');
+        setEmployeeToDelete(null);
+        await loadData();
+      } else {
+        showToast(
+          res.error || 'Cannot delete employee with recorded financial history. You can mark them Inactive or Archive them instead.',
+          'error'
+        );
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Failed to delete employee', 'error');
+    } finally {
+      setDeletingEmployee(false);
+    }
+  };
+
+  const handleEmployeeCreated = async (
+    newEmp: UserAccount,
+    options?: { openSalaryConfig?: boolean; openProfile?: boolean }
+  ) => {
+    await loadData();
+    if (options?.openSalaryConfig) {
+      openStructureModal(newEmp);
+    } else if (options?.openProfile) {
+      handleOpenProfile(newEmp);
+    }
+    if (isRecordModalOpen) {
+      setFormEmployeeId(newEmp.id);
+    }
+  };
+
+  const handleExportEmployeeDirectory = () => {
+    downloadEmployeeDirectoryExcel(employees, structureMap);
+    showToast('Employee directory exported successfully', 'success');
+  };
 
   // ---------------------------------------------------------------------------
   // RECORD PAYMENT FORM LOGIC
@@ -539,9 +713,53 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
     }
   };
 
+  const renderEmployeeStatusBadge = (status?: string) => {
+    const s = status || 'Active';
+    switch (s) {
+      case 'Active':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+            <CheckCircle2 className="w-3 h-3" />
+            Active
+          </span>
+        );
+      case 'On Leave':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950/70 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+            <Clock className="w-3 h-3" />
+            On Leave
+          </span>
+        );
+      case 'Inactive':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+            Inactive
+          </span>
+        );
+      case 'Resigned':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+            Resigned
+          </span>
+        );
+      case 'Terminated':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+            Terminated
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+            {s}
+          </span>
+        );
+    }
+  };
+
   return (
     <div className="space-y-6 pb-12">
-      {/* 1. PROFESSIONAL HEADER */}
+      {/* 1. PROFESSIONAL HEADER (MASTER PROMPT SPECIFICATION) */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
         <div>
           <div className="flex items-center gap-3">
@@ -578,24 +796,42 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
               <span>Export</span>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
             </button>
-            <div className="absolute right-0 top-full mt-1.5 w-40 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg p-1 hidden group-hover:block z-30">
+            <div className="absolute right-0 top-full mt-1.5 w-52 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg p-1 hidden group-hover:block z-30">
               <button
                 onClick={handleExportPdf}
                 className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
               >
-                Export as PDF
+                Export Payroll as PDF
               </button>
               <button
                 onClick={handleExportExcel}
                 className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
               >
-                Export as Excel
+                Export Payroll as Excel
+              </button>
+              <button
+                onClick={handleExportEmployeeDirectory}
+                className="w-full text-left px-3 py-2 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 rounded-lg transition-colors cursor-pointer"
+              >
+                Export Employee Directory (.xlsx)
               </button>
             </div>
           </div>
 
+          {/* Prominent Add Employee Button */}
           <button
-            onClick={() => openStructureModal()}
+            onClick={handleOpenAddEmployee}
+            className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors cursor-pointer"
+          >
+            <UserPlus className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            <span>+ Add Employee</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveSubTab('structures');
+              openStructureModal();
+            }}
             className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
           >
             <Sliders className="w-4 h-4 text-slate-500" />
@@ -612,7 +848,36 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
         </div>
       </div>
 
-      {/* 2. TOP PAYROLL KPI CARDS (PART 4 SPECIFICATION) */}
+      {/* UNCONFIGURED SALARY STRUCTURES BANNER */}
+      {unconfiguredCount > 0 && activeEmployeeCount > 0 && (
+        <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900 dark:text-amber-200">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-amber-100 dark:bg-amber-900/60 rounded-xl text-amber-700 dark:text-amber-300 shrink-0">
+              <AlertTriangle className="w-4 h-4" />
+            </div>
+            <div>
+              <p className="font-bold">
+                {unconfiguredCount} employee{unconfiguredCount > 1 ? 's do' : ' does'} not have a salary structure configured
+              </p>
+              <p className="text-[11px] opacity-80 mt-0.5">
+                Configure base pay, allowances, and payment methods to automate monthly salary calculation.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              const unconfig = employees.find((e) => !e.isArchived && !structureMap.has(e.id));
+              setActiveSubTab('structures');
+              openStructureModal(unconfig);
+            }}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-600 text-white hover:bg-amber-700 transition-colors cursor-pointer shrink-0 self-start sm:self-auto"
+          >
+            Configure Structure →
+          </button>
+        </div>
+      )}
+
+      {/* 2. TOP PAYROLL KPI CARDS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Payroll */}
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs relative overflow-hidden">
@@ -697,41 +962,559 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
         </div>
       </div>
 
-      {/* 3. SUB-NAVIGATION TABS */}
-      <div className="flex border-b border-slate-200 dark:border-slate-800 space-x-6">
+      {/* 0 EMPLOYEES EMPTY STATE */}
+      {!loading && employees.length === 0 && (
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-8 sm:p-12 text-center shadow-xs">
+          <div className="max-w-xl mx-auto space-y-5">
+            <div className="w-16 h-16 rounded-2xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 mx-auto flex items-center justify-center border border-blue-100 dark:border-blue-900/50">
+              <Users className="w-8 h-8" />
+            </div>
+
+            <div>
+              <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">
+                No Employees in Master Directory
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+                Start by adding your employees to VISTAAR. You can add them individually with sequential <span className="font-mono font-bold text-blue-600 dark:text-blue-400">VST-EMP-XXX</span> IDs or bulk import your entire organization via Excel/CSV.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+              <button
+                onClick={handleOpenAddEmployee}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-sm shadow-blue-600/25 transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Add First Employee</span>
+              </button>
+
+              <button
+                onClick={() => setIsImportModalOpen(true)}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+              >
+                <UploadCloud className="w-4 h-4 text-slate-500" />
+                <span>Import Staff (Excel/CSV)</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-6 border-t border-slate-100 dark:border-slate-800/80 text-left">
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl">
+                <span className="text-[11px] font-bold text-slate-900 dark:text-white block">Authoritative Master</span>
+                <span className="text-[11px] text-slate-500 mt-1 block">
+                  Unified employee profile stored directly in your secure database.
+                </span>
+              </div>
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl">
+                <span className="text-[11px] font-bold text-slate-900 dark:text-white block">Zero Ledger Clutter</span>
+                <span className="text-[11px] text-slate-500 mt-1 block">
+                  Creating employees or salary structures generates zero unwanted journal entries.
+                </span>
+              </div>
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl">
+                <span className="text-[11px] font-bold text-slate-900 dark:text-white block">Audited Disbursements</span>
+                <span className="text-[11px] text-slate-500 mt-1 block">
+                  Disburse with 1-click; Daybook, Cashbook, and Expense postings auto-sync.
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. SUB-NAVIGATION TABS (4 AUTHORITATIVE MODULES) */}
+      <div className="flex border-b border-slate-200 dark:border-slate-800 space-x-6 overflow-x-auto">
+        <button
+          onClick={() => setActiveSubTab('employees')}
+          className={`pb-3 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 whitespace-nowrap ${
+            activeSubTab === 'employees'
+              ? 'border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400'
+              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
+          }`}
+        >
+          <Users className="w-3.5 h-3.5" />
+          <span>Employees ({activeEmployeeCount})</span>
+        </button>
+
         <button
           onClick={() => setActiveSubTab('history')}
-          className={`pb-3 text-xs font-bold transition-all border-b-2 cursor-pointer ${
+          className={`pb-3 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 whitespace-nowrap ${
             activeSubTab === 'history'
               ? 'border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400'
               : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
           }`}
         >
-          Payroll History & Transactions
+          <FileText className="w-3.5 h-3.5" />
+          <span>Payroll History & Transactions</span>
         </button>
-        <button
-          onClick={() => setActiveSubTab('calendar')}
-          className={`pb-3 text-xs font-bold transition-all border-b-2 cursor-pointer ${
-            activeSubTab === 'calendar'
-              ? 'border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
-          }`}
-        >
-          Monthly Payroll Register ({summary.monthLabel})
-        </button>
+
         <button
           onClick={() => setActiveSubTab('structures')}
-          className={`pb-3 text-xs font-bold transition-all border-b-2 cursor-pointer ${
+          className={`pb-3 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 whitespace-nowrap ${
             activeSubTab === 'structures'
               ? 'border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400'
               : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
           }`}
         >
-          Salary Structures & Profiles ({activeEmployees.length})
+          <Sliders className="w-3.5 h-3.5" />
+          <span>Salary Structures & Revisions ({structures.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('calendar')}
+          className={`pb-3 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 whitespace-nowrap ${
+            activeSubTab === 'calendar'
+              ? 'border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400'
+              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
+          }`}
+        >
+          <Calendar className="w-3.5 h-3.5" />
+          <span>Monthly Register ({summary.monthLabel})</span>
         </button>
       </div>
 
-      {/* 4. FILTER CONTROLS BAR (FOR HISTORY TAB) */}
+      {/* 4. TAB 1: EMPLOYEE MASTER DIRECTORY */}
+      {activeSubTab === 'employees' && (
+        <div className="space-y-4">
+          {/* Controls Bar */}
+          <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              {/* Search Box */}
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                <input
+                  type="text"
+                  placeholder="Search by name, ID (VST-EMP), phone, email, designation..."
+                  value={empSearchQuery}
+                  onChange={(e) => setEmpSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+                {empSearchQuery && (
+                  <button
+                    onClick={() => setEmpSearchQuery('')}
+                    className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Action Buttons: Add & Import */}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setIsImportModalOpen(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                >
+                  <UploadCloud className="w-4 h-4 text-slate-500" />
+                  <span>Import Excel</span>
+                </button>
+
+                <button
+                  onClick={handleOpenAddEmployee}
+                  className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-sm shadow-blue-600/20 transition-all cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>+ Add Employee</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Filter Pills / Dropdowns */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3 pt-2 border-t border-slate-100 dark:border-slate-800/80">
+              {/* Department */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  Department
+                </label>
+                <select
+                  value={empDepartmentFilter}
+                  onChange={(e) => setEmpDepartmentFilter(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 outline-none"
+                >
+                  <option value="ALL">All Departments</option>
+                  {departments.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Status */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  Status
+                </label>
+                <select
+                  value={empStatusFilter}
+                  onChange={(e) => setEmpStatusFilter(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 outline-none"
+                >
+                  <option value="ALL">All Statuses</option>
+                  <option value="Active">Active</option>
+                  <option value="On Leave">On Leave</option>
+                  <option value="Inactive">Inactive</option>
+                  <option value="Resigned">Resigned</option>
+                  <option value="Terminated">Terminated</option>
+                </select>
+              </div>
+
+              {/* Employment Type */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  Type
+                </label>
+                <select
+                  value={empEmploymentTypeFilter}
+                  onChange={(e) => setEmpEmploymentTypeFilter(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 outline-none"
+                >
+                  <option value="ALL">All Types</option>
+                  <option value="Full Time">Full Time</option>
+                  <option value="Part Time">Part Time</option>
+                  <option value="Contract">Contract</option>
+                  <option value="Temporary">Temporary</option>
+                  <option value="Intern">Intern</option>
+                </select>
+              </div>
+
+              {/* Active vs Archived Toggle */}
+              <div className="col-span-2 sm:col-span-1 lg:col-span-2 flex items-end">
+                <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-full">
+                  <button
+                    type="button"
+                    onClick={() => setEmpViewMode('active')}
+                    className={`flex-1 py-1 px-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      empViewMode === 'active'
+                        ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    Active Staff ({activeEmployeeCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEmpViewMode('archived')}
+                    className={`flex-1 py-1 px-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      empViewMode === 'archived'
+                        ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-xs'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    Archived ({archivedEmployeeCount})
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Employee Directory Content */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/40 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                  {empViewMode === 'active' ? 'Active Employee Master' : 'Archived Employees'}
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Showing {filteredEmployees.length} of {empViewMode === 'active' ? activeEmployeeCount : archivedEmployeeCount} employees
+                </p>
+              </div>
+
+              <button
+                onClick={handleExportEmployeeDirectory}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5 text-slate-500" />
+                <span>Export Directory (.xlsx)</span>
+              </button>
+            </div>
+
+            {/* Desktop Table View */}
+            <div className="hidden lg:block overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-100/70 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    <th className="p-3.5">Employee</th>
+                    <th className="p-3.5">Emp ID</th>
+                    <th className="p-3.5">Department</th>
+                    <th className="p-3.5">Contact</th>
+                    <th className="p-3.5">Joining Date</th>
+                    <th className="p-3.5 text-right">Compensation (Monthly)</th>
+                    <th className="p-3.5">Status</th>
+                    <th className="p-3.5 text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {loading ? (
+                    <tr>
+                      <td colSpan={8} className="p-8 text-center text-slate-400">
+                        Loading employee master directory...
+                      </td>
+                    </tr>
+                  ) : filteredEmployees.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="p-8 text-center text-slate-400">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <Users className="w-6 h-6 text-slate-300 dark:text-slate-600" />
+                          <p className="font-medium">
+                            {employees.length === 0
+                              ? 'No employees found in directory.'
+                              : 'No employees matched the selected search or filter.'}
+                          </p>
+                          {employees.length === 0 ? (
+                            <button
+                              onClick={handleOpenAddEmployee}
+                              className="mt-2 text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                            >
+                              + Add your first employee
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setEmpSearchQuery('');
+                                setEmpDepartmentFilter('ALL');
+                                setEmpStatusFilter('ALL');
+                                setEmpEmploymentTypeFilter('ALL');
+                              }}
+                              className="mt-2 text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                            >
+                              Clear all filters
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredEmployees.map((emp) => {
+                      const s = structureMap.get(emp.id);
+                      const grossSalary = s ? s.baseSalary + (s.hraAllowance || 0) + (s.otherAllowances || 0) : 0;
+                      return (
+                        <tr
+                          key={emp.id}
+                          className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                        >
+                          <td className="p-3.5 font-bold text-slate-900 dark:text-slate-100">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300 font-bold flex items-center justify-center text-xs shrink-0">
+                                {emp.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                              </div>
+                              <div>
+                                <span className="font-bold block">{emp.name}</span>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                  {emp.designation && (
+                                    <span className="text-[10px] text-slate-500 font-normal">
+                                      {emp.designation}
+                                    </span>
+                                  )}
+                                  {emp.employmentType && (
+                                    <span className="text-[9px] px-1.5 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded">
+                                      {emp.employmentType}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-3.5 font-mono text-[11px] font-semibold text-blue-600 dark:text-blue-400">
+                            {emp.employeeId || 'VST-EMP'}
+                          </td>
+                          <td className="p-3.5 text-slate-600 dark:text-slate-300">
+                            {emp.department || 'General'}
+                          </td>
+                          <td className="p-3.5 text-[11px] text-slate-600 dark:text-slate-400 space-y-0.5">
+                            {emp.phone && (
+                              <div className="flex items-center gap-1">
+                                <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                                <span>{emp.phone}</span>
+                              </div>
+                            )}
+                            {emp.email && (
+                              <div className="flex items-center gap-1 text-slate-500">
+                                <Mail className="w-3 h-3 text-slate-400 shrink-0" />
+                                <span className="truncate max-w-[150px]">{emp.email}</span>
+                              </div>
+                            )}
+                            {!emp.phone && !emp.email && <span className="text-slate-400">—</span>}
+                          </td>
+                          <td className="p-3.5 text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                            {emp.joiningDate || '—'}
+                          </td>
+                          <td className="p-3.5 text-right whitespace-nowrap">
+                            {s ? (
+                              <div>
+                                <span className="font-black text-slate-900 dark:text-white block">
+                                  {formatInr(grossSalary)}
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-normal">
+                                  Base: {formatInr(s.baseSalary)}
+                                </span>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => openStructureModal(emp)}
+                                className="text-[11px] font-semibold text-amber-600 hover:underline cursor-pointer"
+                              >
+                                Not configured
+                              </button>
+                            )}
+                          </td>
+                          <td className="p-3.5 whitespace-nowrap">
+                            {renderEmployeeStatusBadge(emp.status)}
+                          </td>
+                          <td className="p-3.5 text-center whitespace-nowrap">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                onClick={() => handleOpenProfile(emp)}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 transition-colors cursor-pointer"
+                                title="View Comprehensive Profile & Revisions"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+
+                              <button
+                                onClick={() => handleOpenEditEmployee(emp)}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                                title="Edit Employee Details"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+
+                              <button
+                                onClick={() => openStructureModal(emp)}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition-colors cursor-pointer"
+                                title="Configure Salary Structure"
+                              >
+                                <Sliders className="w-3.5 h-3.5" />
+                              </button>
+
+                              {!emp.isArchived && (emp.status || 'Active') === 'Active' && (
+                                <button
+                                  onClick={() => openRecordModalForEmployee(emp)}
+                                  className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors cursor-pointer"
+                                  title="Record Salary Payment"
+                                >
+                                  <CreditCard className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+
+                              <button
+                                onClick={() => handleArchiveToggle(emp)}
+                                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                                  emp.isArchived
+                                    ? 'text-emerald-600 hover:bg-emerald-50'
+                                    : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'
+                                }`}
+                                title={emp.isArchived ? 'Restore to Active' : 'Archive Employee'}
+                              >
+                                <Archive className="w-3.5 h-3.5" />
+                              </button>
+
+                              <button
+                                onClick={() => setEmployeeToDelete(emp)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors cursor-pointer"
+                                title="Delete Employee"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile Responsive Cards View */}
+            <div className="block lg:hidden divide-y divide-slate-100 dark:divide-slate-800">
+              {loading ? (
+                <div className="p-6 text-center text-slate-400 text-xs">Loading employee directory...</div>
+              ) : filteredEmployees.length === 0 ? (
+                <div className="p-6 text-center text-slate-400 text-xs">No employees found.</div>
+              ) : (
+                filteredEmployees.map((emp) => {
+                  const s = structureMap.get(emp.id);
+                  const grossSalary = s ? s.baseSalary + (s.hraAllowance || 0) + (s.otherAllowances || 0) : 0;
+                  return (
+                    <div key={emp.id} className="p-4 space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300 font-bold flex items-center justify-center text-xs shrink-0">
+                            {emp.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                          </div>
+                          <div>
+                            <span className="font-bold text-slate-900 dark:text-white text-xs block">{emp.name}</span>
+                            <span className="font-mono text-[10px] text-blue-600 font-semibold">{emp.employeeId || 'VST-EMP'}</span>
+                          </div>
+                        </div>
+                        <div>{renderEmployeeStatusBadge(emp.status)}</div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-[11px] bg-slate-50 dark:bg-slate-800/40 p-2.5 rounded-xl">
+                        <div>
+                          <span className="text-slate-400 text-[10px] block">Department / Role</span>
+                          <span className="font-medium text-slate-700 dark:text-slate-300">
+                            {emp.department || 'General'} {emp.designation ? `• ${emp.designation}` : ''}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 text-[10px] block">Compensation</span>
+                          <span className="font-bold text-slate-900 dark:text-white">
+                            {s ? formatInr(grossSalary) : 'Not configured'}
+                          </span>
+                        </div>
+                        {emp.phone && (
+                          <div>
+                            <span className="text-slate-400 text-[10px] block">Phone</span>
+                            <span className="font-medium text-slate-700 dark:text-slate-300">{emp.phone}</span>
+                          </div>
+                        )}
+                        {emp.joiningDate && (
+                          <div>
+                            <span className="text-slate-400 text-[10px] block">Joining Date</span>
+                            <span className="font-medium text-slate-700 dark:text-slate-300">{emp.joiningDate}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-end gap-1.5 pt-1">
+                        <button
+                          onClick={() => handleOpenProfile(emp)}
+                          className="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 cursor-pointer"
+                        >
+                          Profile
+                        </button>
+                        <button
+                          onClick={() => handleOpenEditEmployee(emp)}
+                          className="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 cursor-pointer"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => openStructureModal(emp)}
+                          className="px-2.5 py-1 rounded-lg text-xs font-semibold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/50 cursor-pointer"
+                        >
+                          Salary
+                        </button>
+                        {!emp.isArchived && (emp.status || 'Active') === 'Active' && (
+                          <button
+                            onClick={() => openRecordModalForEmployee(emp)}
+                            className="px-2.5 py-1 rounded-lg text-xs font-bold text-white bg-blue-600 cursor-pointer"
+                          >
+                            Pay
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. FILTER CONTROLS BAR (FOR HISTORY TAB) */}
       {activeSubTab === 'history' && (
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -1108,10 +1891,22 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
                       className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
                     >
                       <td className="p-3.5 font-bold text-slate-900 dark:text-slate-100">
-                        {emp.name}
+                        <div className="flex items-center gap-1.5">
+                          <span>{emp.name}</span>
+                          {s?.version && (
+                            <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                              v{s.version}
+                            </span>
+                          )}
+                        </div>
                         {emp.designation && (
                           <span className="block text-[10px] font-normal text-slate-400">
                             {emp.designation} {emp.department ? `• ${emp.department}` : ''}
+                          </span>
+                        )}
+                        {s?.effectiveFrom && (
+                          <span className="block text-[9px] text-slate-400 font-normal">
+                            Eff. from: {s.effectiveFrom}
                           </span>
                         )}
                       </td>
@@ -1147,13 +1942,22 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
                           '—'
                         )}
                       </td>
-                      <td className="p-3.5 text-center">
-                        <button
-                          onClick={() => openStructureModal(emp)}
-                          className="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                        >
-                          Edit
-                        </button>
+                      <td className="p-3.5 text-center whitespace-nowrap">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => openStructureModal(emp)}
+                            className="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleOpenProfile(emp)}
+                            className="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors cursor-pointer"
+                            title="View Revisions History"
+                          >
+                            Revisions
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1188,9 +1992,19 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
             {/* Employee & Transaction Type */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-1">
-                  Employee *
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
+                    Employee *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddEmployeeModalOpen(true)}
+                    className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>+ New Employee</span>
+                  </button>
+                </div>
                 <select
                   value={formEmployeeId}
                   onChange={(e) => setFormEmployeeId(e.target.value)}
@@ -1928,6 +2742,132 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
               >
                 Close Audit Report
               </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ======================================================================= */}
+      {/* MODAL 6: ADD EMPLOYEE MASTER MODAL */}
+      {/* ======================================================================= */}
+      <AddEmployeeModal
+        isOpen={isAddEmployeeModalOpen}
+        onClose={() => setIsAddEmployeeModalOpen(false)}
+        onEmployeeCreated={handleEmployeeCreated}
+        existingEmployees={employees}
+      />
+
+      {/* ======================================================================= */}
+      {/* MODAL 7: EDIT EMPLOYEE MODAL */}
+      {/* ======================================================================= */}
+      <EditEmployeeModal
+        isOpen={isEditEmployeeModalOpen}
+        onClose={() => {
+          setIsEditEmployeeModalOpen(false);
+          setSelectedEmployee(null);
+        }}
+        employee={selectedEmployee}
+        onEmployeeUpdated={async () => {
+          await loadData();
+        }}
+        existingEmployees={employees}
+      />
+
+      {/* ======================================================================= */}
+      {/* MODAL 8: COMPREHENSIVE EMPLOYEE PROFILE & REVISION HISTORY */}
+      {/* ======================================================================= */}
+      <EmployeeProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => {
+          setIsProfileModalOpen(false);
+          setSelectedEmployee(null);
+        }}
+        employee={selectedEmployee}
+        onEditEmployee={(emp) => {
+          setIsProfileModalOpen(false);
+          handleOpenEditEmployee(emp);
+        }}
+        onConfigureSalary={(emp) => {
+          setIsProfileModalOpen(false);
+          openStructureModal(emp);
+        }}
+        onViewPayslip={(payment) => {
+          setIsProfileModalOpen(false);
+          setSelectedPayslipPayment(payment);
+        }}
+        onRecordPaymentForEmp={(emp) => {
+          setIsProfileModalOpen(false);
+          openRecordModalForEmployee(emp);
+        }}
+      />
+
+      {/* ======================================================================= */}
+      {/* MODAL 9: BULK IMPORT EMPLOYEES (EXCEL / CSV) */}
+      {/* ======================================================================= */}
+      <BulkImportEmployeesModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        existingEmployees={employees}
+        onImportComplete={async () => {
+          await loadData();
+          setActiveSubTab('employees');
+        }}
+      />
+
+      {/* ======================================================================= */}
+      {/* MODAL 10: DELETE EMPLOYEE CONFIRMATION WITH FINANCIAL SAFETY */}
+      {/* ======================================================================= */}
+      {employeeToDelete && (
+        <Modal
+          isOpen={Boolean(employeeToDelete)}
+          onClose={() => setEmployeeToDelete(null)}
+          title={`Delete Employee — ${employeeToDelete.name}`}
+          maxWidth="md"
+        >
+          <div className="space-y-4">
+            <div className="p-3.5 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900 rounded-xl flex items-start gap-2.5 text-xs text-rose-800 dark:text-rose-300">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+              <div>
+                <p className="font-bold">Financial History Audit Protection</p>
+                <p className="mt-0.5">
+                  Employees with any recorded salary payments, salary structures, or financial postings cannot be deleted. If this employee has financial records, the system will block deletion to protect your accounting integrity.
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              Are you sure you want to permanently delete <strong className="text-slate-900 dark:text-white">{employeeToDelete.name}</strong> ({employeeToDelete.employeeId || 'VST-EMP'})?
+            </p>
+
+            <div className="flex items-center justify-between pt-3 border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  handleArchiveToggle(employeeToDelete);
+                  setEmployeeToDelete(null);
+                }}
+                className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+              >
+                Archive instead
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEmployeeToDelete(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDelete}
+                  disabled={deletingEmployee}
+                  className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 transition-all cursor-pointer"
+                >
+                  {deletingEmployee ? 'Deleting...' : 'Delete Employee'}
+                </button>
+              </div>
             </div>
           </div>
         </Modal>

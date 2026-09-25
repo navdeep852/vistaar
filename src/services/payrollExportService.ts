@@ -379,3 +379,126 @@ export function downloadPayrollReportExcel(payments: SalaryPayment[], periodLabe
 
   XLSX.writeFile(wb, `Payroll_Register_${periodLabel.replace(/\s+/g, '_')}.xlsx`);
 }
+
+/**
+ * Downloads a sample pre-formatted Excel template for Bulk Employee Import
+ */
+export function downloadEmployeeImportTemplate(): void {
+  const wb = XLSX.utils.book_new();
+
+  const templateRows = [
+    {
+      'Employee ID': 'VST-EMP-001',
+      'Full Name': 'Rahul Sharma',
+      Phone: '9820011223',
+      Email: 'rahul@example.com',
+      Department: 'Sales',
+      Designation: 'Sales Executive',
+      'Joining Date': '2026-01-15',
+      'Employment Type': 'Full Time',
+      'Employment Status': 'Active',
+      'Base Salary': 30000,
+    },
+    {
+      'Employee ID': 'VST-EMP-002',
+      'Full Name': 'Priya Patel',
+      Phone: '9820099887',
+      Email: 'priya@example.com',
+      Department: 'Accounts',
+      Designation: 'Executive Accountant',
+      'Joining Date': '2026-02-01',
+      'Employment Type': 'Full Time',
+      'Employment Status': 'Active',
+      'Base Salary': 28000,
+    },
+    {
+      'Employee ID': 'VST-EMP-003',
+      'Full Name': 'Amit Verma',
+      Phone: '9876543210',
+      Email: '',
+      Department: 'Operations',
+      Designation: 'Operations Executive',
+      'Joining Date': '2026-03-01',
+      'Employment Type': 'Full Time',
+      'Employment Status': 'Active',
+      'Base Salary': 25000,
+    },
+  ];
+
+  const ws = XLSX.utils.json_to_sheet(templateRows);
+  // Column widths
+  ws['!cols'] = [
+    { wch: 15 },
+    { wch: 22 },
+    { wch: 16 },
+    { wch: 25 },
+    { wch: 16 },
+    { wch: 22 },
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 14 },
+  ];
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Employees Template');
+  XLSX.writeFile(wb, 'VISTAAR_Employee_Import_Template.xlsx');
+}
+
+/**
+ * Downloads a spreadsheet of failed/invalid employee import rows with specific error notes
+ */
+export function downloadEmployeeErrorReport(
+  errors: { row: number; employeeId: string; name: string; error: string; data?: any }[]
+): void {
+  const wb = XLSX.utils.book_new();
+
+  const dataRows = errors.map((e) => ({
+    'Row #': e.row,
+    'Employee ID': e.employeeId || '—',
+    'Full Name': e.name || '—',
+    'Error Reason': e.error,
+    Phone: e.data?.phone || '',
+    Email: e.data?.email || '',
+    Department: e.data?.department || '',
+    Designation: e.data?.designation || '',
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(dataRows);
+  XLSX.utils.book_append_sheet(wb, ws, 'Import Errors');
+  XLSX.writeFile(wb, `Employee_Import_Error_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+}
+
+/**
+ * Exports complete Employee Directory to Excel
+ */
+export function downloadEmployeeDirectoryExcel(
+  employees: any[],
+  salaryMap: Map<string, any>
+): void {
+  const wb = XLSX.utils.book_new();
+
+  const dataRows = employees.map((emp, idx) => {
+    const s = salaryMap.get(emp.id);
+    return {
+      'Sl No': idx + 1,
+      'Employee ID': emp.employeeId,
+      'Full Name': emp.name,
+      Phone: emp.phone || '—',
+      Email: emp.email || '—',
+      Department: emp.department || '—',
+      Designation: emp.designation || '—',
+      'Employment Type': emp.employmentType || 'Full Time',
+      Status: emp.status || 'Active',
+      'Joining Date': emp.joiningDate || '—',
+      'Current Monthly Salary (INR)': s ? s.baseSalary + (s.hraAllowance || 0) + (s.otherAllowances || 0) : 'Not Configured',
+      'Payment Mode': s?.paymentMode || '—',
+      'Bank Account': s?.bankAccountNo ? `••••${s.bankAccountNo.slice(-4)}` : (s?.upiId || '—'),
+      Archived: emp.isArchived ? 'Yes' : 'No',
+    };
+  });
+
+  const ws = XLSX.utils.json_to_sheet(dataRows);
+  XLSX.utils.book_append_sheet(wb, ws, 'Employee Directory');
+  XLSX.writeFile(wb, `Employee_Directory_${new Date().toISOString().split('T')[0]}.xlsx`);
+}
+

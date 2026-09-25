@@ -23,6 +23,10 @@ export interface SalaryStructure {
   bankIfsc?: string;
   upiId?: string;
   notes?: string;
+  effectiveFrom?: string; // YYYY-MM-DD
+  effectiveTo?: string;   // YYYY-MM-DD
+  isCurrent?: boolean;
+  version?: number;
   createdAt?: string;
   updatedAt?: string;
 }

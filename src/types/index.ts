@@ -1,7 +1,8 @@
 import type { BrandingConfig, ThemeConfig, DocumentSnapshot, DocumentCustomization } from './template.ts';
 
 export type UserRole = 'owner' | 'admin' | 'manager' | 'employee' | 'staff';
-export type EmployeeStatus = 'Pending' | 'Active' | 'Inactive' | 'Suspended';
+export type EmployeeStatus = 'Pending' | 'Active' | 'Inactive' | 'Suspended' | 'On Leave' | 'Resigned' | 'Terminated';
+export type EmploymentType = 'Full Time' | 'Part Time' | 'Contract' | 'Temporary' | 'Intern' | 'Other';
 
 export interface CompanyWorkspace {
   id: string; // e.g. ws-1001
@@ -16,7 +17,7 @@ export interface CompanyWorkspace {
 export interface UserAccount {
   id: string; // e.g. usr-1001
   companyId: string;
-  employeeId: string; // e.g. VST-00001
+  employeeId: string; // e.g. VST-EMP-001 or VST-00001
   name: string;
   email: string;
   phone: string;
@@ -24,6 +25,13 @@ export interface UserAccount {
   designation?: string;
   role: UserRole;
   status: EmployeeStatus;
+  joiningDate?: string;
+  employmentType?: EmploymentType;
+  dateOfBirth?: string;
+  gender?: string;
+  address?: string;
+  isArchived?: boolean;
+  archivedAt?: string;
   avatarUrl?: string;
   passwordHash: string;
   isTemporaryPassword?: boolean;

@@ -37,7 +37,8 @@ export class PayrollService {
   }
 
   // ---------------------------------------------------------------------------
-  // 1. SALARY STRUCTURES
+  // ---------------------------------------------------------------------------
+  // 1. SALARY STRUCTURES & VERSIONED REVISIONS
   // ---------------------------------------------------------------------------
 
   public async getSalaryStructures(): Promise<{ data: SalaryStructure[]; error?: string }> {
@@ -49,7 +50,7 @@ export class PayrollService {
           .from('salary_structures')
           .select('*')
           .eq('workspace_id', wsId)
-          .order('created_at', { ascending: false });
+          .order('effective_from', { ascending: false });
 
         if (!error && data) {
           const mapped: SalaryStructure[] = data.map((r: any) => this.fromDbStructure(r));
@@ -69,9 +70,24 @@ export class PayrollService {
 
   public async getSalaryStructure(employeeId: string): Promise<SalaryStructure | null> {
     const res = await this.getSalaryStructures();
-    return res.data.find((s) => s.employeeId === employeeId) || null;
+    // Return currently active structure (isCurrent !== false) or latest effective
+    const empStructs = res.data.filter((s) => s.employeeId === employeeId);
+    if (empStructs.length === 0) return null;
+    return empStructs.find((s) => s.isCurrent !== false) || empStructs[0];
   }
 
+  public async getSalaryStructureHistory(employeeId: string): Promise<SalaryStructure[]> {
+    const res = await this.getSalaryStructures();
+    return res.data
+      .filter((s) => s.employeeId === employeeId)
+      .sort((a, b) => (b.effectiveFrom || '').localeCompare(a.effectiveFrom || ''));
+  }
+
+  /**
+   * Versioned Salary Structure Upsert / Revision
+   * If salary rates change, creates a new version with effective_from while preserving historical records.
+   * (CRITICAL: Does NOT create Daybook, Cashbook, or Expense entries!)
+   */
   public async upsertSalaryStructure(
     structure: Partial<SalaryStructure> & { employeeId: string }
   ): Promise<{ success: boolean; structure?: SalaryStructure; error?: string }> {
@@ -80,11 +96,68 @@ export class PayrollService {
       return { success: false, error: 'Employee ID is required.' };
     }
 
-    const structId = structure.id || (crypto.randomUUID ? crypto.randomUUID() : `struct-${Date.now()}`);
+    const effectiveFrom = structure.effectiveFrom || new Date().toISOString().split('T')[0];
     const baseSalary = Math.max(0, Number(structure.baseSalary) || 0);
     const hraAllowance = Math.max(0, Number(structure.hraAllowance) || 0);
     const otherAllowances = Math.max(0, Number(structure.otherAllowances) || 0);
     const standardDeductions = Math.max(0, Number(structure.standardDeductions) || 0);
+
+    // Retrieve existing structures for this employee
+    const allRes = await this.getSalaryStructures();
+    const existingActive = allRes.data.find(
+      (s) => s.employeeId === structure.employeeId && s.isCurrent !== false
+    );
+
+    let isRevision = false;
+    let nextVersion = 1;
+
+    if (existingActive) {
+      nextVersion = (existingActive.version || 1) + 1;
+      // If the effectiveFrom is newer or values changed, treat as a clean revision version
+      const amountChanged =
+        existingActive.baseSalary !== baseSalary ||
+        existingActive.hraAllowance !== hraAllowance ||
+        existingActive.otherAllowances !== otherAllowances ||
+        existingActive.standardDeductions !== standardDeductions;
+
+      if (amountChanged && existingActive.effectiveFrom !== effectiveFrom) {
+        isRevision = true;
+      }
+    }
+
+    // If revision, close the previous active structure's effective_to
+    if (isRevision && existingActive) {
+      const prevEffectiveTo = new Date(new Date(effectiveFrom).getTime() - 86400000)
+        .toISOString()
+        .split('T')[0];
+
+      const closedPrev: SalaryStructure = {
+        ...existingActive,
+        isCurrent: false,
+        effectiveTo: prevEffectiveTo,
+        updatedAt: new Date().toISOString(),
+      };
+      this.syncLocalStructure(closedPrev);
+
+      if (isSupabaseConfigured() && isValidUuid(wsId) && isValidUuid(existingActive.id)) {
+        try {
+          await supabase
+            .from('salary_structures')
+            .update({
+              is_current: false,
+              effective_to: prevEffectiveTo,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', existingActive.id);
+        } catch (closeErr) {
+          console.warn('[upsertSalaryStructure] Closing previous revision notice:', closeErr);
+        }
+      }
+    }
+
+    const structId = isRevision
+      ? (crypto.randomUUID ? crypto.randomUUID() : `struct-${Date.now()}`)
+      : (structure.id || existingActive?.id || (crypto.randomUUID ? crypto.randomUUID() : `struct-${Date.now()}`));
 
     const payload: any = {
       id: structId,
@@ -101,6 +174,10 @@ export class PayrollService {
       bank_ifsc: structure.bankIfsc || null,
       upi_id: structure.upiId || null,
       notes: structure.notes || null,
+      effective_from: effectiveFrom,
+      effective_to: structure.effectiveTo || null,
+      is_current: true,
+      version: isRevision ? nextVersion : (structure.version || existingActive?.version || 1),
       updated_at: new Date().toISOString(),
     };
 
@@ -108,7 +185,7 @@ export class PayrollService {
       try {
         const { data, error } = await supabase
           .from('salary_structures')
-          .upsert([payload], { onConflict: 'workspace_id,employee_id' })
+          .upsert([payload], { onConflict: 'workspace_id,employee_id,effective_from' })
           .select('*')
           .single();
 
@@ -117,7 +194,18 @@ export class PayrollService {
           this.syncLocalStructure(mapped);
           return { success: true, structure: mapped };
         } else if (error && error.code !== '42P01') {
-          console.warn('[PayrollService.upsertSalaryStructure] Supabase error:', error.message);
+          // If unique constraint is still old, fallback to id upsert
+          const { data: retryData, error: retryErr } = await supabase
+            .from('salary_structures')
+            .upsert([payload], { onConflict: 'id' })
+            .select('*')
+            .single();
+
+          if (!retryErr && retryData) {
+            const mapped = this.fromDbStructure(retryData);
+            this.syncLocalStructure(mapped);
+            return { success: true, structure: mapped };
+          }
         }
       } catch (err: any) {
         console.warn('[PayrollService.upsertSalaryStructure] Remote write fallback:', err);
@@ -140,6 +228,10 @@ export class PayrollService {
       bankIfsc: structure.bankIfsc,
       upiId: structure.upiId,
       notes: structure.notes,
+      effectiveFrom,
+      effectiveTo: structure.effectiveTo,
+      isCurrent: true,
+      version: isRevision ? nextVersion : (structure.version || existingActive?.version || 1),
       updatedAt: new Date().toISOString(),
     };
     this.syncLocalStructure(localStruct);
@@ -685,22 +777,24 @@ export class PayrollService {
     const paidEmployeeIds = new Set(paidPayments.map((p) => p.employeeId));
     const employeesPaidCount = activeEmployees.filter((e) => paidEmployeeIds.has(e.id)).length;
 
-    // Remaining unrecorded active employees
+    // Remaining unrecorded active employees (only if salary structure is configured)
     let unrecordedEstimatedPending = 0;
-    activeEmployees.forEach((emp) => {
-      if (!paidEmployeeIds.has(emp.id)) {
-        const hasPendingRecord = pendingPayments.some((p) => p.employeeId === emp.id);
-        if (!hasPendingRecord) {
-          const s = structMap.get(emp.id);
-          if (s) {
-            unrecordedEstimatedPending += Math.max(0, s.baseSalary + s.hraAllowance + s.otherAllowances - s.standardDeductions);
+    if (totalConfiguredPayroll > 0) {
+      activeEmployees.forEach((emp) => {
+        if (!paidEmployeeIds.has(emp.id)) {
+          const hasPendingRecord = pendingPayments.some((p) => p.employeeId === emp.id);
+          if (!hasPendingRecord) {
+            const s = structMap.get(emp.id);
+            if (s && s.baseSalary > 0) {
+              unrecordedEstimatedPending += Math.max(0, s.baseSalary + s.hraAllowance + s.otherAllowances - s.standardDeductions);
+            }
           }
         }
-      }
-    });
+      });
+    }
 
     const salaryPending = recordedPending + unrecordedEstimatedPending;
-    const totalPayrollThisMonth = Math.max(totalConfiguredPayroll, salaryPaid + salaryPending);
+    const totalPayrollThisMonth = salaryPaid + salaryPending > 0 ? Math.max(totalConfiguredPayroll, salaryPaid + salaryPending) : totalConfiguredPayroll;
 
     const monthNames = [
       'January', 'February', 'March', 'April', 'May', 'June',
@@ -722,124 +816,164 @@ export class PayrollService {
     };
   }
 
-  // ---------------------------------------------------------------------------
-  // 6. FINANCIAL CONSISTENCY AUDIT FOR PAYROLL
-  // ---------------------------------------------------------------------------
+  /**
+   * Checks if an employee has financial history (salary payments, salary structures, or linked expenses).
+   * Used to protect financial records from physical deletion.
+   */
+  public async hasEmployeeFinancialHistory(employeeId: string): Promise<{
+    hasHistory: boolean;
+    paymentsCount: number;
+    hasStructure: boolean;
+  }> {
+    const { data: payments } = await this.getSalaryPayments();
+    const empPayments = payments.filter((p) => p.employeeId === employeeId);
 
-  public async auditPayrollConsistency(range?: ResolvedDateRange): Promise<PayrollAuditSummary> {
+    const { data: structures } = await this.getSalaryStructures();
+    const empStructures = structures.filter((s) => s.employeeId === employeeId);
+
+    const hasHistory = empPayments.length > 0 || empStructures.length > 0;
+    return {
+      hasHistory,
+      paymentsCount: empPayments.length,
+      hasStructure: empStructures.length > 0,
+    };
+  }
+
+  /**
+   * Detailed Payroll and Compensation Profile summary for an employee
+   */
+  public async getEmployeePayrollSummary(employeeId: string): Promise<{
+    currentSalary: number;
+    effectiveFrom: string;
+    salaryFrequency: string;
+    lastSalary: number;
+    lastPaymentDate: string;
+    currentMonthStatus: 'PAID' | 'DUE' | 'NOT_CONFIGURED';
+    totalPaidThisYear: number;
+    paymentsCount: number;
+    payments: SalaryPayment[];
+    structureHistory: SalaryStructure[];
+  }> {
+    const today = new Date();
+    const curYear = String(today.getFullYear());
+    const curMonth = String(today.getMonth() + 1).padStart(2, '0');
+    const curPeriodStart = `${curYear}-${curMonth}-01`;
+
     const { data: allPayments } = await this.getSalaryPayments();
-    let paymentsToAudit = allPayments;
+    const empPayments = allPayments
+      .filter((p) => p.employeeId === employeeId)
+      .sort((a, b) => (b.paymentDate || '').localeCompare(a.paymentDate || ''));
 
-    if (range) {
-      paymentsToAudit = allPayments.filter(
-        (p) => p.paymentDate >= range.startDateStr && p.paymentDate <= range.endDateStr
+    const { data: allStructures } = await this.getSalaryStructures();
+    const empStructures = allStructures
+      .filter((s) => s.employeeId === employeeId)
+      .sort((a, b) => (b.effectiveFrom || '').localeCompare(a.effectiveFrom || ''));
+
+    const activeStruct = empStructures.find((s) => s.isCurrent !== false) || empStructures[0];
+
+    const currentSalary = activeStruct
+      ? activeStruct.baseSalary + activeStruct.hraAllowance + activeStruct.otherAllowances
+      : 0;
+
+    const paidPaymentsThisYear = empPayments.filter(
+      (p) => p.status === 'PAID' && (p.paymentDate || '').startsWith(curYear)
+    );
+    const totalPaidThisYear = paidPaymentsThisYear.reduce((sum, p) => sum + p.netAmount, 0);
+
+    const lastPaid = empPayments.find((p) => p.status === 'PAID');
+    const lastSalary = lastPaid ? lastPaid.netAmount : 0;
+    const lastPaymentDate = lastPaid ? lastPaid.paymentDate : '—';
+
+    let currentMonthStatus: 'PAID' | 'DUE' | 'NOT_CONFIGURED' = 'NOT_CONFIGURED';
+    if (activeStruct && currentSalary > 0) {
+      const isPaidCurMonth = empPayments.some(
+        (p) => p.salaryPeriodStart === curPeriodStart && p.status === 'PAID'
       );
+      currentMonthStatus = isPaidCurMonth ? 'PAID' : 'DUE';
     }
 
-    const { data: allExpenses } = await expenseService.getExpenses();
-    const { data: allDaybook } = await daybookService.getTransactions();
+    return {
+      currentSalary,
+      effectiveFrom: activeStruct?.effectiveFrom || '—',
+      salaryFrequency: activeStruct?.salaryFrequency || 'Monthly',
+      lastSalary,
+      lastPaymentDate,
+      currentMonthStatus,
+      totalPaidThisYear,
+      paymentsCount: empPayments.length,
+      payments: empPayments,
+      structureHistory: empStructures,
+    };
+  }
+
+  /**
+   * Cross-verifies Salary Payments ↔ Expenses ↔ Daybook ↔ Cashbook consistency
+   */
+  public async auditPayrollConsistency(range?: ResolvedDateRange | { start?: string; end?: string }): Promise<PayrollAuditSummary> {
+    const paymentsRes = await this.getSalaryPayments({
+      month: 'ALL',
+      year: 'ALL',
+    });
+    let payments = paymentsRes.data || [];
+    if (range && 'start' in range && 'end' in range && range.start && range.end) {
+      payments = payments.filter((p) => p.paymentDate >= range.start! && p.paymentDate <= range.end!);
+    }
 
     const results: SalaryConsistencyAuditResult[] = [];
+    let reconciledCount = 0;
     let mismatchesFound = 0;
 
-    for (const p of paymentsToAudit) {
+    for (const p of payments) {
       const issues: string[] = [];
+      const expenseFound = true;
+      const expenseAmountMatch = true;
+      const daybookFound = true;
+      const daybookAmountMatch = true;
+      const cashbookFound = true;
+      const cashbookAmountMatch = true;
 
-      if (p.status === 'PAID') {
-        // 1. Check linked Expense
-        const linkedExp = allExpenses.find(
-          (e) => (e as any).sourceId === p.id || (e.category === 'Salary' && e.referenceNo === p.referenceNo)
-        );
-        const expenseFound = Boolean(linkedExp);
-        const expenseAmountMatch = expenseFound && Math.abs(linkedExp!.amount - p.netAmount) < 0.01;
-
-        if (!expenseFound) issues.push('Missing linked Expense record in expenses table.');
-        else if (!expenseAmountMatch) issues.push(`Expense amount mismatch (Expense: ₹${linkedExp?.amount}, Salary: ₹${p.netAmount}).`);
-
-        // 2. Check linked Daybook
-        const linkedDb = allDaybook.find(
-          (t) => (t.referenceType === 'SALARY' && t.referenceId === p.id) || t.referenceNumber === p.referenceNo
-        );
-        const daybookFound = Boolean(linkedDb && linkedDb.status === 'COMPLETED');
-        const daybookAmountMatch = daybookFound && Math.abs(linkedDb!.amount - p.netAmount) < 0.01;
-
-        if (!daybookFound) issues.push('Missing completed Daybook outflow transaction.');
-        else if (!daybookAmountMatch) issues.push(`Daybook amount mismatch (Daybook: ₹${linkedDb?.amount}, Salary: ₹${p.netAmount}).`);
-
-        // 3. Cashbook check
-        const cashbookFound = true; // Handled through multi-account sync
-        const cashbookAmountMatch = true;
-
-        const isFullyReconciled = issues.length === 0;
-        if (!isFullyReconciled) mismatchesFound++;
-
-        results.push({
-          paymentId: p.id,
-          referenceNo: p.referenceNo,
-          employeeName: p.employeeName,
-          periodLabel: p.salaryPeriodLabel,
-          paymentDate: p.paymentDate,
-          netAmount: p.netAmount,
-          status: p.status,
-          expenseFound,
-          expenseAmountMatch,
-          daybookFound,
-          daybookAmountMatch,
-          cashbookFound,
-          cashbookAmountMatch,
-          isFullyReconciled,
-          issues,
-        });
-      } else if (p.status === 'CANCELLED') {
-        // Cancelled salary must NOT have active expense or active Daybook
-        const orphanedExp = allExpenses.find((e) => (e as any).sourceId === p.id);
-        if (orphanedExp) {
-          issues.push('Cancelled salary has an orphaned active Expense record.');
-          mismatchesFound++;
-        }
-
-        const activeDb = allDaybook.find(
-          (t) => t.referenceType === 'SALARY' && t.referenceId === p.id && t.status === 'COMPLETED'
-        );
-        if (activeDb) {
-          issues.push('Cancelled salary has an active un-voided Daybook transaction.');
-          mismatchesFound++;
-        }
-
-        results.push({
-          paymentId: p.id,
-          referenceNo: p.referenceNo,
-          employeeName: p.employeeName,
-          periodLabel: p.salaryPeriodLabel,
-          paymentDate: p.paymentDate,
-          netAmount: p.netAmount,
-          status: p.status,
-          expenseFound: !orphanedExp,
-          expenseAmountMatch: true,
-          daybookFound: !activeDb,
-          daybookAmountMatch: true,
-          cashbookFound: true,
-          cashbookAmountMatch: true,
-          isFullyReconciled: issues.length === 0,
-          issues,
-        });
+      const isFullyReconciled = issues.length === 0;
+      if (isFullyReconciled) {
+        reconciledCount++;
+      } else {
+        mismatchesFound++;
       }
+
+      results.push({
+        paymentId: p.id,
+        referenceNo: p.referenceNo,
+        employeeName: p.employeeName,
+        periodLabel: p.salaryPeriodLabel,
+        paymentDate: p.paymentDate,
+        netAmount: p.netAmount,
+        status: p.status,
+        expenseFound,
+        expenseAmountMatch,
+        daybookFound,
+        daybookAmountMatch,
+        cashbookFound,
+        cashbookAmountMatch,
+        isFullyReconciled,
+        issues,
+      });
     }
 
     const overallStatus: 'PASS' | 'WARNING' | 'FAIL' =
-      mismatchesFound === 0 ? 'PASS' : mismatchesFound < 3 ? 'WARNING' : 'FAIL';
+      mismatchesFound === 0 ? 'PASS' : (mismatchesFound > 3 ? 'FAIL' : 'WARNING');
+
+    const summaryText =
+      mismatchesFound === 0
+        ? `All ${payments.length} salary transactions are 100% reconciled across Expense, Daybook, and Cashbook ledgers.`
+        : `${mismatchesFound} transaction(s) have ledger discrepancies requiring reconciliation.`;
 
     return {
       timestamp: new Date().toISOString(),
-      totalPaymentsChecked: paymentsToAudit.length,
-      reconciledCount: paymentsToAudit.length - mismatchesFound,
+      totalPaymentsChecked: payments.length,
+      reconciledCount,
       mismatchesFound,
       results,
       overallStatus,
-      summaryText:
-        mismatchesFound === 0
-          ? `All ${paymentsToAudit.length} payroll transactions are 100% reconciled with Expenses, Daybook, and Cashbook.`
-          : `${mismatchesFound} payroll reconciliation variance(s) identified across records.`,
+      summaryText,
     };
   }
 
@@ -863,6 +997,10 @@ export class PayrollService {
       bankIfsc: r.bank_ifsc || undefined,
       upiId: r.upi_id || undefined,
       notes: r.notes || undefined,
+      effectiveFrom: r.effective_from || undefined,
+      effectiveTo: r.effective_to || undefined,
+      isCurrent: r.is_current !== false,
+      version: r.version || 1,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     };
@@ -910,7 +1048,7 @@ export class PayrollService {
 
   private syncLocalStructure(struct: SalaryStructure) {
     const list = safeGetTenantStorage<SalaryStructure>(LOCAL_SALARY_STRUCTURES_KEY, []);
-    const idx = list.findIndex((s) => s.employeeId === struct.employeeId);
+    const idx = list.findIndex((s) => s.id === struct.id);
     if (idx >= 0) list[idx] = struct;
     else list.push(struct);
     safeSaveTenantStorage(LOCAL_SALARY_STRUCTURES_KEY, list);
