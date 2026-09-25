@@ -5,7 +5,9 @@ import {
   Supplier,
   InventoryTransaction,
   Quotation,
+  QuotationItem,
   Invoice,
+  InvoiceItem,
   Payment,
   Expense,
   FollowUp,
@@ -42,6 +44,7 @@ import {
   calculateDaybookFinancials,
   validatePaymentAmount,
 } from './financialCalculationService';
+import { filterValidLineItems } from '../lib/productHelpers';
 
 const LOCAL_PRODUCTS_KEY = 'vistaar_local_products_db';
 
@@ -793,6 +796,7 @@ class StoreService {
 
     const newQuotation: Quotation = {
       ...quotationData,
+      items: filterValidLineItems(quotationData.items) as QuotationItem[],
       id: `qt-${Date.now()}`,
       quotationNumber,
       templateId: quotationData.templateId || 'qt-modern-blue',
@@ -1010,6 +1014,7 @@ class StoreService {
 
     const newInvoice: Invoice = {
       ...invoiceData,
+      items: filterValidLineItems(invoiceData.items) as InvoiceItem[],
       id: (invoiceData as any).id || `inv-${Date.now()}`,
       invoiceNumber,
       grandTotal,

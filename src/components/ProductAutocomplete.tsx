@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useId, forwardRef, useImperativeHandle } from 'react';
+import { createPortal } from 'react-dom';
 import { Search, X, Loader2, Plus } from 'lucide-react';
 import { Product } from '../types';
 import { productService } from '../services/supabase/productService';
@@ -44,11 +45,58 @@ export const ProductAutocomplete = forwardRef<HTMLInputElement, ProductAutocompl
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<Product[]>([]);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const [dropdownCoords, setDropdownCoords] = useState<{
+    top?: number;
+    bottom?: number;
+    left: number;
+    width: number;
+    isUpward: boolean;
+  } | null>(null);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const listboxId = useId();
 
   useImperativeHandle(ref, () => inputRef.current as HTMLInputElement);
+
+  // Calculate dynamic floating position anchored to input with viewport collision detection
+  const updateDropdownCoords = () => {
+    if (!inputRef.current) return;
+    const rect = inputRef.current.getBoundingClientRect();
+    const dropdownEstimatedHeight = 280;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const isUpward = spaceBelow < dropdownEstimatedHeight && spaceAbove > spaceBelow;
+
+    // Minimum width of 380px on desktop (or full input width if wider), capped at viewport width
+    const targetWidth = Math.min(
+      Math.max(rect.width, 380),
+      window.innerWidth - 24
+    );
+
+    // Keep horizontally within viewport bounds
+    let left = rect.left;
+    if (left + targetWidth > window.innerWidth - 12) {
+      left = Math.max(12, window.innerWidth - targetWidth - 12);
+    }
+
+    if (isUpward) {
+      setDropdownCoords({
+        bottom: window.innerHeight - rect.top + 6,
+        left,
+        width: targetWidth,
+        isUpward: true,
+      });
+    } else {
+      setDropdownCoords({
+        top: rect.bottom + 6,
+        left,
+        width: targetWidth,
+        isUpward: false,
+      });
+    }
+  };
 
   // Perform search when search term changes or when dropdown opens
   useEffect(() => {
@@ -110,10 +158,38 @@ export const ProductAutocomplete = forwardRef<HTMLInputElement, ProductAutocompl
     };
   }, [searchTerm, isOpen, fallbackProducts]);
 
-  // Click outside listener to close dropdown
+  // Keep dropdown coordinates anchored during scroll or resize
+  useEffect(() => {
+    if (!isOpen) {
+      setDropdownCoords(null);
+      return;
+    }
+
+    updateDropdownCoords();
+
+    const handleScrollOrResize = () => {
+      updateDropdownCoords();
+    };
+
+    window.addEventListener('scroll', handleScrollOrResize, true);
+    window.addEventListener('resize', handleScrollOrResize);
+
+    return () => {
+      window.removeEventListener('scroll', handleScrollOrResize, true);
+      window.removeEventListener('resize', handleScrollOrResize);
+    };
+  }, [isOpen]);
+
+  // Click outside listener to close dropdown (aware of both input container and portal dropdown)
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(target) &&
+        dropdownRef.current &&
+        !dropdownRef.current.contains(target)
+      ) {
         setIsOpen(false);
       }
     };
@@ -257,121 +333,133 @@ export const ProductAutocomplete = forwardRef<HTMLInputElement, ProductAutocompl
         )}
       </div>
 
-      {/* Autocomplete Dropdown */}
-      {isOpen && (
-        <div
-          id={listboxId}
-          role="listbox"
-          className="absolute z-50 left-0 right-0 mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 animate-in fade-in zoom-in-95 duration-100 min-w-[280px]"
-        >
-          {loading && results.length === 0 ? (
-            <div className="p-3 text-center text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center justify-center gap-2">
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
-              <span>Searching catalog...</span>
-            </div>
-          ) : results.length === 0 ? (
-            <div className="p-3 text-center space-y-2">
-              <p className="text-xs font-bold text-slate-600 dark:text-slate-400">No products found</p>
-              <p className="text-[11px] text-slate-400 dark:text-slate-500">
-                {searchTerm ? `No matching product for "${searchTerm}".` : 'No products available.'}
-              </p>
-              {allowCustomProduct && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onAddCustomProduct?.(searchTerm.trim());
-                    setIsOpen(false);
-                    setSearchTerm('');
-                  }}
-                  className={`w-full mt-1 py-2 px-3 rounded-xl bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/60 text-xs font-extrabold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
-                    highlightedIndex === 0 ? 'ring-2 ring-blue-500 bg-blue-100 dark:bg-blue-900/80' : ''
-                  }`}
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>+ Add {searchTerm.trim() ? `"${searchTerm.trim()}" as ` : ''}Custom Product</span>
-                </button>
-              )}
-            </div>
-          ) : (
-            <>
-              {results.map((prod, idx) => {
-                const isSelected = prod.id === selectedProductId;
-                const isHighlighted = idx === highlightedIndex;
-                const stock = getProductStock(prod);
-                const partNo = getProductPartNumber(prod);
-                const name = getProductDisplayName(prod);
-                const price = getProductSellingPrice(prod);
+      {/* Autocomplete Dropdown Portal (Immune to parent clipping/overflow) */}
+      {isOpen && dropdownCoords && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              ref={dropdownRef}
+              id={listboxId}
+              role="listbox"
+              style={{
+                position: 'fixed',
+                ...(dropdownCoords.top !== undefined ? { top: `${dropdownCoords.top}px` } : {}),
+                ...(dropdownCoords.bottom !== undefined ? { bottom: `${dropdownCoords.bottom}px` } : {}),
+                left: `${dropdownCoords.left}px`,
+                width: `${dropdownCoords.width}px`,
+                zIndex: 99999,
+              }}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 animate-in fade-in zoom-in-95 duration-100 ring-1 ring-slate-900/10 dark:ring-white/10"
+            >
+              {loading && results.length === 0 ? (
+                <div className="p-3 text-center text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center justify-center gap-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                  <span>Searching catalog...</span>
+                </div>
+              ) : results.length === 0 ? (
+                <div className="p-3 text-center space-y-2">
+                  <p className="text-xs font-bold text-slate-600 dark:text-slate-400">No products found</p>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                    {searchTerm ? `No matching product for "${searchTerm}".` : 'No products available.'}
+                  </p>
+                  {allowCustomProduct && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onAddCustomProduct?.(searchTerm.trim());
+                        setIsOpen(false);
+                        setSearchTerm('');
+                      }}
+                      className={`w-full mt-1 py-2 px-3 rounded-xl bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/60 text-xs font-extrabold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                        highlightedIndex === 0 ? 'ring-2 ring-blue-500 bg-blue-100 dark:bg-blue-900/80' : ''
+                      }`}
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ Add {searchTerm.trim() ? `"${searchTerm.trim()}" as ` : ''}Custom Product</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <>
+                  {results.map((prod, idx) => {
+                    const isSelected = prod.id === selectedProductId;
+                    const isHighlighted = idx === highlightedIndex;
+                    const stock = getProductStock(prod);
+                    const partNo = getProductPartNumber(prod);
+                    const name = getProductDisplayName(prod);
+                    const price = getProductSellingPrice(prod);
 
-                return (
-                  <div
-                    key={prod.id || idx}
-                    role="option"
-                    aria-selected={isSelected}
-                    onClick={() => handleSelect(prod)}
-                    onMouseEnter={() => setHighlightedIndex(idx)}
-                    className={`p-2.5 cursor-pointer transition-colors ${
-                      isHighlighted
-                        ? 'bg-blue-50 dark:bg-slate-800/80 ring-1 ring-inset ring-blue-500/30'
-                        : isSelected
-                        ? 'bg-slate-50 dark:bg-slate-800/40'
-                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {partNo && (
-                            <span className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-mono text-[11px] font-extrabold shrink-0 border border-blue-200 dark:border-blue-900/50">
-                              {partNo}
+                    return (
+                      <div
+                        key={prod.id || idx}
+                        role="option"
+                        aria-selected={isSelected}
+                        onClick={() => handleSelect(prod)}
+                        onMouseEnter={() => setHighlightedIndex(idx)}
+                        className={`p-2.5 cursor-pointer transition-colors ${
+                          isHighlighted
+                            ? 'bg-blue-50 dark:bg-slate-800/80 ring-1 ring-inset ring-blue-500/30'
+                            : isSelected
+                            ? 'bg-slate-50 dark:bg-slate-800/40'
+                            : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {partNo && (
+                                <span className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 font-mono text-[11px] font-extrabold shrink-0 border border-blue-200 dark:border-blue-900/50">
+                                  {partNo}
+                                </span>
+                              )}
+                              <span className="font-bold text-slate-900 dark:text-slate-100 text-xs truncate">
+                                {name}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="text-right shrink-0 flex items-center gap-3">
+                            <span className="font-extrabold text-slate-900 dark:text-slate-100 text-xs whitespace-nowrap">
+                              {currency}{price.toLocaleString('en-IN')}
                             </span>
-                          )}
-                          <span className="font-bold text-slate-900 dark:text-slate-100 text-xs truncate">
-                            {name}
-                          </span>
+                            <span
+                              className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                stock > 0
+                                  ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
+                                  : 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300'
+                              }`}
+                            >
+                              Stock: {stock}
+                            </span>
+                          </div>
                         </div>
                       </div>
+                    );
+                  })}
 
-                      <div className="text-right shrink-0 flex items-center gap-3">
-                        <span className="font-extrabold text-slate-900 dark:text-slate-100 text-xs whitespace-nowrap">
-                          {currency}{price.toLocaleString('en-IN')}
-                        </span>
-                        <span
-                          className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                            stock > 0
-                              ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
-                              : 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300'
-                          }`}
-                        >
-                          Stock: {stock}
-                        </span>
-                      </div>
+                  {allowCustomProduct && (
+                    <div className="p-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onAddCustomProduct?.(searchTerm.trim());
+                          setIsOpen(false);
+                          setSearchTerm('');
+                        }}
+                        className={`w-full py-2 px-3 rounded-xl bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/60 text-xs font-extrabold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                          highlightedIndex === results.length ? 'ring-2 ring-blue-500 bg-blue-100 dark:bg-blue-900/80' : ''
+                        }`}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>+ Add {searchTerm.trim() ? `"${searchTerm.trim()}" as ` : ''}Custom Product</span>
+                      </button>
                     </div>
-                  </div>
-                );
-              })}
-
-              {allowCustomProduct && (
-                <div className="p-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onAddCustomProduct?.(searchTerm.trim());
-                      setIsOpen(false);
-                      setSearchTerm('');
-                    }}
-                    className={`w-full py-2 px-3 rounded-xl bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/60 text-xs font-extrabold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
-                      highlightedIndex === results.length ? 'ring-2 ring-blue-500 bg-blue-100 dark:bg-blue-900/80' : ''
-                    }`}
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>+ Add {searchTerm.trim() ? `"${searchTerm.trim()}" as ` : ''}Custom Product</span>
-                  </button>
-                </div>
+                  )}
+                </>
               )}
-            </>
-          )}
-        </div>
-      )}
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 });

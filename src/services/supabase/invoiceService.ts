@@ -7,6 +7,7 @@ import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 import { productService } from './productService';
 import { fromDbInvoice } from './types';
 import { calculateInvoiceFinancials } from '../financialCalculationService';
+import { filterValidLineItems } from '../../lib/productHelpers';
 const LOCAL_INVOICES_KEY = 'vistaar_local_invoices_db';
 
 export class InvoiceService {
@@ -461,8 +462,12 @@ export class InvoiceService {
       let calcDiscountTotal = 0;
       let calcTaxTotal = 0;
       let calcGrandTotal = 0;
+      const validPayloadItems = filterValidLineItems(payload.items || []);
+      if (validPayloadItems.length === 0) {
+        return { success: false, error: 'Add at least one product/item before continuing.' };
+      }
 
-      const normalizedItems = (payload.items || []).map((item, idx) => {
+      const normalizedItems = validPayloadItems.map((item, idx) => {
         const qty = Math.max(1, Number(item.quantity) || 1);
         const rate = Number(item.sellingPrice ?? item.price ?? item.rate ?? 0);
         const disc = Math.max(0, Number(item.discountAmount ?? 0));

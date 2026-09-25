@@ -57,6 +57,7 @@ import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
 import { ProductAutocomplete } from '../components/ProductAutocomplete';
 import { ProductLineItemsTable } from '../components/ProductLineItemsTable';
 import { inventoryService } from '../services/supabase/inventoryService';
+import { isEmptyLineItem, filterValidLineItems } from '../lib/productHelpers';
 
 
 interface DocumentEditorViewProps {
@@ -214,23 +215,25 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
     taxPercent: number;
   }
 
-  const [items, setItems] = useState<EditorItem[]>(
-    initialDraftData?.items && initialDraftData.items.length > 0
-      ? initialDraftData.items
-      : [
-          {
-            productName: '',
-            partNumber: '',
-            sku: '',
-            unit: 'Pcs',
-            quantity: 1,
-            sellingPrice: 0,
-            discountAmount: 0,
-            taxPercent: 18,
-            availableStock: 0,
-          },
-        ]
-  );
+  const [items, setItems] = useState<EditorItem[]>(() => {
+    if (initialDraftData?.items && initialDraftData.items.length > 0) {
+      const valid = filterValidLineItems(initialDraftData.items);
+      if (valid.length > 0) return valid;
+    }
+    return [
+      {
+        productName: '',
+        partNumber: '',
+        sku: '',
+        unit: 'Pcs',
+        quantity: 1,
+        sellingPrice: 0,
+        discountAmount: 0,
+        taxPercent: 18,
+        availableStock: 0,
+      },
+    ];
+  });
 
   // 4. Branding Assets State (Auto-fetches workspace defaults)
   const [branding, setBranding] = useState<BrandingConfig>(
@@ -408,12 +411,13 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
     setItems((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Math Calculations
-  const calculatedItems: (QuotationItem | InvoiceItem)[] = items.map((item, idx) => {
+  // Math Calculations (Strictly ignores completely empty and unused line items)
+  const validItemsForCalculation = items.filter((item) => !isEmptyLineItem(item));
+  const calculatedItems: (QuotationItem | InvoiceItem)[] = validItemsForCalculation.map((item, idx) => {
     const prod = products.find((p) => p.id === item.productId);
-    const lineSubtotal = item.quantity * item.sellingPrice;
+    const lineSubtotal = (item.quantity || 1) * (item.sellingPrice || 0);
     const afterDiscount = Math.max(0, lineSubtotal - (item.discountAmount || 0));
-    const taxAmount = (afterDiscount * item.taxPercent) / 100;
+    const taxAmount = (afterDiscount * (item.taxPercent || 0)) / 100;
     const total = afterDiscount + taxAmount;
 
     return {
@@ -539,6 +543,50 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
 
   // Save Draft Action
   const handleSaveDraft = () => {
+    // 1. Normalize line items: remove completely empty rows
+    const cleanedItems = items.filter((item) => !isEmptyLineItem(item));
+
+    if (cleanedItems.length === 0) {
+      showToast('Add at least one product/item before continuing.', 'error');
+      setEditorSection('items');
+      return;
+    }
+
+    // Update UI state so empty rows are removed immediately
+    setItems(cleanedItems);
+
+    // Build calculated items from cleanedItems
+    const draftCalculatedItems: (QuotationItem | InvoiceItem)[] = cleanedItems.map((item, idx) => {
+      const prod = products.find((p) => p.id === item.productId);
+      const lineSubtotal = (item.quantity || 1) * (item.sellingPrice || 0);
+      const afterDiscount = Math.max(0, lineSubtotal - (item.discountAmount || 0));
+      const taxAmount = (afterDiscount * (item.taxPercent || 0)) / 100;
+      const total = afterDiscount + taxAmount;
+
+      return {
+        id: `item-${idx}`,
+        itemType: (item as any).itemType || (item.productId ? 'product' : 'custom'),
+        productId: item.productId,
+        productName: item.productName,
+        description: (item as any).description,
+        partNumber: item.partNumber,
+        sku: item.sku || item.partNumber || '',
+        unit: item.unit || 'Pcs',
+        quantity: item.quantity,
+        buyPrice: prod ? prod.buyPrice : 0,
+        sellingPrice: item.sellingPrice,
+        discountAmount: item.discountAmount || 0,
+        taxPercent: item.taxPercent,
+        taxAmount,
+        total,
+      };
+    });
+
+    const draftSubtotal = draftCalculatedItems.reduce((acc, i) => acc + i.quantity * i.sellingPrice, 0);
+    const draftDiscountTotal = draftCalculatedItems.reduce((acc, i) => acc + i.discountAmount, 0);
+    const draftTaxTotal = draftCalculatedItems.reduce((acc, i) => acc + i.taxAmount, 0);
+    const draftGrandTotal = draftSubtotal - draftDiscountTotal + draftTaxTotal;
+
     if (documentType === 'invoice') {
       store.addInvoice({
         customerId: selectedCustomerId || undefined,
@@ -551,13 +599,13 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         status: 'Draft',
         date,
         dueDate: dueDateOrValid,
-        items: calculatedItems,
-        subtotal,
-        discountTotal,
-        taxTotal,
-        grandTotal,
+        items: draftCalculatedItems as InvoiceItem[],
+        subtotal: draftSubtotal,
+        discountTotal: draftDiscountTotal,
+        taxTotal: draftTaxTotal,
+        grandTotal: draftGrandTotal,
         paidAmount: 0,
-        balanceAmount: grandTotal,
+        balanceAmount: draftGrandTotal,
         notes,
         terms,
         footerText,
@@ -584,11 +632,11 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         status: 'Draft',
         date,
         validUntil: dueDateOrValid,
-        items: calculatedItems,
-        subtotal,
-        discountTotal,
-        taxTotal,
-        grandTotal,
+        items: draftCalculatedItems as QuotationItem[],
+        subtotal: draftSubtotal,
+        discountTotal: draftDiscountTotal,
+        taxTotal: draftTaxTotal,
+        grandTotal: draftGrandTotal,
         notes,
         terms,
         footerText,
@@ -604,7 +652,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
       });
 
       // Synchronize quotation draft with Supabase in background
-      quotationService.createQuotation(qt, calculatedItems as QuotationItem[]).catch((err) => {
+      quotationService.createQuotation(qt, draftCalculatedItems as QuotationItem[]).catch((err) => {
         console.warn('[DocumentEditorView] Quotation draft sync notice:', err);
       });
 
@@ -619,6 +667,20 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
     setIsFinalizing(true);
 
     try {
+      // 1. Normalize line items: remove completely empty rows
+      const cleanedItems = items.filter((item) => !isEmptyLineItem(item));
+
+      // 2. Check that at least ONE real line item exists
+      if (cleanedItems.length === 0) {
+        showToast('Add at least one product/item before continuing.', 'error');
+        setIsFinalizing(false);
+        setEditorSection('items');
+        return;
+      }
+
+      // Update UI state with cleaned items so empty rows disappear from view
+      setItems(cleanedItems);
+
       let hasCustomerErr = false;
       if (!customerName || customerName.trim() === '') {
         setCustomerNameError('Customer name is required.');
@@ -647,15 +709,9 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         return;
       }
 
-      if (items.length === 0) {
-        showToast('Please add at least one line item.', 'error');
-        setIsFinalizing(false);
-        return;
-      }
-
-      // Validate that every row has a product selected and quantity > 0
-      for (let idx = 0; idx < items.length; idx++) {
-        const itm = items[idx];
+      // 3. Validate remaining non-empty line items
+      for (let idx = 0; idx < cleanedItems.length; idx++) {
+        const itm = cleanedItems[idx];
         if (!itm.productId && !itm.productName?.trim()) {
           showToast(`Please select a product for row ${idx + 1}.`, 'error');
           setIsFinalizing(false);
@@ -694,9 +750,9 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         const authWsId = await productService.getOrFetchWorkspaceId();
         const authUser = supabaseAuthService.getUser();
 
-        // Live authoritative stock validation for linked catalog products
-        for (let idx = 0; idx < items.length; idx++) {
-          const item = items[idx];
+        // Live authoritative stock validation for linked catalog products (cleanedItems only!)
+        for (let idx = 0; idx < cleanedItems.length; idx++) {
+          const item = cleanedItems[idx];
 
           // Resolve canonical database Product record for item
           const canonicalProd = await productService.resolveCanonicalProduct(item);
@@ -750,11 +806,11 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         }
 
         // Build freshly mapped items reflecting canonical corrections from validation loop
-        const invoiceItemsForSave: InvoiceItem[] = items.map((item, idx) => {
+        const invoiceItemsForSave: InvoiceItem[] = cleanedItems.map((item, idx) => {
           const prod = products.find((p) => p.id === item.productId);
-          const lineSubtotal = item.quantity * item.sellingPrice;
+          const lineSubtotal = (item.quantity || 1) * (item.sellingPrice || 0);
           const afterDiscount = Math.max(0, lineSubtotal - (item.discountAmount || 0));
-          const taxAmount = (afterDiscount * item.taxPercent) / 100;
+          const taxAmount = (afterDiscount * (item.taxPercent || 0)) / 100;
           const total = afterDiscount + taxAmount;
 
           return {
@@ -774,6 +830,12 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           };
         });
 
+        // Compute authoritative totals from cleanedItems
+        const finSubtotal = invoiceItemsForSave.reduce((acc, i) => acc + i.quantity * i.sellingPrice, 0);
+        const finDiscountTotal = invoiceItemsForSave.reduce((acc, i) => acc + i.discountAmount, 0);
+        const finTaxTotal = invoiceItemsForSave.reduce((acc, i) => acc + i.taxAmount, 0);
+        const finGrandTotal = finSubtotal - finDiscountTotal + finTaxTotal;
+
         // Validation: Paid amount check
         if (paymentStatus === 'Partially Paid' && (paidAmountInput <= 0 || isNaN(paidAmountInput))) {
           showToast('Payment amount must be greater than ₹0.', 'error');
@@ -781,46 +843,30 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           return;
         }
 
-        if (paymentStatus === 'Partially Paid' && paidAmountInput > grandTotal) {
-          showToast(`Paid amount (${settings.currency}${paidAmountInput}) cannot exceed grand total (${settings.currency}${grandTotal.toFixed(2)})`, 'error');
+        if (paymentStatus === 'Partially Paid' && paidAmountInput > finGrandTotal) {
+          showToast(`Paid amount (${settings.currency}${paidAmountInput}) cannot exceed grand total (${settings.currency}${finGrandTotal.toFixed(2)})`, 'error');
           setIsFinalizing(false);
           return;
         }
 
+        const finEffectivePaidAmount =
+          paymentStatus === 'Unpaid'
+            ? 0
+            : paymentStatus === 'Paid'
+            ? finGrandTotal
+            : Math.min(finGrandTotal, Math.max(0, Number(paidAmountInput) || 0));
+
+        const finBalanceAmount = Math.max(0, Number((finGrandTotal - finEffectivePaidAmount).toFixed(2)));
+
+        const finComputedInvoiceStatus: InvoiceStatus =
+          finEffectivePaidAmount >= finGrandTotal && finGrandTotal > 0
+            ? 'Paid'
+            : finEffectivePaidAmount > 0
+            ? 'Partially Paid'
+            : 'Issued';
+
         const finalMethod: PaymentMethod =
           paymentMethod === 'Other' && otherPaymentMethod ? (otherPaymentMethod as any) : paymentMethod;
-
-        const invoicePayload: Partial<Invoice> = {
-          customerId: selectedCustomerId || undefined,
-          customerName,
-          customerPhone: cleanPhone,
-          customerWhatsapp: cleanWhatsapp,
-          customerEmail,
-          customerAddress,
-          customerGstin,
-          status: computedInvoiceStatus,
-          date,
-          dueDate: dueDateOrValid,
-          items: invoiceItemsForSave,
-          subtotal,
-          discountTotal,
-          taxTotal,
-          grandTotal,
-          paidAmount: effectivePaidAmount,
-          balanceAmount,
-          notes,
-          terms,
-          footerText,
-          templateId,
-          branding,
-          theme: {
-            primaryColor: customization.primaryColor,
-            secondaryColor: customization.secondaryColor,
-            textColor: customization.textColor,
-            fontFamily: customization.bodyFont,
-          },
-          customization,
-        };
 
         const finResult = await invoiceService.finalizeAuthoritativeInvoice({
           source: 'MANUAL',
@@ -829,19 +875,19 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           dueDate: dueDateOrValid,
           customerId: selectedCustomerId || undefined,
           customerName,
-          customerPhone,
-          customerWhatsapp,
+          customerPhone: cleanPhone,
+          customerWhatsapp: cleanWhatsapp,
           customerEmail,
           customerAddress,
           customerGstin,
           items: invoiceItemsForSave,
-          subtotal,
-          discountTotal,
-          taxTotal,
-          grandTotal,
+          subtotal: finSubtotal,
+          discountTotal: finDiscountTotal,
+          taxTotal: finTaxTotal,
+          grandTotal: finGrandTotal,
           paymentStatus: paymentStatus as any,
-          paidAmount: effectivePaidAmount,
-          balanceAmount,
+          paidAmount: finEffectivePaidAmount,
+          balanceAmount: finBalanceAmount,
           paymentMode: finalMethod,
           paymentReference: paymentReference || undefined,
           paymentNotes: paymentNotes || undefined,
@@ -868,6 +914,38 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
 
         showToast(`Invoice ${finResult.invoiceNumber || ''} finalized & snapshot saved!`, 'success');
       } else {
+        // Quotation Finalization
+        const qtCalculatedItems: QuotationItem[] = cleanedItems.map((item, idx) => {
+          const prod = products.find((p) => p.id === item.productId);
+          const lineSubtotal = (item.quantity || 1) * (item.sellingPrice || 0);
+          const afterDiscount = Math.max(0, lineSubtotal - (item.discountAmount || 0));
+          const taxAmount = (afterDiscount * (item.taxPercent || 0)) / 100;
+          const total = afterDiscount + taxAmount;
+
+          return {
+            id: `item-${idx}`,
+            itemType: (item as any).itemType || (item.productId ? 'product' : 'custom'),
+            productId: item.productId,
+            productName: item.productName,
+            description: (item as any).description,
+            partNumber: item.partNumber,
+            sku: item.sku || item.partNumber || '',
+            unit: item.unit || 'Pcs',
+            quantity: item.quantity,
+            buyPrice: prod ? prod.buyPrice : 0,
+            sellingPrice: item.sellingPrice,
+            discountAmount: item.discountAmount || 0,
+            taxPercent: item.taxPercent,
+            taxAmount,
+            total,
+          };
+        });
+
+        const qtSubtotal = qtCalculatedItems.reduce((acc, i) => acc + i.quantity * i.sellingPrice, 0);
+        const qtDiscountTotal = qtCalculatedItems.reduce((acc, i) => acc + i.discountAmount, 0);
+        const qtTaxTotal = qtCalculatedItems.reduce((acc, i) => acc + i.taxAmount, 0);
+        const qtGrandTotal = qtSubtotal - qtDiscountTotal + qtTaxTotal;
+
         const qt = store.addQuotation({
           customerId: selectedCustomerId || undefined,
           customerName,
@@ -879,11 +957,11 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           status: 'Sent',
           date,
           validUntil: dueDateOrValid,
-          items: calculatedItems as QuotationItem[],
-          subtotal,
-          discountTotal,
-          taxTotal,
-          grandTotal,
+          items: qtCalculatedItems,
+          subtotal: qtSubtotal,
+          discountTotal: qtDiscountTotal,
+          taxTotal: qtTaxTotal,
+          grandTotal: qtGrandTotal,
           notes,
           terms,
           footerText,
@@ -899,7 +977,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         });
 
         // Sync quotation with Supabase
-        const qtRes = await quotationService.createQuotation(qt, calculatedItems as QuotationItem[]);
+        const qtRes = await quotationService.createQuotation(qt, qtCalculatedItems);
         if (qtRes.error) {
           console.warn('[DocumentEditorView] Quotation Supabase sync notice:', qtRes.error);
         }
@@ -1064,8 +1142,8 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
       }
     >
 
-      {/* Main Workspace Editor Container */}
-      <div className="w-full max-w-5xl mx-auto space-y-5">
+      {/* Main Workspace Editor Container (Substantially expanded desktop workspace) */}
+      <div className="w-full max-w-[95vw] xl:max-w-[94vw] 2xl:max-w-[92vw] mx-auto space-y-6">
           {/* Section Selector Tabs */}
           <div className="flex bg-white dark:bg-slate-900 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs justify-between overflow-x-auto scrollbar-none transition-colors">
             {[
@@ -1311,12 +1389,12 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
             </div>
           )}
 
-          {/* SECTION 2: LINE ITEMS & PRICING */}
+          {/* SECTION 2: LINE ITEMS & PRICING (Substantially expanded vertical workspace) */}
           {editorSection === 'items' && (
-            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card space-y-4 transition-colors">
-              <div className="flex items-center justify-between border-b pb-2 border-slate-100 dark:border-slate-800">
-                <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">Line Items & Pricing</h3>
-                <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500">
+            <div className="bg-white dark:bg-slate-900 p-6 sm:p-7 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-card space-y-5 transition-colors min-h-[500px]">
+              <div className="flex items-center justify-between border-b pb-3 border-slate-100 dark:border-slate-800">
+                <h3 className="font-bold text-base text-slate-900 dark:text-slate-100">Line Items & Pricing</h3>
+                <span className="text-xs font-bold text-slate-400 dark:text-slate-500">
                   {usesPartNumber ? 'Part Number Mode Active' : 'Part Number Optional'}
                 </span>
               </div>

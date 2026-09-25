@@ -10,9 +10,13 @@ import {
   getProductSellingPrice,
   getProductTaxRate,
   getProductStock,
+  isEmptyLineItem,
+  filterValidLineItems,
 } from '../lib/productHelpers';
 import { showToast } from './Toast';
 import { ALLOWED_TAX_RATES } from '../constants/tax';
+
+export { isEmptyLineItem, filterValidLineItems };
 
 export interface LineItemRow {
   itemType?: 'product' | 'custom';
@@ -325,20 +329,20 @@ export const ProductLineItemsTable: React.FC<ProductLineItemsTableProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* DESKTOP TABLE VIEW (md and up) */}
-      <div className="hidden md:block overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+      {/* DESKTOP TABLE VIEW (md and up) - Generous vertical clearance */}
+      <div className="hidden md:block overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm min-h-[380px]">
         <table className="w-full text-left border-collapse text-xs">
           <thead>
             <tr className="bg-slate-50/80 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 text-[10px] font-extrabold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-              <th className="py-3 px-3 w-[220px]">
+              <th className="py-3.5 px-3.5 w-[240px] xl:w-[280px]">
                 Part Number {usesPartNumber ? <span className="text-rose-500">*</span> : ''}
               </th>
-              <th className="py-3 px-3 min-w-[200px]">Part Name</th>
-              <th className="py-3 px-3 w-[120px] text-center">Quantity</th>
-              <th className="py-3 px-3 w-[120px] text-right">Rate</th>
-              {isInvoice && <th className="py-3 px-3 w-[90px] text-right">Tax (%)</th>}
-              <th className="py-3 px-3 w-[130px] text-right">Total</th>
-              <th className="py-3 px-2 w-[50px] text-center"></th>
+              <th className="py-3.5 px-3.5 min-w-[220px]">Part Name</th>
+              <th className="py-3.5 px-3 w-[130px] text-center">Quantity</th>
+              <th className="py-3.5 px-3 w-[130px] text-right">Rate</th>
+              {isInvoice && <th className="py-3.5 px-3 w-[100px] text-right">Tax (%)</th>}
+              <th className="py-3.5 px-3 w-[140px] text-right">Total</th>
+              <th className="py-3.5 px-2 w-[50px] text-center"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
@@ -802,9 +806,17 @@ export const ProductLineItemsTable: React.FC<ProductLineItemsTableProps> = ({
           )}
         </div>
 
-        <span className="text-[11px] text-slate-400 dark:text-slate-500 font-medium">
-          {items.length} {items.length === 1 ? 'item' : 'items'} in table
-        </span>
+        <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5 flex-wrap">
+          <span className="font-bold text-slate-700 dark:text-slate-300">
+            {items.filter((i) => !isEmptyLineItem(i)).length} active {items.filter((i) => !isEmptyLineItem(i)).length === 1 ? 'item' : 'items'}
+          </span>
+          <span>({items.length} {items.length === 1 ? 'row' : 'rows'} total)</span>
+          {items.some((i) => isEmptyLineItem(i)) && (
+            <span className="text-amber-600 dark:text-amber-400 font-semibold bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-900/50">
+              {items.filter((i) => isEmptyLineItem(i)).length} unused empty {items.filter((i) => isEmptyLineItem(i)).length === 1 ? 'row' : 'rows'} will be auto-ignored
+            </span>
+          )}
+        </div>
       </div>
 
       {/* CUSTOM PRODUCT MODAL (QUOTATION MODULE) */}

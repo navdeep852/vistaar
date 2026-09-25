@@ -4,6 +4,7 @@ import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { store } from '../store';
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+import { filterValidLineItems, isEmptyLineItem } from '../../lib/productHelpers';
 
 const LOCAL_QUOTATIONS_KEY = 'vistaar_local_quotations_db';
 
@@ -195,8 +196,9 @@ export class QuotationService {
 
         const quotationId = parent.id;
 
-        if (items && items.length > 0) {
-          const itemRows = items.map((item) => ({
+        const validItems = filterValidLineItems(items);
+        if (validItems && validItems.length > 0) {
+          const itemRows = validItems.map((item) => ({
             workspace_id: wsId,
             quotation_id: quotationId,
             item_type: item.itemType || (item.productId ? 'product' : 'custom'),
@@ -347,9 +349,22 @@ export class QuotationService {
         return { success: false, error: 'This quotation has already been converted into an invoice.' };
       }
 
-      // 2. Prepare line items for authoritative invoice
+      // 2. Prepare line items for authoritative invoice (filtering out any unused empty rows)
       const rawItems = targetQt.quotation_items || targetQt.items || [];
-      const items = rawItems.map((i: any) => {
+      const validRawItems = rawItems.filter((i: any) => !isEmptyLineItem({
+        productId: i.product_id || i.productId,
+        productName: i.product_name || i.productName || i.name,
+        partNumber: i.part_number || i.partNumber,
+        sellingPrice: i.selling_price || i.sellingPrice || i.rate || i.price,
+        description: i.description,
+        itemType: i.item_type || i.itemType,
+      }));
+
+      if (validRawItems.length === 0) {
+        return { success: false, error: 'Quotation contains no valid line items to convert.' };
+      }
+
+      const items = validRawItems.map((i: any) => {
         const rawPId = i.product_id || i.productId;
         const cleanProductId = (rawPId && typeof rawPId === 'string' && rawPId.trim() !== '' && rawPId !== 'null' && rawPId !== 'undefined') ? rawPId.trim() : null;
         const itemType = i.item_type || i.itemType || (cleanProductId ? 'product' : 'custom');

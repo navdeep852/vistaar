@@ -40,7 +40,7 @@ import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
 import { PhoneInput } from '../components/PhoneInput';
 import { QuantityInput } from '../components/QuantityInput';
 import { ProductAutocomplete } from '../components/ProductAutocomplete';
-import { ProductLineItemsTable, LineItemRow } from '../components/ProductLineItemsTable';
+import { ProductLineItemsTable, LineItemRow, isEmptyLineItem } from '../components/ProductLineItemsTable';
 import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 
 type DateFilterType = 'ALL' | 'TODAY' | 'WEEK' | 'MONTH';
@@ -182,8 +182,9 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   };
 
 
-  // Calculations
-  const subtotal = lineItems.reduce((acc, item) => acc + ((item.quantity || 0) * (item.sellingPrice || 0)), 0);
+  // Calculations (ignores empty rows)
+  const validLineItems = lineItems.filter((i) => !isEmptyLineItem(i));
+  const subtotal = validLineItems.reduce((acc, item) => acc + ((item.quantity || 0) * (item.sellingPrice || 0)), 0);
   const rawDiscountVal = parseFloat(discountValue) || 0;
   let discountAmount = 0;
   if (discountType === 'percentage') {
@@ -209,12 +210,11 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
     validationErrors.push(`Invoice number "${invoiceNumber}" already exists.`);
   }
 
-  const validItems = lineItems.filter((i) => i.productId && i.productName?.trim());
-  if (validItems.length === 0) {
+  if (validLineItems.length === 0) {
     validationErrors.push('Select at least one product for the sale.');
   }
 
-  lineItems.forEach((item, idx) => {
+  validLineItems.forEach((item, idx) => {
     if (!item.productId && item.productName?.trim()) {
       validationErrors.push(`Row ${idx + 1} has not selected a valid catalog product.`);
     }

@@ -98,3 +98,58 @@ export const rankProductSearchResults = (query: string, products: Product[]): Pr
     ...otherMatch,
   ];
 };
+
+/**
+ * Determines whether a line item row is completely empty and unused.
+ * Completely empty rows contain no product ID, no valid product name, no part number,
+ * no description, and no selling price > 0.
+ *
+ * Such rows are created as UI conveniences (e.g. "+ Add More Product") and must
+ * be automatically ignored/removed before calculation, validation, stock checking,
+ * saving, and document conversion.
+ */
+export const isEmptyLineItem = (item: any): boolean => {
+  if (!item) return true;
+
+  // Has a valid database product ID
+  const pId = item.productId || item.product_id;
+  if (pId && typeof pId === 'string' && pId.trim() !== '' && pId !== 'null' && pId !== 'undefined') {
+    return false;
+  }
+
+  // Has a user-entered product name (ignore placeholders like "Select product...")
+  const rawName = (item.productName || item.product_name || item.name || '').trim();
+  const hasValidName = rawName !== '' && rawName.toLowerCase() !== 'select product...' && rawName !== 'item';
+  if (hasValidName) {
+    return false;
+  }
+
+  // Has a user-entered part number
+  const partNo = (item.partNumber || item.part_number || '').trim();
+  if (partNo !== '') {
+    return false;
+  }
+
+  // Has a user-entered description
+  const desc = (item.description || '').trim();
+  if (desc !== '') {
+    return false;
+  }
+
+  // Has a non-zero selling price
+  const price = Number(item.sellingPrice ?? item.selling_price ?? item.price ?? item.rate ?? 0);
+  if (price > 0) {
+    return false;
+  }
+
+  // If none of the above are present, it is completely empty
+  return true;
+};
+
+/**
+ * Filters an array of line items, removing completely empty and unused rows.
+ */
+export const filterValidLineItems = <T = any>(items: T[] | undefined | null): T[] => {
+  if (!Array.isArray(items)) return [];
+  return items.filter((item) => !isEmptyLineItem(item));
+};

@@ -1494,6 +1494,7 @@ export class SupabaseAuthService {
     empId?: string;
     tempPass?: string;
     userId?: string;
+    employee?: UserAccount;
   }> {
     // 1. Name validation
     if (!empData.name || !empData.name.trim()) {
