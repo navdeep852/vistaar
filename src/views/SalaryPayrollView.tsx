@@ -51,6 +51,7 @@ import {
 import { UserAccount, EmploymentType, EmployeeStatus } from '../types';
 import { showToast } from '../components/Toast';
 import { Modal } from '../components/Modal';
+import { ScrollableTable } from '../components/ScrollableTable';
 import {
   downloadPayslipPdf,
   downloadPayrollReportPdf,
@@ -106,6 +107,7 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
   const [empStatusFilter, setEmpStatusFilter] = useState<string>('ALL');
   const [empEmploymentTypeFilter, setEmpEmploymentTypeFilter] = useState<string>('ALL');
   const [empViewMode, setEmpViewMode] = useState<'active' | 'archived'>('active');
+  const [mobileViewMode, setMobileViewMode] = useState<'table' | 'cards'>('table');
 
   // Data States
   const [loading, setLoading] = useState<boolean>(true);
@@ -1228,21 +1230,51 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
               </button>
             </div>
 
-            {/* Desktop Table View */}
-            <div className="hidden lg:block overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-100/70 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                    <th className="p-3.5">Employee</th>
-                    <th className="p-3.5">Emp ID</th>
-                    <th className="p-3.5">Department</th>
-                    <th className="p-3.5">Contact</th>
-                    <th className="p-3.5">Joining Date</th>
-                    <th className="p-3.5 text-right">Compensation (Monthly)</th>
-                    <th className="p-3.5">Status</th>
-                    <th className="p-3.5 text-center">Actions</th>
-                  </tr>
-                </thead>
+            {/* Mobile View Switcher (Table swipe vs Cards) */}
+            <div className="flex lg:hidden items-center justify-between px-1 py-1.5 bg-slate-100 dark:bg-slate-800/80 rounded-xl text-xs mb-3">
+              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 pl-2">Display Mode:</span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setMobileViewMode('table')}
+                  className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                    mobileViewMode === 'table'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                  }`}
+                >
+                  Table (Swipeable)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobileViewMode('cards')}
+                  className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                    mobileViewMode === 'cards'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                  }`}
+                >
+                  Cards
+                </button>
+              </div>
+            </div>
+
+            {/* Table View (Desktop, Tablet & Mobile Swipe) */}
+            <div className={mobileViewMode === 'cards' ? 'hidden lg:block' : 'block'}>
+              <ScrollableTable minWidth="1100px">
+                <table className="w-full min-w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-100/70 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                      <th className="p-3.5 min-w-[200px]">Employee</th>
+                      <th className="p-3.5 min-w-[110px] whitespace-nowrap">Emp ID</th>
+                      <th className="p-3.5 min-w-[140px] whitespace-nowrap">Department</th>
+                      <th className="p-3.5 min-w-[130px] whitespace-nowrap">Contact</th>
+                      <th className="p-3.5 min-w-[110px] whitespace-nowrap">Joining Date</th>
+                      <th className="p-3.5 min-w-[160px] text-right whitespace-nowrap">Compensation (Monthly)</th>
+                      <th className="p-3.5 min-w-[110px] whitespace-nowrap">Status</th>
+                      <th className="p-3.5 min-w-[120px] text-center whitespace-nowrap">Actions</th>
+                    </tr>
+                  </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {loading ? (
                     <tr>
@@ -1423,10 +1455,11 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
                   )}
                 </tbody>
               </table>
+              </ScrollableTable>
             </div>
 
             {/* Mobile Responsive Cards View */}
-            <div className="block lg:hidden divide-y divide-slate-100 dark:divide-slate-800">
+            <div className={mobileViewMode === 'cards' ? 'block lg:hidden divide-y divide-slate-100 dark:divide-slate-800' : 'hidden'}>
               {loading ? (
                 <div className="p-6 text-center text-slate-400 text-xs">Loading employee directory...</div>
               ) : filteredEmployees.length === 0 ? (
@@ -1619,21 +1652,21 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
             </span>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
+          <ScrollableTable minWidth="1200px">
+            <table className="w-full min-w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-100/70 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                  <th className="p-3.5">Employee</th>
-                  <th className="p-3.5">Emp ID</th>
-                  <th className="p-3.5">Period</th>
-                  <th className="p-3.5 text-right">Gross</th>
-                  <th className="p-3.5 text-right">Deductions</th>
-                  <th className="p-3.5 text-right">Net Salary</th>
-                  <th className="p-3.5">Payment Date</th>
-                  <th className="p-3.5">Mode</th>
-                  <th className="p-3.5">Status</th>
-                  <th className="p-3.5">Reference</th>
-                  <th className="p-3.5 text-center">Actions</th>
+                  <th className="p-3.5 min-w-[180px]">Employee</th>
+                  <th className="p-3.5 min-w-[110px] whitespace-nowrap">Emp ID</th>
+                  <th className="p-3.5 min-w-[110px] whitespace-nowrap">Period</th>
+                  <th className="p-3.5 min-w-[110px] text-right whitespace-nowrap">Gross</th>
+                  <th className="p-3.5 min-w-[110px] text-right whitespace-nowrap">Deductions</th>
+                  <th className="p-3.5 min-w-[120px] text-right whitespace-nowrap">Net Salary</th>
+                  <th className="p-3.5 min-w-[110px] whitespace-nowrap">Payment Date</th>
+                  <th className="p-3.5 min-w-[100px] whitespace-nowrap">Mode</th>
+                  <th className="p-3.5 min-w-[100px] whitespace-nowrap">Status</th>
+                  <th className="p-3.5 min-w-[110px] whitespace-nowrap">Reference</th>
+                  <th className="p-3.5 min-w-[100px] text-center whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1727,7 +1760,7 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
                 )}
               </tbody>
             </table>
-          </div>
+          </ScrollableTable>
         </div>
       )}
 
@@ -1750,18 +1783,18 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
+          <ScrollableTable minWidth="1050px">
+            <table className="w-full min-w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-100/70 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                  <th className="p-3.5">Employee</th>
-                  <th className="p-3.5">Emp ID</th>
-                  <th className="p-3.5">Department</th>
-                  <th className="p-3.5 text-right">Configured Base</th>
-                  <th className="p-3.5 text-right">Allowances</th>
-                  <th className="p-3.5 text-right">Net Payable</th>
-                  <th className="p-3.5">Disbursement Status</th>
-                  <th className="p-3.5 text-center">Action</th>
+                  <th className="p-3.5 min-w-[180px]">Employee</th>
+                  <th className="p-3.5 min-w-[110px] whitespace-nowrap">Emp ID</th>
+                  <th className="p-3.5 min-w-[130px] whitespace-nowrap">Department</th>
+                  <th className="p-3.5 min-w-[120px] text-right whitespace-nowrap">Configured Base</th>
+                  <th className="p-3.5 min-w-[110px] text-right whitespace-nowrap">Allowances</th>
+                  <th className="p-3.5 min-w-[120px] text-right whitespace-nowrap">Net Payable</th>
+                  <th className="p-3.5 min-w-[130px] whitespace-nowrap">Disbursement Status</th>
+                  <th className="p-3.5 min-w-[100px] text-center whitespace-nowrap">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1841,7 +1874,7 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
                 })}
               </tbody>
             </table>
-          </div>
+          </ScrollableTable>
         </div>
       )}
 
@@ -1866,20 +1899,20 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
             </button>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
+          <ScrollableTable minWidth="1150px">
+            <table className="w-full min-w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-100/70 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                  <th className="p-3.5">Employee</th>
-                  <th className="p-3.5">Emp ID</th>
-                  <th className="p-3.5">Frequency</th>
-                  <th className="p-3.5 text-right">Base Salary</th>
-                  <th className="p-3.5 text-right">HRA</th>
-                  <th className="p-3.5 text-right">Other Allowances</th>
-                  <th className="p-3.5 text-right">Deductions</th>
-                  <th className="p-3.5">Payment Mode</th>
-                  <th className="p-3.5">Bank / UPI</th>
-                  <th className="p-3.5 text-center">Action</th>
+                  <th className="p-3.5 min-w-[180px]">Employee</th>
+                  <th className="p-3.5 min-w-[110px] whitespace-nowrap">Emp ID</th>
+                  <th className="p-3.5 min-w-[100px] whitespace-nowrap">Frequency</th>
+                  <th className="p-3.5 min-w-[120px] text-right whitespace-nowrap">Base Salary</th>
+                  <th className="p-3.5 min-w-[110px] text-right whitespace-nowrap">HRA</th>
+                  <th className="p-3.5 min-w-[120px] text-right whitespace-nowrap">Other Allowances</th>
+                  <th className="p-3.5 min-w-[110px] text-right whitespace-nowrap">Deductions</th>
+                  <th className="p-3.5 min-w-[120px] whitespace-nowrap">Payment Mode</th>
+                  <th className="p-3.5 min-w-[140px] whitespace-nowrap">Bank / UPI</th>
+                  <th className="p-3.5 min-w-[100px] text-center whitespace-nowrap">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1964,7 +1997,7 @@ export const SalaryPayrollView: React.FC<SalaryPayrollViewProps> = ({ onNavigate
                 })}
               </tbody>
             </table>
-          </div>
+          </ScrollableTable>
         </div>
       )}
 

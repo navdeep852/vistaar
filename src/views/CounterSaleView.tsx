@@ -38,6 +38,7 @@ import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
 import { PhoneInput } from '../components/PhoneInput';
+import { ScrollableTable } from '../components/ScrollableTable';
 import { QuantityInput } from '../components/QuantityInput';
 import { ProductAutocomplete } from '../components/ProductAutocomplete';
 import { ProductLineItemsTable, LineItemRow, isEmptyLineItem } from '../components/ProductLineItemsTable';
@@ -99,6 +100,7 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   const [createdSale, setCreatedSale] = useState<CounterSale | null>(null);
   const [activeSale, setActiveSale] = useState<CounterSale | null>(null);
   const [activeStockMovements, setActiveStockMovements] = useState<StockMovement[]>([]);
+  const [mobileViewMode, setMobileViewMode] = useState<'table' | 'cards'>('table');
 
   const refreshData = async () => {
     const [saleRes, prodRes, custRes, m, invRes] = await Promise.all([
@@ -957,24 +959,54 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
               </div>
             </div>
 
-            {/* Desktop Table View */}
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                    <th className="p-3.5">Sale #</th>
-                    <th className="p-3.5">Invoice #</th>
-                    <th className="p-3.5">Customer Name</th>
-                    <th className="p-3.5">Phone</th>
-                    <th className="p-3.5">Date</th>
-                    <th className="p-3.5 text-center">Items</th>
-                    <th className="p-3.5 text-right">Subtotal</th>
-                    <th className="p-3.5 text-right">Discount</th>
-                    <th className="p-3.5 text-right">Final Total</th>
-                    <th className="p-3.5">Status</th>
-                    <th className="p-3.5 text-center">Actions</th>
-                  </tr>
-                </thead>
+            {/* Mobile View Switcher (Table swipe vs Cards) */}
+            <div className="flex md:hidden items-center justify-between px-1 py-1.5 bg-slate-100 dark:bg-slate-800/80 rounded-xl text-xs">
+              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 pl-2">Display Mode:</span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setMobileViewMode('table')}
+                  className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                    mobileViewMode === 'table'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                  }`}
+                >
+                  Table (Swipeable)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobileViewMode('cards')}
+                  className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                    mobileViewMode === 'cards'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                  }`}
+                >
+                  Cards
+                </button>
+              </div>
+            </div>
+
+            {/* Table View (Desktop, Tablet & Mobile Swipe) */}
+            <div className={mobileViewMode === 'cards' ? 'hidden md:block' : 'block'}>
+              <ScrollableTable minWidth="1100px">
+                <table className="w-full min-w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                      <th className="p-3.5 min-w-[120px] whitespace-nowrap">Sale #</th>
+                      <th className="p-3.5 min-w-[120px] whitespace-nowrap">Invoice #</th>
+                      <th className="p-3.5 min-w-[160px]">Customer Name</th>
+                      <th className="p-3.5 min-w-[120px] whitespace-nowrap">Phone</th>
+                      <th className="p-3.5 min-w-[110px] whitespace-nowrap">Date</th>
+                      <th className="p-3.5 min-w-[80px] text-center whitespace-nowrap">Items</th>
+                      <th className="p-3.5 min-w-[110px] text-right whitespace-nowrap">Subtotal</th>
+                      <th className="p-3.5 min-w-[100px] text-right whitespace-nowrap">Discount</th>
+                      <th className="p-3.5 min-w-[120px] text-right whitespace-nowrap">Final Total</th>
+                      <th className="p-3.5 min-w-[110px] whitespace-nowrap">Status</th>
+                      <th className="p-3.5 min-w-[120px] text-center whitespace-nowrap">Actions</th>
+                    </tr>
+                  </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {filteredSales.length === 0 ? (
                     <tr>
@@ -985,20 +1017,20 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
                   ) : (
                     filteredSales.map((s) => (
                       <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                        <td className="p-3.5 font-mono font-bold text-blue-600 dark:text-blue-400">{s.saleNumber}</td>
-                        <td className="p-3.5 font-mono font-bold text-slate-900 dark:text-slate-100">{s.invoiceNumber}</td>
-                        <td className="p-3.5 font-bold text-slate-900 dark:text-slate-100">{s.customerName}</td>
-                        <td className="p-3.5 text-slate-500 dark:text-slate-400">{s.phoneNumber || '-'}</td>
-                        <td className="p-3.5 text-slate-600 dark:text-slate-300">{formatDate(s.saleDate)}</td>
-                        <td className="p-3.5 text-center font-bold text-slate-700 dark:text-slate-300">{s.items.length}</td>
-                        <td className="p-3.5 text-right font-medium text-slate-600 dark:text-slate-300">{formatCurrency(s.subtotal)}</td>
-                        <td className="p-3.5 text-right font-medium text-amber-600 dark:text-amber-400">
+                        <td className="p-3.5 min-w-[120px] font-mono font-bold text-blue-600 dark:text-blue-400 whitespace-nowrap">{s.saleNumber}</td>
+                        <td className="p-3.5 min-w-[120px] font-mono font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">{s.invoiceNumber}</td>
+                        <td className="p-3.5 min-w-[160px] font-bold text-slate-900 dark:text-slate-100">{s.customerName}</td>
+                        <td className="p-3.5 min-w-[120px] text-slate-500 dark:text-slate-400 whitespace-nowrap">{s.phoneNumber || '-'}</td>
+                        <td className="p-3.5 min-w-[110px] text-slate-600 dark:text-slate-300 whitespace-nowrap">{formatDate(s.saleDate)}</td>
+                        <td className="p-3.5 min-w-[80px] text-center font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap">{s.items.length}</td>
+                        <td className="p-3.5 min-w-[110px] text-right font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap font-mono">{formatCurrency(s.subtotal)}</td>
+                        <td className="p-3.5 min-w-[100px] text-right font-medium text-amber-600 dark:text-amber-400 whitespace-nowrap font-mono">
                           {s.discountAmount > 0 ? `-${formatCurrency(s.discountAmount)}` : '-'}
                         </td>
-                        <td className="p-3.5 text-right font-black text-emerald-600 dark:text-emerald-400 text-sm">
+                        <td className="p-3.5 min-w-[120px] text-right font-black text-emerald-600 dark:text-emerald-400 text-sm whitespace-nowrap font-mono">
                           {formatCurrency(s.finalTotal)}
                         </td>
-                        <td className="p-3.5">
+                        <td className="p-3.5 min-w-[110px] whitespace-nowrap">
                           <span
                             className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
                               s.status === 'COMPLETED' ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300' : 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300'
@@ -1007,7 +1039,7 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
                             {s.status}
                           </span>
                         </td>
-                        <td className="p-3.5 text-center">
+                        <td className="p-3.5 min-w-[120px] text-center whitespace-nowrap">
                           <div className="flex items-center justify-center gap-1.5">
                             <button
                               onClick={() => handleViewSaleDetails(s)}
@@ -1032,10 +1064,11 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
                   )}
                 </tbody>
               </table>
+              </ScrollableTable>
             </div>
 
             {/* Mobile Cards View */}
-            <div className="block md:hidden space-y-3">
+            <div className={mobileViewMode === 'cards' ? 'block md:hidden space-y-3' : 'hidden'}>
               {filteredSales.length === 0 ? (
                 <p className="text-xs text-slate-400 text-center py-6">No sales found.</p>
               ) : (

@@ -27,11 +27,13 @@ import { showToast } from '../components/Toast';
 import { DownloadReportDropdown } from '../components/DownloadReportDropdown';
 import { downloadDaybookReport } from '../services/reportExportService';
 import { store } from '../services/store';
+import { ScrollableTable } from '../components/ScrollableTable';
 
 export const DaybookView: React.FC = () => {
 
 
   const [transactions, setTransactions] = useState<DaybookTransaction[]>([]);
+  const [mobileViewMode, setMobileViewMode] = useState<'table' | 'cards'>('table');
   const [metrics, setMetrics] = useState<DaybookSummaryMetrics>({
     totalInflow: 0,
     totalOutflow: 0,
@@ -620,24 +622,54 @@ export const DaybookView: React.FC = () => {
           </div>
         ) : (
           <>
-            {/* Desktop Table View */}
-            <div className="hidden lg:block overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                  <tr>
-                    <th className="px-5 py-3.5">Date & Code</th>
-                    <th className="px-4 py-3.5">Type & Event</th>
-                    <th className="px-4 py-3.5">Customer / Party</th>
-                    <th className="px-4 py-3.5">Description</th>
-                    <th className="px-4 py-3.5 text-right">Total</th>
-                    <th className="px-4 py-3.5 text-right">Inflow (+₹)</th>
-                    <th className="px-4 py-3.5 text-right">Outflow (-₹)</th>
-                    <th className="px-4 py-3.5 text-right">Remaining Amount</th>
-                    <th className="px-4 py-3.5">Mode</th>
-                    <th className="px-4 py-3.5">Status / Tag</th>
-                    <th className="px-5 py-3.5 text-right">Actions</th>
-                  </tr>
-                </thead>
+            {/* Mobile View Switcher (Table swipe vs Cards) */}
+            <div className="flex lg:hidden items-center justify-between px-1 py-1.5 bg-slate-100 dark:bg-slate-800/80 rounded-xl text-xs mb-3">
+              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 pl-2">Display Mode:</span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setMobileViewMode('table')}
+                  className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                    mobileViewMode === 'table'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                  }`}
+                >
+                  Table (Swipeable)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobileViewMode('cards')}
+                  className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                    mobileViewMode === 'cards'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                  }`}
+                >
+                  Cards
+                </button>
+              </div>
+            </div>
+
+            {/* Table View (Desktop, Tablet & Mobile Swipe) */}
+            <div className={mobileViewMode === 'cards' ? 'hidden lg:block' : 'block'}>
+              <ScrollableTable minWidth="1300px">
+                <table className="w-full min-w-full text-left text-xs border-collapse">
+                  <thead className="bg-slate-50 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                    <tr>
+                      <th className="px-5 py-3.5 min-w-[140px] whitespace-nowrap">Date & Code</th>
+                      <th className="px-4 py-3.5 min-w-[130px] whitespace-nowrap">Type & Event</th>
+                      <th className="px-4 py-3.5 min-w-[160px]">Customer / Party</th>
+                      <th className="px-4 py-3.5 min-w-[180px]">Description</th>
+                      <th className="px-4 py-3.5 min-w-[120px] text-right whitespace-nowrap">Total</th>
+                      <th className="px-4 py-3.5 min-w-[120px] text-right whitespace-nowrap">Inflow (+₹)</th>
+                      <th className="px-4 py-3.5 min-w-[120px] text-right whitespace-nowrap">Outflow (-₹)</th>
+                      <th className="px-4 py-3.5 min-w-[140px] text-right whitespace-nowrap">Remaining Amount</th>
+                      <th className="px-4 py-3.5 min-w-[110px] whitespace-nowrap">Mode</th>
+                      <th className="px-4 py-3.5 min-w-[110px] whitespace-nowrap">Status / Tag</th>
+                      <th className="px-5 py-3.5 min-w-[100px] text-right whitespace-nowrap">Actions</th>
+                    </tr>
+                  </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
                   {transactions.map((tx) => {
                     const isOut = tx.direction === 'OUT';
@@ -781,10 +813,11 @@ export const DaybookView: React.FC = () => {
                   })}
                 </tbody>
               </table>
+              </ScrollableTable>
             </div>
 
             {/* Mobile Cards View */}
-            <div className="lg:hidden divide-y divide-slate-100 dark:divide-slate-800">
+            <div className={mobileViewMode === 'cards' ? 'lg:hidden divide-y divide-slate-100 dark:divide-slate-800' : 'hidden'}>
               {transactions.map((tx) => {
                 const isOut = tx.direction === 'OUT';
                 const isVoided = tx.status === 'VOID' || tx.paymentStatus === 'CANCELLED';

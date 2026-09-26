@@ -7,6 +7,7 @@ import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
 import { QuantityInput } from '../components/QuantityInput';
+import { ScrollableTable } from '../components/ScrollableTable';
 
 interface StockViewProps {
   onNavigateTab?: (tab: string) => void;
@@ -87,16 +88,16 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
       </div>
 
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card overflow-hidden transition-colors">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+        <ScrollableTable minWidth="850px">
+          <table className="w-full min-w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                <th className="px-6 py-3.5">Date & Time</th>
-                <th className="px-6 py-3.5">Product</th>
-                <th className="px-6 py-3.5">Movement Type</th>
-                <th className="px-6 py-3.5">Change</th>
-                <th className="px-6 py-3.5">Updated Stock</th>
-                <th className="px-6 py-3.5">Reference / Notes</th>
+                <th className="px-6 py-3.5 min-w-[150px] whitespace-nowrap">Date & Time</th>
+                <th className="px-6 py-3.5 min-w-[180px]">Product</th>
+                <th className="px-6 py-3.5 min-w-[140px] whitespace-nowrap">Movement Type</th>
+                <th className="px-6 py-3.5 min-w-[120px] whitespace-nowrap">Change</th>
+                <th className="px-6 py-3.5 min-w-[120px] whitespace-nowrap">Updated Stock</th>
+                <th className="px-6 py-3.5 min-w-[160px]">Reference / Notes</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
@@ -112,13 +113,13 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
                   const isPositive = t.quantityDelta > 0;
                   return (
                     <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 whitespace-nowrap">
                         {new Date(t.date).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
                       </td>
-                      <td className="px-6 py-4 font-bold text-slate-900 dark:text-slate-100">{prod ? prod.name : 'Product'}</td>
-                      <td className="px-6 py-4 font-semibold text-slate-700 dark:text-slate-300">{t.type}</td>
+                      <td className="px-6 py-4 font-bold text-slate-900 dark:text-slate-100 min-w-[180px]">{prod ? prod.name : 'Product'}</td>
+                      <td className="px-6 py-4 font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap">{t.type}</td>
                       <td
-                        className={`px-6 py-4 font-extrabold flex items-center gap-1 ${
+                        className={`px-6 py-4 font-extrabold flex items-center gap-1 whitespace-nowrap ${
                           isPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
                         }`}
                       >
@@ -128,15 +129,15 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
                           {t.quantityDelta}
                         </span>
                       </td>
-                      <td className="px-6 py-4 font-bold text-slate-900 dark:text-slate-100">{t.newStock}</td>
-                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{t.referenceNo || t.notes || '-'}</td>
+                      <td className="px-6 py-4 font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">{t.newStock}</td>
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 min-w-[160px]">{t.referenceNo || t.notes || '-'}</td>
                     </tr>
                   );
                 })
               )}
             </tbody>
           </table>
-        </div>
+        </ScrollableTable>
       </div>
 
       {/* ADJUST STOCK WORKSPACE */}

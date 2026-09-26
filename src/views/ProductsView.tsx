@@ -43,6 +43,7 @@ import { showToast } from '../components/Toast';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
 import { QuantityInput } from '../components/QuantityInput';
 import { GstRateInput, GST_RATE_SLABS } from '../components/GstRateInput';
+import { ScrollableTable } from '../components/ScrollableTable';
 
 interface ProductsViewProps {
   initialOpenCreate?: boolean;
@@ -1352,21 +1353,21 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
             <>
               {/* DESKTOP TABLE VIEW (SECTIONS 17, 57) */}
               <div className="hidden md:block bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-card overflow-hidden transition-colors">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
+                <ScrollableTable minWidth="1180px">
+                  <table className="w-full min-w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                        <th className="p-4">Product Name</th>
-                        <th className="p-4">Part Number / Code</th>
-                        <th className="p-4">HSN/SAC</th>
-                        <th className="p-4">Location / Rack No.</th>
-                        <th className="p-4">Category</th>
-                        <th className="p-4 text-right">Available Stock</th>
-                        <th className="p-4 text-right">Buy Price</th>
-                        <th className="p-4 text-right">Sell Price</th>
-                        <th className="p-4 text-right">Stock Value</th>
-                        <th className="p-4">Status</th>
-                        <th className="p-4 text-center">Actions</th>
+                        <th className="p-4 min-w-[180px]">Product Name</th>
+                        <th className="p-4 min-w-[150px] whitespace-nowrap">Part Number / Code</th>
+                        <th className="p-4 min-w-[110px] whitespace-nowrap">HSN/SAC</th>
+                        <th className="p-4 min-w-[140px] whitespace-nowrap">Location / Rack No.</th>
+                        <th className="p-4 min-w-[130px] whitespace-nowrap">Category</th>
+                        <th className="p-4 min-w-[120px] text-right whitespace-nowrap">Available Stock</th>
+                        <th className="p-4 min-w-[110px] text-right whitespace-nowrap">Buy Price</th>
+                        <th className="p-4 min-w-[110px] text-right whitespace-nowrap">Sell Price</th>
+                        <th className="p-4 min-w-[120px] text-right whitespace-nowrap">Stock Value</th>
+                        <th className="p-4 min-w-[110px] whitespace-nowrap">Status</th>
+                        <th className="p-4 min-w-[120px] text-center whitespace-nowrap">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1378,17 +1379,17 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
 
                         return (
                           <tr key={p.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors">
-                            <td className="p-4 font-bold text-slate-900 dark:text-slate-100">
+                            <td className="p-4 min-w-[180px] font-bold text-slate-900 dark:text-slate-100">
                               {p.productName || p.name}
                               {p.brand && <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal block">{p.brand}</span>}
                             </td>
-                            <td className="p-4 font-mono font-bold text-blue-600 dark:text-blue-400">
+                            <td className="p-4 min-w-[150px] font-mono font-bold text-blue-600 dark:text-blue-400 whitespace-nowrap">
                               {p.partNumber || p.productCode || p.sku}
                             </td>
-                            <td className="p-4 font-mono font-semibold text-slate-700 dark:text-slate-300">
+                            <td className="p-4 min-w-[110px] font-mono font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap">
                               {p.hsnSac || '—'}
                             </td>
-                            <td className="p-4 font-medium text-slate-800 dark:text-slate-200">
+                            <td className="p-4 min-w-[140px] font-medium text-slate-800 dark:text-slate-200 whitespace-nowrap">
                               {p.location ? (
                                 <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
                                   {p.location}
@@ -1397,20 +1398,20 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                                 <span className="text-slate-400 dark:text-slate-600">—</span>
                               )}
                             </td>
-                            <td className="p-4 text-slate-600 dark:text-slate-400">{p.category || 'General'}</td>
-                            <td className="p-4 text-right font-black text-slate-900 dark:text-slate-100 text-sm">
+                            <td className="p-4 min-w-[130px] text-slate-600 dark:text-slate-400 whitespace-nowrap">{p.category || 'General'}</td>
+                            <td className="p-4 min-w-[120px] text-right font-black text-slate-900 dark:text-slate-100 text-sm whitespace-nowrap">
                               {avail} {p.unit}
                             </td>
-                            <td className="p-4 text-right font-medium text-slate-600 dark:text-slate-400">
+                            <td className="p-4 min-w-[110px] text-right font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
                               {formatCurrency(p.currentBuyPrice || p.buyPrice)}
                             </td>
-                            <td className="p-4 text-right font-bold text-slate-900 dark:text-slate-100">
+                            <td className="p-4 min-w-[110px] text-right font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">
                               {formatCurrency(p.currentSellPrice || p.sellingPrice)}
                             </td>
-                            <td className="p-4 text-right font-extrabold text-indigo-600 dark:text-indigo-400">
+                            <td className="p-4 min-w-[120px] text-right font-extrabold text-indigo-600 dark:text-indigo-400 whitespace-nowrap">
                               {formatCurrency(stockVal)}
                             </td>
-                            <td className="p-4">
+                            <td className="p-4 min-w-[110px] whitespace-nowrap">
                               <span
                                 className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider inline-flex items-center gap-1 ${
                                   isOut
@@ -1423,7 +1424,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                                 {isOut ? 'Out of Stock' : isLow ? 'Low Stock' : 'In Stock'}
                               </span>
                             </td>
-                            <td className="p-4 text-center">
+                            <td className="p-4 min-w-[120px] text-center whitespace-nowrap">
                               <div className="flex items-center justify-center gap-1.5">
                                 <button
                                   onClick={() => handleViewDetails(p.id)}
@@ -1462,7 +1463,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                       })}
                     </tbody>
                   </table>
-                </div>
+                </ScrollableTable>
               </div>
 
               {/* MOBILE CARDS VIEW (SECTIONS 18, 57) */}
@@ -1569,18 +1570,18 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
             </span>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
+          <ScrollableTable minWidth="900px">
+            <table className="w-full min-w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                  <th className="p-4">Import ID</th>
-                  <th className="p-4">File Name</th>
-                  <th className="p-4">Date</th>
-                  <th className="p-4 text-center">Total Rows</th>
-                  <th className="p-4 text-center">New Products</th>
-                  <th className="p-4 text-center">Stock Receipts</th>
-                  <th className="p-4 text-center">Total Units</th>
-                  <th className="p-4">Status</th>
+                  <th className="p-4 whitespace-nowrap">Import ID</th>
+                  <th className="p-4 min-w-[160px]">File Name</th>
+                  <th className="p-4 whitespace-nowrap">Date</th>
+                  <th className="p-4 text-center whitespace-nowrap">Total Rows</th>
+                  <th className="p-4 text-center whitespace-nowrap">New Products</th>
+                  <th className="p-4 text-center whitespace-nowrap">Stock Receipts</th>
+                  <th className="p-4 text-center whitespace-nowrap">Total Units</th>
+                  <th className="p-4 whitespace-nowrap">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1593,14 +1594,14 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                 ) : (
                   importSessions.map((sess: any) => (
                     <tr key={sess.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                      <td className="p-4 font-mono font-bold text-blue-600 dark:text-blue-400">{sess.id}</td>
-                      <td className="p-4 font-bold text-slate-900 dark:text-slate-100">{sess.fileName}</td>
-                      <td className="p-4 text-slate-500 dark:text-slate-400">{formatDate(sess.uploadedAt)}</td>
-                      <td className="p-4 text-center font-bold text-slate-700 dark:text-slate-300">{sess.totalRows}</td>
-                      <td className="p-4 text-center font-bold text-emerald-600 dark:text-emerald-400">{sess.newProductsCount || 0}</td>
-                      <td className="p-4 text-center font-bold text-indigo-600 dark:text-indigo-400">{sess.stockReceiptsCount || 0}</td>
-                      <td className="p-4 text-center font-black text-slate-900 dark:text-slate-100">{sess.totalUnitsAdded || 0}</td>
-                      <td className="p-4">
+                      <td className="p-4 font-mono font-bold text-blue-600 dark:text-blue-400 whitespace-nowrap">{sess.id}</td>
+                      <td className="p-4 font-bold text-slate-900 dark:text-slate-100 min-w-[160px]">{sess.fileName}</td>
+                      <td className="p-4 text-slate-500 dark:text-slate-400 whitespace-nowrap">{formatDate(sess.uploadedAt)}</td>
+                      <td className="p-4 text-center font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap">{sess.totalRows}</td>
+                      <td className="p-4 text-center font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">{sess.newProductsCount || 0}</td>
+                      <td className="p-4 text-center font-bold text-indigo-600 dark:text-indigo-400 whitespace-nowrap">{sess.stockReceiptsCount || 0}</td>
+                      <td className="p-4 text-center font-black text-slate-900 dark:text-slate-100 whitespace-nowrap">{sess.totalUnitsAdded || 0}</td>
+                      <td className="p-4 whitespace-nowrap">
                         <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300">
                           {sess.status}
                         </span>
@@ -1610,7 +1611,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                 )}
               </tbody>
             </table>
-          </div>
+          </ScrollableTable>
         </div>
       )}
 
