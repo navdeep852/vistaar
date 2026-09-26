@@ -105,7 +105,7 @@ export const CreateEwayBillModal: React.FC<CreateEwayBillModalProps> = ({
           setFromState(defaultLoc.state);
           setFromPincode(defaultLoc.pincode);
         } else if (bSettings) {
-          setFromTradeName(bSettings.companyName || bSettings.legalName || 'Main Business');
+          setFromTradeName(bSettings.businessName || bSettings.companyName || bSettings.legalName || 'Main Business');
           setFromGstin(bSettings.gstin || '');
           setFromAddress(bSettings.address || '');
           setFromState(bSettings.state || 'Uttar Pradesh');

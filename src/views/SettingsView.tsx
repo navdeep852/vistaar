@@ -37,7 +37,7 @@ import { ThemeToggle } from '../components/ThemeToggle';
 import { useTheme } from '../context/ThemeContext';
 import { validatePassword } from '../lib/passwordPolicy';
 import { Modal } from '../components/Modal';
-import { UserAccount, UserRole, EmployeeStatus } from '../types';
+import { UserAccount, UserRole, EmployeeStatus, BusinessSettings } from '../types';
 import { PasswordRequirementsWidget } from './LoginView';
 import { PasswordInput } from '../components/PasswordInput';
 import { UserAvatar } from '../components/UserAvatar';
@@ -46,94 +46,77 @@ import { getUserInitials } from '../lib/utils';
 import { PhoneInput } from '../components/PhoneInput';
 import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 
+const defaultBusinessSettings: BusinessSettings = {
+  businessName: '',
+  legalName: '',
+  businessType: 'Private Limited',
+  businessDescription: '',
+  ownerName: '',
+  phone: '',
+  alternatePhone: '',
+  email: '',
+  website: '',
+  gstin: '',
+  pan: '',
+  regNumber: '',
+  address: '',
+  addressLine2: '',
+  city: '',
+  state: '',
+  pincode: '',
+  country: 'India',
+
+  logoUrl: '',
+  logoScale: 1,
+  logoAlignment: 'left',
+
+  signatureUrl: '',
+  signatureScale: 1,
+  signatureAlignment: 'right',
+
+  stampUrl: '',
+  stampScale: 1,
+  stampAlignment: 'left',
+
+  bankDetails: {
+    bankName: '',
+    accountHolder: '',
+    accountNo: '',
+    ifscCode: '',
+    branch: '',
+    upiId: '',
+    upiQrCodeUrl: '',
+  },
+  upiQrCodeUrl: '',
+  showUpiQrOnQuotation: true,
+  showBankDetailsOnInvoice: true,
+  showBankDetailsOnQuotation: true,
+
+  currency: '₹',
+  defaultTaxMode: 'Exclusive',
+  invoicePrefix: 'INV-',
+  quotationPrefix: 'QT-',
+  defaultPaymentTerms: 'Net 15',
+  defaultQuotationValidity: '15 Days',
+  defaultFont: 'Inter',
+  defaultOrientation: 'portrait',
+  defaultInvoiceTemplate: 'inv-modern-blue',
+  defaultQuotationTemplate: 'qt-modern-blue',
+  brandColor: '#2563eb',
+  theme: 'light',
+
+  termsAndConditions: '',
+  defaultInvoiceTerms: '',
+  defaultQuotationTerms: '',
+};
+
 export const SettingsView: React.FC = () => {
   const { theme: activeAppTheme } = useTheme();
   const [currentUser, setCurrentUser] = useState(auth.getUser());
-  const [formData, setFormData] = useState<any>({
-    legal_name: '',
-    businessName: '',
-    phone: '',
-    alternate_phone: '',
-    alternatePhone: '',
-    email: '',
-    gstin: '',
-    address: '',
-    city: '',
-    state: '',
-    pincode: '',
-    business_type: 'Private Limited',
-    businessType: 'Private Limited',
-    owner_name: '',
-    ownerName: '',
-    reg_number: '',
-    regNumber: '',
-    logo_url: '',
-    logoUrl: '',
-    logo_scale: 1,
-    logoScale: 1,
-    logo_alignment: 'left',
-    logoAlignment: 'left',
-    signature_url: '',
-    signatureUrl: '',
-    signature_scale: 1,
-    signatureScale: 1,
-    signature_alignment: 'right',
-    signatureAlignment: 'right',
-    stamp_url: '',
-    stampUrl: '',
-    stamp_scale: 1,
-    stampScale: 1,
-    stamp_alignment: 'right',
-    stampAlignment: 'right',
-    bank_details: {
-      bankName: '',
-      accountHolder: '',
-      accountNo: '',
-      ifscCode: '',
-      branch: '',
-      upiId: '',
-      upiQrCodeUrl: '',
-    },
-    bankDetails: {
-      bankName: '',
-      accountHolder: '',
-      accountNo: '',
-      ifscCode: '',
-      branch: '',
-      upiId: '',
-      upiQrCodeUrl: '',
-    },
-    upi_qr_url: '',
-    upiQrUrl: '',
-    upiQrCodeUrl: '',
-    show_upi_qr_on_quotation: true,
-    showUpiQrOnQuotation: true,
-    show_bank_on_invoice: true,
-    showBankDetailsOnInvoice: true,
-    show_bank_on_quotation: true,
-    showBankDetailsOnQuotation: true,
-    currency: '₹',
-    default_tax_mode: 'Exclusive',
-    defaultTaxMode: 'Exclusive',
-    invoice_prefix: 'INV-',
-    invoicePrefix: 'INV-',
-    quotation_prefix: 'QT-',
-    quotationPrefix: 'QT-',
-    default_payment_terms: 'Net 15',
-    defaultPaymentTerms: 'Net 15',
-    default_quotation_validity: '15 Days',
-    defaultQuotationValidity: '15 Days',
-    default_font: 'Inter',
-    defaultFont: 'Inter',
-    default_orientation: 'portrait',
-    defaultOrientation: 'portrait',
-    default_invoice_terms: '',
-    defaultInvoiceTerms: '',
-    default_quotation_terms: '',
-    defaultQuotationTerms: '',
-    terms_and_conditions: '',
-    termsAndConditions: '',
-  });
+  const [formData, setFormData] = useState<BusinessSettings>(() => ({
+    ...defaultBusinessSettings,
+    ...store.getSettings(),
+  }));
   const [activeSubTab, setActiveSubTab] = useState<
     'profile' | 'info' | 'branding' | 'bank' | 'defaults' | 'employees' | 'security' | 'terms' | 'preview'
   >('profile');
@@ -177,112 +160,17 @@ export const SettingsView: React.FC = () => {
   const [loginLogs, setLoginLogs] = useState(auth.getLoginActivity());
 
   const loadSettings = async () => {
-    const { data, success } = await businessSettingsService.getSettings();
+    const { data, success, error } = await businessSettingsService.getSettings();
+    if (error) {
+      showToast(error, 'error');
+      return;
+    }
     if (success && data) {
-      const legalName = data.legal_name ?? data.businessName ?? '';
-      const altPhone = data.alternate_phone ?? data.alternatePhone ?? '';
-      const bType = data.business_type ?? data.businessType ?? 'Private Limited';
-      const oName = data.owner_name ?? data.ownerName ?? '';
-      const rNum = data.reg_number ?? data.regNumber ?? '';
-      const lUrl = data.logo_url ?? data.logoUrl ?? '';
-      const lScale = data.logo_scale ?? data.logoScale ?? 1;
-      const lAlign = data.logo_alignment ?? data.logoAlignment ?? 'left';
-      const sUrl = data.signature_url ?? data.signatureUrl ?? '';
-      const sScale = data.signature_scale ?? data.signatureScale ?? 1;
-      const stUrl = data.stamp_url ?? data.stampUrl ?? '';
-      const stScale = data.stamp_scale ?? data.stampScale ?? 1;
-      const bDetails = data.bank_details ?? data.bankDetails ?? {
-        bankName: '',
-        accountHolder: '',
-        accountNo: '',
-        ifscCode: '',
-        branch: '',
-        upiId: '',
-      };
-      const showBankInv = data.show_bank_on_invoice ?? data.showBankDetailsOnInvoice ?? true;
-      const showBankQuot = data.show_bank_on_quotation ?? data.showBankDetailsOnQuotation ?? true;
-      const taxMode = data.default_tax_mode ?? data.defaultTaxMode ?? 'Exclusive';
-      const invPrefix = data.invoice_prefix ?? data.invoicePrefix ?? 'INV-';
-      const quotPrefix = data.quotation_prefix ?? data.quotationPrefix ?? 'QT-';
-      const payTerms = data.default_payment_terms ?? data.defaultPaymentTerms ?? 'Net 15';
-      const quotValid = data.default_quotation_validity ?? data.defaultQuotationValidity ?? '15 Days';
-      const font = data.default_font ?? data.defaultFont ?? 'Inter';
-      const orient = data.default_orientation ?? data.defaultOrientation ?? 'portrait';
-      const invTerms = data.default_invoice_terms ?? data.defaultInvoiceTerms ?? data.terms_and_conditions ?? data.termsAndConditions ?? '';
-      const quotTerms = data.default_quotation_terms ?? data.defaultQuotationTerms ?? '';
-      const termsCond = data.terms_and_conditions ?? data.termsAndConditions ?? data.default_invoice_terms ?? data.defaultInvoiceTerms ?? '';
-
-      const normalized = {
+      setFormData((prev) => ({
+        ...prev,
         ...data,
-        legal_name: legalName,
-        businessName: legalName,
-        legalName: legalName,
-        phone: data.phone ?? '',
-        email: data.email ?? '',
-        address: data.address ?? '',
-        city: data.city ?? '',
-        state: data.state ?? '',
-        pincode: data.pincode ?? '',
-        gstin: data.gstin ?? '',
-        pan: data.pan ?? '',
-        website: data.website ?? '',
-        alternate_phone: altPhone,
-        alternatePhone: altPhone,
-        business_type: bType,
-        businessType: bType,
-        owner_name: oName,
-        ownerName: oName,
-        reg_number: rNum,
-        regNumber: rNum,
-        logo_url: lUrl,
-        logoUrl: lUrl,
-        logo_scale: lScale,
-        logoScale: lScale,
-        logo_alignment: lAlign,
-        logoAlignment: lAlign,
-        signature_url: sUrl,
-        signatureUrl: sUrl,
-        signature_scale: sScale,
-        signatureScale: sScale,
-        stamp_url: stUrl,
-        stampUrl: stUrl,
-        stamp_scale: stScale,
-        stampScale: stScale,
-        bank_details: bDetails,
-        bankDetails: bDetails,
-        upi_qr_url: data.upi_qr_url ?? data.upiQrUrl ?? data.upiQrCodeUrl ?? bDetails?.upiQrCodeUrl ?? '',
-        upiQrUrl: data.upi_qr_url ?? data.upiQrUrl ?? data.upiQrCodeUrl ?? bDetails?.upiQrCodeUrl ?? '',
-        upiQrCodeUrl: data.upi_qr_url ?? data.upiQrUrl ?? data.upiQrCodeUrl ?? bDetails?.upiQrCodeUrl ?? '',
-        show_upi_qr_on_quotation: data.show_upi_qr_on_quotation ?? data.showUpiQrOnQuotation ?? true,
-        showUpiQrOnQuotation: data.show_upi_qr_on_quotation ?? data.showUpiQrOnQuotation ?? true,
-        show_bank_on_invoice: showBankInv,
-        showBankDetailsOnInvoice: showBankInv,
-        show_bank_on_quotation: showBankQuot,
-        showBankDetailsOnQuotation: showBankQuot,
-        default_tax_mode: taxMode,
-        defaultTaxMode: taxMode,
-        invoice_prefix: invPrefix,
-        invoicePrefix: invPrefix,
-        quotation_prefix: quotPrefix,
-        quotationPrefix: quotPrefix,
-        default_payment_terms: payTerms,
-        defaultPaymentTerms: payTerms,
-        default_quotation_validity: quotValid,
-        defaultQuotationValidity: quotValid,
-        default_font: font,
-        defaultFont: font,
-        default_orientation: orient,
-        defaultOrientation: orient,
-        default_invoice_terms: invTerms,
-        defaultInvoiceTerms: invTerms,
-        default_quotation_terms: quotTerms,
-        defaultQuotationTerms: quotTerms,
-        terms_and_conditions: termsCond,
-        termsAndConditions: termsCond,
-      };
-
-      setFormData(normalized);
-      store.updateSettings(normalized);
+      }));
+      store.updateSettings(data);
     }
   };
 
@@ -335,7 +223,7 @@ export const SettingsView: React.FC = () => {
       setPhoneError('');
     }
 
-    const altPhone = formData.alternate_phone ?? formData.alternatePhone ?? '';
+    const altPhone = formData.alternatePhone || '';
     if (altPhone && !isValidIndianPhoneNumber(altPhone, false)) {
       setAlternatePhoneError('Enter a valid 10-digit mobile number starting with 6–9.');
       hasErr = true;
@@ -351,17 +239,23 @@ export const SettingsView: React.FC = () => {
       }
       return;
     }
-    const cleanFormData = {
+    const cleanFormData: BusinessSettings = {
       ...formData,
-      legal_name: formData.legal_name ?? formData.businessName ?? '',
+      businessName: (formData.businessName || formData.legalName || '').trim(),
+      legalName: (formData.legalName || formData.businessName || '').trim(),
       phone: formData.phone ? normalizeIndianPhoneNumber(formData.phone) : '',
-      alternate_phone: altPhone ? normalizeIndianPhoneNumber(altPhone) : '',
+      alternatePhone: altPhone ? normalizeIndianPhoneNumber(altPhone) : '',
     };
 
     const res = await businessSettingsService.updateSettings(cleanFormData);
     if (res.success) {
-      await loadSettings();
-      store.updateSettings(cleanFormData);
+      if (res.data) {
+        setFormData(res.data);
+        store.updateSettings(res.data);
+      } else {
+        await loadSettings();
+        store.updateSettings(cleanFormData);
+      }
       showToast('Business Profile & Document Branding saved successfully!', 'success');
     } else {
       showToast(res.error || 'Failed to save settings.', 'error');
@@ -391,19 +285,17 @@ export const SettingsView: React.FC = () => {
     reader.onload = (event) => {
       const url = event.target?.result as string;
       if (type === 'logo') {
-        setFormData((prev: any) => ({ ...prev, logo_url: url, logoUrl: url }));
+        setFormData((prev) => ({ ...prev, logoUrl: url }));
       } else if (type === 'signature') {
-        setFormData((prev: any) => ({ ...prev, signature_url: url, signatureUrl: url }));
+        setFormData((prev) => ({ ...prev, signatureUrl: url }));
       } else if (type === 'stamp') {
-        setFormData((prev: any) => ({ ...prev, stamp_url: url, stampUrl: url }));
+        setFormData((prev) => ({ ...prev, stampUrl: url }));
       } else if (type === 'upiQr') {
-        setFormData((prev: any) => ({
+        setFormData((prev) => ({
           ...prev,
-          upi_qr_url: url,
-          upiQrUrl: url,
           upiQrCodeUrl: url,
           bankDetails: {
-            ...(prev.bankDetails || {}),
+            ...prev.bankDetails,
             upiQrCodeUrl: url,
           },
         }));
@@ -414,17 +306,15 @@ export const SettingsView: React.FC = () => {
   };
 
   const handleRemoveAsset = (type: 'logo' | 'signature' | 'stamp' | 'upiQr') => {
-    if (type === 'logo') setFormData((prev: any) => ({ ...prev, logo_url: '', logoUrl: '' }));
-    if (type === 'signature') setFormData((prev: any) => ({ ...prev, signature_url: '', signatureUrl: '' }));
-    if (type === 'stamp') setFormData((prev: any) => ({ ...prev, stamp_url: '', stampUrl: '' }));
+    if (type === 'logo') setFormData((prev) => ({ ...prev, logoUrl: '' }));
+    if (type === 'signature') setFormData((prev) => ({ ...prev, signatureUrl: '' }));
+    if (type === 'stamp') setFormData((prev) => ({ ...prev, stampUrl: '' }));
     if (type === 'upiQr') {
-      setFormData((prev: any) => ({
+      setFormData((prev) => ({
         ...prev,
-        upi_qr_url: '',
-        upiQrUrl: '',
         upiQrCodeUrl: '',
         bankDetails: {
-          ...(prev.bankDetails || {}),
+          ...prev.bankDetails,
           upiQrCodeUrl: '',
         },
       }));
@@ -804,8 +694,8 @@ export const SettingsView: React.FC = () => {
                 <input
                   type="text"
                   required
-                  value={formData.legal_name ?? ''}
-                  onChange={(e) => setFormData({ ...formData, legal_name: e.target.value, businessName: e.target.value, legalName: e.target.value })}
+                  value={formData.businessName || ''}
+                  onChange={(e) => setFormData({ ...formData, businessName: e.target.value })}
                   placeholder="e.g. VISTAAR Business Solutions"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
                 />
@@ -817,8 +707,8 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  value={formData.legal_name ?? ''}
-                  onChange={(e) => setFormData({ ...formData, legal_name: e.target.value, businessName: e.target.value, legalName: e.target.value })}
+                  value={formData.legalName || ''}
+                  onChange={(e) => setFormData({ ...formData, legalName: e.target.value })}
                   placeholder="e.g. VISTAAR Tech Pvt Ltd"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 />
@@ -829,8 +719,8 @@ export const SettingsView: React.FC = () => {
                   Business Type
                 </label>
                 <select
-                  value={formData.business_type ?? 'Private Limited'}
-                  onChange={(e) => setFormData({ ...formData, business_type: e.target.value, businessType: e.target.value })}
+                  value={formData.businessType || 'Private Limited'}
+                  onChange={(e) => setFormData({ ...formData, businessType: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 >
                   <option value="Sole Proprietorship">Sole Proprietorship</option>
@@ -848,8 +738,8 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  value={formData.owner_name ?? ''}
-                  onChange={(e) => setFormData({ ...formData, owner_name: e.target.value, ownerName: e.target.value })}
+                  value={formData.ownerName || ''}
+                  onChange={(e) => setFormData({ ...formData, ownerName: e.target.value })}
                   placeholder="e.g. Rajesh Kumar"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 />
@@ -871,9 +761,9 @@ export const SettingsView: React.FC = () => {
               <PhoneInput
                 id="settings-alt-phone"
                 label="Alternate Phone / WhatsApp"
-                value={formData.alternate_phone ?? ''}
+                value={formData.alternatePhone ?? ''}
                 onChange={(val) => {
-                  setFormData({ ...formData, alternate_phone: val, alternatePhone: val });
+                  setFormData({ ...formData, alternatePhone: val });
                   if (alternatePhoneError) setAlternatePhoneError('');
                 }}
                 error={alternatePhoneError}
@@ -940,8 +830,8 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  value={formData.reg_number ?? ''}
-                  onChange={(e) => setFormData({ ...formData, reg_number: e.target.value, regNumber: e.target.value })}
+                  value={formData.regNumber ?? ''}
+                  onChange={(e) => setFormData({ ...formData, regNumber: e.target.value })}
                   placeholder="UDYAM-MH-01-001234"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 />
@@ -1399,9 +1289,9 @@ export const SettingsView: React.FC = () => {
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800">
                 {/* QR Thumbnail Preview */}
                 <div className="w-24 h-24 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 flex items-center justify-center overflow-hidden shrink-0">
-                  {(formData.upi_qr_url || formData.upiQrCodeUrl || formData.bankDetails?.upiQrCodeUrl) ? (
+                  {(formData.upiQrCodeUrl || formData.bankDetails?.upiQrCodeUrl) ? (
                     <img
-                      src={formData.upi_qr_url || formData.upiQrCodeUrl || formData.bankDetails?.upiQrCodeUrl}
+                      src={formData.upiQrCodeUrl || formData.bankDetails?.upiQrCodeUrl}
                       alt="UPI QR Code Preview"
                       className="w-full h-full object-contain p-1"
                     />
@@ -1419,7 +1309,7 @@ export const SettingsView: React.FC = () => {
                     <label className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1.5 shadow-sm">
                       <Upload className="w-3.5 h-3.5" />
                       <span>
-                        {(formData.upi_qr_url || formData.upiQrCodeUrl || formData.bankDetails?.upiQrCodeUrl)
+                        {(formData.upiQrCodeUrl || formData.bankDetails?.upiQrCodeUrl)
                           ? 'Replace QR Code'
                           : 'Upload UPI QR'}
                       </span>
@@ -1431,7 +1321,7 @@ export const SettingsView: React.FC = () => {
                       />
                     </label>
 
-                    {(formData.upi_qr_url || formData.upiQrCodeUrl || formData.bankDetails?.upiQrCodeUrl) && (
+                    {(formData.upiQrCodeUrl || formData.bankDetails?.upiQrCodeUrl) && (
                       <button
                         type="button"
                         onClick={() => handleRemoveAsset('upiQr')}
@@ -1473,11 +1363,10 @@ export const SettingsView: React.FC = () => {
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={formData.show_upi_qr_on_quotation ?? formData.showUpiQrOnQuotation ?? true}
+                  checked={formData.showUpiQrOnQuotation ?? true}
                   onChange={(e) =>
                     setFormData({
                       ...formData,
-                      show_upi_qr_on_quotation: e.target.checked,
                       showUpiQrOnQuotation: e.target.checked,
                     })
                   }
@@ -1537,8 +1426,8 @@ export const SettingsView: React.FC = () => {
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Tax Mode</label>
                 <select
-                  value={formData.default_tax_mode ?? formData.defaultTaxMode ?? 'Exclusive'}
-                  onChange={(e) => setFormData({ ...formData, default_tax_mode: e.target.value, defaultTaxMode: e.target.value as any })}
+                  value={formData.defaultTaxMode || 'Exclusive'}
+                  onChange={(e) => setFormData({ ...formData, defaultTaxMode: e.target.value as any })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 >
                   <option value="Exclusive">Tax Exclusive (Subtotal + GST)</option>
@@ -1551,8 +1440,8 @@ export const SettingsView: React.FC = () => {
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Invoice Prefix</label>
                 <input
                   type="text"
-                  value={formData.invoice_prefix ?? formData.invoicePrefix ?? ''}
-                  onChange={(e) => setFormData({ ...formData, invoice_prefix: e.target.value, invoicePrefix: e.target.value })}
+                  value={formData.invoicePrefix || ''}
+                  onChange={(e) => setFormData({ ...formData, invoicePrefix: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
                 />
               </div>
@@ -1561,8 +1450,8 @@ export const SettingsView: React.FC = () => {
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Quotation Prefix</label>
                 <input
                   type="text"
-                  value={formData.quotation_prefix ?? formData.quotationPrefix ?? ''}
-                  onChange={(e) => setFormData({ ...formData, quotation_prefix: e.target.value, quotationPrefix: e.target.value })}
+                  value={formData.quotationPrefix || ''}
+                  onChange={(e) => setFormData({ ...formData, quotationPrefix: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
                 />
               </div>
@@ -1570,8 +1459,8 @@ export const SettingsView: React.FC = () => {
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Payment Terms</label>
                 <select
-                  value={formData.default_payment_terms ?? formData.defaultPaymentTerms ?? 'Net 15'}
-                  onChange={(e) => setFormData({ ...formData, default_payment_terms: e.target.value, defaultPaymentTerms: e.target.value })}
+                  value={formData.defaultPaymentTerms || 'Net 15'}
+                  onChange={(e) => setFormData({ ...formData, defaultPaymentTerms: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 >
                   <option value="Immediate">Immediate / Due on Receipt</option>
@@ -1585,8 +1474,8 @@ export const SettingsView: React.FC = () => {
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Quotation Validity</label>
                 <select
-                  value={formData.default_quotation_validity ?? formData.defaultQuotationValidity ?? '15 Days'}
-                  onChange={(e) => setFormData({ ...formData, default_quotation_validity: e.target.value, defaultQuotationValidity: e.target.value })}
+                  value={formData.defaultQuotationValidity || '15 Days'}
+                  onChange={(e) => setFormData({ ...formData, defaultQuotationValidity: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
                 >
                   <option value="7 Days">7 Days</option>
@@ -1599,8 +1488,8 @@ export const SettingsView: React.FC = () => {
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Document Font</label>
                 <select
-                  value={formData.default_font ?? formData.defaultFont ?? 'Inter'}
-                  onChange={(e) => setFormData({ ...formData, default_font: e.target.value, defaultFont: e.target.value })}
+                  value={formData.defaultFont || 'Inter'}
+                  onChange={(e) => setFormData({ ...formData, defaultFont: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
                 >
                   {DOCUMENT_FONTS.map((font) => (
@@ -1614,8 +1503,8 @@ export const SettingsView: React.FC = () => {
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Page Orientation</label>
                 <select
-                  value={formData.default_orientation ?? formData.defaultOrientation ?? 'portrait'}
-                  onChange={(e) => setFormData({ ...formData, default_orientation: e.target.value, defaultOrientation: e.target.value as any })}
+                  value={formData.defaultOrientation || 'portrait'}
+                  onChange={(e) => setFormData({ ...formData, defaultOrientation: e.target.value as any })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
                 >
                   <option value="portrait">Portrait (210 × 297 mm)</option>
@@ -1914,13 +1803,11 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <textarea
                   rows={4}
-                  value={formData.default_invoice_terms ?? formData.defaultInvoiceTerms ?? ''}
+                  value={formData.defaultInvoiceTerms || ''}
                   onChange={(e) =>
                     setFormData({
                       ...formData,
-                      default_invoice_terms: e.target.value,
                       defaultInvoiceTerms: e.target.value,
-                      terms_and_conditions: e.target.value,
                       termsAndConditions: e.target.value,
                     })
                   }
@@ -1934,11 +1821,10 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <textarea
                   rows={4}
-                  value={formData.default_quotation_terms ?? formData.defaultQuotationTerms ?? ''}
+                  value={formData.defaultQuotationTerms || ''}
                   onChange={(e) =>
                     setFormData({
                       ...formData,
-                      default_quotation_terms: e.target.value,
                       defaultQuotationTerms: e.target.value,
                     })
                   }

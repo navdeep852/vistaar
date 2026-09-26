@@ -673,6 +673,7 @@ export interface BusinessSettings {
   // 1. Business Information
   businessName: string;
   legalName?: string;
+  companyName?: string;
   businessType?: string;
   businessDescription?: string;
   ownerName?: string;
