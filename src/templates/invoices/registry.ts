@@ -38,6 +38,8 @@ import { ConstructionLayout } from './layouts/ConstructionLayout';
 import { ITSoftwareLayout } from './layouts/ITSoftwareLayout';
 import { RestaurantCatering } from './layouts/RestaurantCatering';
 import { IndianBusinessClassic } from './layouts/IndianBusinessClassic';
+import { EInvoiceProfessional } from './layouts/EInvoiceProfessional';
+import { BlackWhiteBusiness } from './layouts/BlackWhiteBusiness';
 
 export const INVOICE_TEMPLATES: InvoiceTemplateDefinition[] = [
   // CATEGORY: CORPORATE (01-05)
@@ -290,6 +292,24 @@ export const INVOICE_TEMPLATES: InvoiceTemplateDefinition[] = [
     description: 'Traditional Indian GST Tax Invoice with HSN/SAC, CGST/SGST/IGST breakdown, and auspicious header.',
     component: IndianBusinessClassic,
     defaultTheme: defaultInvoiceThemes['corporate-navy'],
+  },
+  // TEMPLATE 31 — eInvoice Reference
+  {
+    id: 'inv-einvoice-reference',
+    name: 'eInvoice Professional',
+    category: 'corporate',
+    description: 'Clean professional invoice with structured payment information, QR payment section and corporate billing layout.',
+    component: EInvoiceProfessional,
+    defaultTheme: defaultInvoiceThemes['corporate-navy'],
+  },
+  // TEMPLATE 32 — Black & White Simple Business Invoice
+  {
+    id: 'inv-black-white-business',
+    name: 'Black & White Business',
+    category: 'corporate',
+    description: 'Minimal monochrome business invoice with strong typography and clean document hierarchy.',
+    component: BlackWhiteBusiness,
+    defaultTheme: defaultInvoiceThemes['monochrome'],
   },
 ];
 

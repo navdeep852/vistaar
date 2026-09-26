@@ -46,6 +46,8 @@ const previewColorMap: Record<string, string> = {
   'inv-it-software-layout': '#4338ca',
   'inv-restaurant-catering': '#e11d48',
   'inv-indian-business-classic': '#0f172a',
+  'inv-einvoice-reference': '#1e3a8a',
+  'inv-black-white-business': '#09090b',
 };
 
 const badgeMap: Record<string, string> = {
@@ -57,6 +59,8 @@ const badgeMap: Record<string, string> = {
   'inv-creative-agency': 'Agency',
   'inv-retail-pro': 'Retail',
   'inv-indian-business-classic': 'GST Classic',
+  'inv-einvoice-reference': 'eInvoice',
+  'inv-black-white-business': 'Monochrome',
 };
 
 export const INVOICE_TEMPLATES: DocumentTemplate[] = ENGINE_INVOICE_TEMPLATES.map((def) => {
