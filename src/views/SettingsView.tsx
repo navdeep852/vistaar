@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Building,
   Save,
@@ -26,6 +26,8 @@ import {
   Camera,
   User,
   QrCode,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { businessSettingsService } from '../services/supabase';
 import { supabaseAuthService as auth } from '../services/supabaseAuth';
@@ -110,6 +112,20 @@ const defaultBusinessSettings: BusinessSettings = {
   defaultQuotationTerms: '',
 };
 
+export const SETTINGS_TABS = [
+  { id: 'profile', label: '1. Personal Profile', icon: User },
+  { id: 'info', label: '2. Business Info', icon: Building },
+  { id: 'branding', label: '3. Logo & Signature', icon: Palette },
+  { id: 'bank', label: '4. Bank & Payment', icon: CreditCard },
+  { id: 'defaults', label: '5. Theme & Defaults', icon: Sliders },
+  { id: 'employees', label: '6. Employees & Team', icon: Users },
+  { id: 'security', label: '7. Security & Password', icon: ShieldCheck },
+  { id: 'terms', label: '8. Default Terms', icon: FileText },
+  { id: 'preview', label: '9. Document Preview', icon: Eye },
+] as const;
+
+export type SettingsSubTabId = typeof SETTINGS_TABS[number]['id'];
+
 export const SettingsView: React.FC = () => {
   const { theme: activeAppTheme } = useTheme();
   const [currentUser, setCurrentUser] = useState(auth.getUser());
@@ -117,9 +133,109 @@ export const SettingsView: React.FC = () => {
     ...defaultBusinessSettings,
     ...store.getSettings(),
   }));
-  const [activeSubTab, setActiveSubTab] = useState<
-    'profile' | 'info' | 'branding' | 'bank' | 'defaults' | 'employees' | 'security' | 'terms' | 'preview'
-  >('profile');
+  const [activeSubTab, setActiveSubTab] = useState<SettingsSubTabId>('profile');
+
+  // Horizontal Tab Navigation State & Refs
+  const tabsContainerRef = useRef<HTMLDivElement | null>(null);
+  const tabButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  // Check whether tabs can scroll horizontally to display edge indicators
+  const checkScrollability = useCallback(() => {
+    const el = tabsContainerRef.current;
+    if (!el) return;
+    const { scrollLeft, scrollWidth, clientWidth } = el;
+    setCanScrollLeft(scrollLeft > 6);
+    setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 6);
+  }, []);
+
+  // Update edge scroll indicators on scroll, resize, and window changes
+  useEffect(() => {
+    const el = tabsContainerRef.current;
+    if (!el) return;
+
+    checkScrollability();
+
+    const handleScroll = () => {
+      checkScrollability();
+    };
+
+    el.addEventListener('scroll', handleScroll, { passive: true });
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        checkScrollability();
+      });
+      resizeObserver.observe(el);
+    }
+
+    window.addEventListener('resize', handleScroll);
+
+    return () => {
+      el.removeEventListener('scroll', handleScroll);
+      if (resizeObserver) resizeObserver.disconnect();
+      window.removeEventListener('resize', handleScroll);
+    };
+  }, [checkScrollability]);
+
+  // Active tab auto-scroll: automatically bring active tab into view smoothly without vertical page jumps
+  useEffect(() => {
+    const activeEl = tabButtonRefs.current[activeSubTab];
+    if (activeEl) {
+      activeEl.scrollIntoView({
+        behavior: 'smooth',
+        inline: 'center',
+        block: 'nearest',
+      });
+    }
+  }, [activeSubTab]);
+
+  // Mouse wheel horizontal translation handler
+  const handleTabsWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.deltaY !== 0 && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      e.currentTarget.scrollLeft += e.deltaY;
+    }
+  };
+
+  // Click scroll left / right
+  const scrollTabs = (direction: 'left' | 'right') => {
+    const el = tabsContainerRef.current;
+    if (!el) return;
+    const scrollAmount = Math.max(180, Math.floor(el.clientWidth * 0.5));
+    el.scrollBy({
+      left: direction === 'left' ? -scrollAmount : scrollAmount,
+      behavior: 'smooth',
+    });
+  };
+
+  // Keyboard navigation for tablist accessibility
+  const handleTabKeyDown = (e: React.KeyboardEvent, index: number) => {
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      const nextIndex = (index + 1) % SETTINGS_TABS.length;
+      const nextTab = SETTINGS_TABS[nextIndex].id;
+      setActiveSubTab(nextTab);
+      tabButtonRefs.current[nextTab]?.focus();
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const prevIndex = (index - 1 + SETTINGS_TABS.length) % SETTINGS_TABS.length;
+      const prevTab = SETTINGS_TABS[prevIndex].id;
+      setActiveSubTab(prevTab);
+      tabButtonRefs.current[prevTab]?.focus();
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      const firstTab = SETTINGS_TABS[0].id;
+      setActiveSubTab(firstTab);
+      tabButtonRefs.current[firstTab]?.focus();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      const lastTab = SETTINGS_TABS[SETTINGS_TABS.length - 1].id;
+      setActiveSubTab(lastTab);
+      tabButtonRefs.current[lastTab]?.focus();
+    }
+  };
 
   // Personal Profile State
   const [profileName, setProfileName] = useState('');
@@ -487,35 +603,75 @@ export const SettingsView: React.FC = () => {
         </button>
       </div>
 
-      {/* Sub Navigation Tabs */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none border-b border-slate-200 dark:border-slate-800">
-        {[
-          { id: 'profile', label: '1. Personal Profile', icon: User },
-          { id: 'info', label: '2. Business Info', icon: Building },
-          { id: 'branding', label: '3. Logo & Signature', icon: Palette },
-          { id: 'bank', label: '4. Bank & Payment', icon: CreditCard },
-          { id: 'defaults', label: '5. Theme & Defaults', icon: Sliders },
-          { id: 'employees', label: '6. Employees & Team', icon: Users },
-          { id: 'security', label: '7. Security & Password', icon: ShieldCheck },
-          { id: 'terms', label: '8. Default Terms', icon: FileText },
-          { id: 'preview', label: '9. Document Preview', icon: Eye },
-        ].map((tab) => {
-          const Icon = tab.icon;
-          return (
+      {/* Sub Navigation Tabs Strip */}
+      <div className="relative w-full max-w-full">
+        {/* Left Arrow Button / Gradient Edge Indicator */}
+        {canScrollLeft && (
+          <div className="absolute left-0 top-0 bottom-2.5 z-10 flex items-center pr-3 pl-0.5 bg-gradient-to-r from-slate-100 dark:from-slate-950 via-slate-100/90 dark:via-slate-950/90 to-transparent pointer-events-auto">
             <button
-              key={tab.id}
-              onClick={() => setActiveSubTab(tab.id as any)}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors border ${
-                activeSubTab === tab.id
-                  ? 'bg-blue-600 text-white border-blue-600 shadow-md'
-                  : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
-              }`}
+              type="button"
+              onClick={() => scrollTabs('left')}
+              className="p-1.5 rounded-lg bg-white dark:bg-slate-800 shadow-md border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-blue-600 dark:hover:text-blue-400 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Scroll tabs left"
+              title="Scroll left"
             >
-              <Icon className="w-4 h-4" />
-              <span>{tab.label}</span>
+              <ChevronLeft className="w-3.5 h-3.5" />
             </button>
-          );
-        })}
+          </div>
+        )}
+
+        {/* Horizontally Scrollable Tabs Bar */}
+        <div
+          ref={tabsContainerRef}
+          onWheel={handleTabsWheel}
+          role="tablist"
+          aria-label="Settings navigation tabs"
+          className="settings-tabs-scroll flex items-center gap-2 pb-2 pt-0.5 px-0.5 border-b border-slate-200 dark:border-slate-800 w-full overflow-x-auto overflow-y-hidden"
+        >
+          {SETTINGS_TABS.map((tab, idx) => {
+            const Icon = tab.icon;
+            const isActive = activeSubTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                ref={(el) => {
+                  tabButtonRefs.current[tab.id] = el;
+                }}
+                type="button"
+                role="tab"
+                id={`settings-tab-${tab.id}`}
+                aria-controls={`settings-tabpanel-${tab.id}`}
+                aria-selected={isActive}
+                tabIndex={isActive ? 0 : -1}
+                onClick={() => setActiveSubTab(tab.id)}
+                onKeyDown={(e) => handleTabKeyDown(e, idx)}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 flex-shrink-0 transition-colors border select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${
+                  isActive
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-md'
+                    : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
+                }`}
+              >
+                <Icon className="w-4 h-4 shrink-0" />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Right Arrow Button / Gradient Edge Indicator */}
+        {canScrollRight && (
+          <div className="absolute right-0 top-0 bottom-2.5 z-10 flex items-center pl-3 pr-0.5 bg-gradient-to-l from-slate-100 dark:from-slate-950 via-slate-100/90 dark:via-slate-950/90 to-transparent pointer-events-auto">
+            <button
+              type="button"
+              onClick={() => scrollTabs('right')}
+              className="p-1.5 rounded-lg bg-white dark:bg-slate-800 shadow-md border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-blue-600 dark:hover:text-blue-400 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Scroll tabs right"
+              title="Scroll right"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
       </div>
 
       <form onSubmit={handleSave} className="space-y-6">

@@ -205,3 +205,51 @@
   background: #475569;
 }
 
+/* Settings Tabs Horizontal Scrollbar Styling */
+.settings-tabs-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  scrollbar-width: thin;
+  scrollbar-color: #94a3b8 rgba(15, 23, 42, 0.08);
+  -webkit-overflow-scrolling: touch;
+}
+
+.dark .settings-tabs-scroll {
+  scrollbar-color: #475569 rgba(255, 255, 255, 0.08);
+}
+
+.settings-tabs-scroll::-webkit-scrollbar {
+  height: 7px;
+}
+
+.settings-tabs-scroll::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.06);
+  border-radius: 9999px;
+  margin: 0 4px;
+}
+
+.dark .settings-tabs-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 9999px;
+  margin: 0 4px;
+}
+
+.settings-tabs-scroll::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 9999px;
+}
+
+.settings-tabs-scroll::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+.dark .settings-tabs-scroll::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 9999px;
+}
+
+.dark .settings-tabs-scroll::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
