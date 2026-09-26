@@ -1,6 +1,7 @@
 import React from 'react';
 import { InvoiceTemplateProps } from '../types';
 import { formatCurrency, formatDate, LogoComponent, PaymentStatusBadge, hasValue } from '../helpers';
+import { DocumentPaymentQr } from '../../../components/DocumentPaymentQr';
 
 export const ClassicCorporate: React.FC<InvoiceTemplateProps> = ({
   invoice,
@@ -80,6 +81,13 @@ export const ClassicCorporate: React.FC<InvoiceTemplateProps> = ({
             <p className="text-slate-600">A/C: {business.bankDetails.accountNo}</p>
             <p className="text-slate-600">IFSC: {business.bankDetails.ifscCode}</p>
             {business.bankDetails.branch && <p className="text-slate-500">Branch: {business.bankDetails.branch}</p>}
+            <DocumentPaymentQr
+              upiQrCodeUrl={business.bankDetails.upiQrCodeUrl}
+              upiId={business.bankDetails.upiId}
+              showQrCode={Boolean(customization?.showQrCode ?? customization?.showUpiQr ?? false)}
+              showUpiId={Boolean(customization?.showUpi ?? true)}
+              className="mt-2 ml-auto"
+            />
           </div>
         )}
       </div>

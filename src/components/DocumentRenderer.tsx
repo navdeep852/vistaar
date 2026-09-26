@@ -5,6 +5,7 @@ import { INVOICE_TEMPLATES } from '../templates/invoiceTemplates';
 import { QUOTATION_TEMPLATES } from '../templates/quotationTemplates';
 import { QuotationTemplateEngineRenderer } from '../templates/quotations/renderer';
 import { InvoiceTemplateEngineRenderer } from '../templates/invoices/InvoiceTemplateEngineRenderer';
+import { DocumentPaymentQr } from './DocumentPaymentQr';
 
 export interface DocumentRendererProps {
   templateId: string;
@@ -100,6 +101,17 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
   customization,
   isPrintMode = false,
 }) => {
+  const normalizedBankDetails = bankDetails
+    ? {
+        ...bankDetails,
+        upiQrCodeUrl:
+          bankDetails.upiQrCodeUrl ||
+          (bankDetails as any).upi_qr_url ||
+          (bankDetails as any).upiQrUrl ||
+          undefined,
+      }
+    : undefined;
+
   // Delegate quotation documents to the modular 30-layout Quotation Template Engine
   if (documentType === 'quotation') {
     return (
@@ -129,7 +141,8 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
           pincode: pincode,
           gstin: gstin,
           pan: pan,
-          bankDetails: bankDetails,
+          bankDetails: normalizedBankDetails,
+          upiQrCodeUrl: normalizedBankDetails?.upiQrCodeUrl,
         }}
         customer={{
           name: customerName || 'Customer Name',
@@ -191,7 +204,8 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
           pincode: pincode,
           gstin: gstin,
           pan: pan,
-          bankDetails: bankDetails,
+          bankDetails: normalizedBankDetails,
+          upiQrCodeUrl: normalizedBankDetails?.upiQrCodeUrl,
         }}
         customer={{
           name: customerName || 'Customer Name',
@@ -267,6 +281,7 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
   const showPan = customization?.showPan ?? true;
   const showBankDetails = customization?.showBankDetails ?? true;
   const showUpi = customization?.showUpi ?? true;
+  const showQrCode = customization?.showQrCode ?? customization?.showUpiQr ?? false;
   const showSignature = customization?.showSignature ?? true;
   const showStamp = customization?.showStamp ?? true;
   const showTerms = customization?.showTerms ?? true;
@@ -587,7 +602,7 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
               <p className="bg-slate-50 p-3 rounded-lg border border-slate-100 whitespace-pre-line">{terms}</p>
             </div>
           )}
-          {showBankDetails && bankDetails && (bankDetails.bankName || bankDetails.upiId || (bankDetails as any).upiQrCodeUrl) && (
+          {showBankDetails && bankDetails && (bankDetails.bankName || bankDetails.upiId || normalizedBankDetails?.upiQrCodeUrl) && (
             <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 space-y-2">
               <span className="text-[10px] font-bold uppercase text-slate-400 block">Bank & Remittance Details:</span>
               <div className="text-slate-700 text-[11px] space-y-0.5">
@@ -598,20 +613,23 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
                 {showUpi && bankDetails.upiId && <p className="text-blue-700 font-bold">UPI ID: {bankDetails.upiId}</p>}
               </div>
 
-              {showUpi && (bankDetails as any).upiQrCodeUrl && (
-                <div className="mt-2 pt-2 border-t border-slate-200 flex items-center gap-3">
-                  <img
-                    src={(bankDetails as any).upiQrCodeUrl}
-                    alt="Scan to Pay UPI QR"
-                    className="w-16 h-16 object-contain rounded border border-slate-200 bg-white p-0.5 shrink-0"
-                  />
-                  <div>
-                    <span className="text-[9px] font-bold text-slate-500 uppercase block">Scan to Pay</span>
-                    <span className="text-[10px] text-slate-600">Scan via GPay, PhonePe, Paytm or BHIM</span>
-                  </div>
-                </div>
-              )}
+              <DocumentPaymentQr
+                upiQrCodeUrl={normalizedBankDetails?.upiQrCodeUrl}
+                upiId={bankDetails?.upiId}
+                showQrCode={showQrCode}
+                showUpiId={showUpi}
+                className="mt-2"
+              />
             </div>
+          )}
+
+          {!showBankDetails && showQrCode && normalizedBankDetails?.upiQrCodeUrl && (
+            <DocumentPaymentQr
+              upiQrCodeUrl={normalizedBankDetails?.upiQrCodeUrl}
+              upiId={bankDetails?.upiId}
+              showQrCode={showQrCode}
+              showUpiId={showUpi}
+            />
           )}
         </div>
 

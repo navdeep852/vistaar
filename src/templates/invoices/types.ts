@@ -44,6 +44,7 @@ export interface BusinessBankDetails {
   ifscCode?: string;
   branch?: string;
   upiId?: string;
+  upiQrCodeUrl?: string;
 }
 
 export interface BusinessData {
@@ -62,6 +63,7 @@ export interface BusinessData {
   gstin?: string;
   pan?: string;
   bankDetails?: BusinessBankDetails;
+  upiQrCodeUrl?: string;
 }
 
 export interface CustomerData {

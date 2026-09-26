@@ -1072,7 +1072,7 @@ class StoreService {
           invoiceNumber: newInvoice.invoiceNumber,
           amount: newInvoice.paidAmount,
           date: newInvoice.date || new Date().toISOString().split('T')[0],
-          method: ((newInvoice as any).paymentMethod || 'Cash') as any,
+          method: ((newInvoice as any).paymentMethod || (newInvoice as any).paymentMode || 'Cash') as any,
           notes: `Initial payment for Invoice #${newInvoice.invoiceNumber}`,
           createdAt: newInvoice.createdAt || new Date().toISOString(),
         };

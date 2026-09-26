@@ -133,6 +133,8 @@ export function mapAppSettingsToDb(settings: Partial<BusinessSettings>, workspac
     stamp_alignment: settings.stampAlignment || (settings as any).stamp_alignment || 'left',
     stamp_scale: settings.stampScale ?? (settings as any).stamp_scale ?? 1.0,
     bank_details: bankDetailsPayload,
+    upi_qr_url: upiQr || null,
+    show_upi_qr_on_quotation: settings.showUpiQrOnQuotation ?? (settings as any).show_upi_qr_on_quotation ?? true,
     show_bank_on_invoice: settings.showBankDetailsOnInvoice ?? (settings as any).show_bank_on_invoice ?? true,
     show_bank_on_quotation: settings.showBankDetailsOnQuotation ?? (settings as any).show_bank_on_quotation ?? true,
     currency: settings.currency || (settings as any).currency || '₹',

@@ -1,6 +1,7 @@
 import React from 'react';
 import { QuotationTemplateProps } from '../types';
 import { formatCurrency, formatDate, LogoComponent, hasValue } from '../helpers';
+import { DocumentPaymentQr } from '../../../components/DocumentPaymentQr';
 
 export const IndianBusinessClassic: React.FC<QuotationTemplateProps> = ({
   quotation,
@@ -118,20 +119,13 @@ export const IndianBusinessClassic: React.FC<QuotationTemplateProps> = ({
             <p className="text-slate-700">Account No: <strong>{business.bankDetails.accountNo}</strong></p>
             <p className="text-slate-700">IFSC Code: <strong>{business.bankDetails.ifscCode}</strong></p>
             <p className="text-slate-700">Branch: {business.bankDetails.branch || 'Main Branch'}</p>
-            {business.bankDetails.upiId && <p className="text-blue-700 font-bold">UPI ID: {business.bankDetails.upiId}</p>}
-            {business.bankDetails.upiQrCodeUrl && (
-              <div className="mt-2 pt-2 border-t border-slate-200 flex items-center gap-2">
-                <img
-                  src={business.bankDetails.upiQrCodeUrl}
-                  alt="Scan to Pay UPI QR"
-                  className="w-14 h-14 object-contain rounded border border-slate-200 bg-white p-0.5 shrink-0"
-                />
-                <div>
-                  <span className="text-[9px] font-bold text-slate-500 uppercase block">Scan to Pay</span>
-                  <span className="text-[10px] text-slate-600">Scan via GPay / PhonePe / Paytm</span>
-                </div>
-              </div>
-            )}
+            <DocumentPaymentQr
+              upiQrCodeUrl={business.bankDetails.upiQrCodeUrl}
+              upiId={business.bankDetails.upiId}
+              showQrCode={Boolean(customization?.showQrCode ?? customization?.showUpiQr ?? false)}
+              showUpiId={Boolean(customization?.showUpi ?? true)}
+              className="mt-2"
+            />
           </div>
         ) : <div />}
 

@@ -3,6 +3,7 @@ import { InvoiceData, BusinessData, CustomerData, InvoiceTemplateTheme } from '.
 import { BrandingConfig, DocumentCustomization } from '../../types/template';
 import { getInvoiceTemplateById } from './registry';
 import { defaultInvoiceThemes } from './themes';
+import { PaymentQrProvider, EnginePaymentQrSlot } from '../../components/DocumentPaymentQr';
 
 export interface InvoiceTemplateEngineRendererProps {
   templateId?: string;
@@ -34,15 +35,31 @@ export const InvoiceTemplateEngineRenderer: React.FC<InvoiceTemplateEngineRender
   const LayoutComponent = templateDef.component;
   const activeTheme = theme || templateDef.defaultTheme || defaultInvoiceThemes['corporate-navy'];
 
+  const showQrCode = Boolean(customization?.showQrCode ?? customization?.showUpiQr ?? false);
+  const showUpiId = Boolean(customization?.showUpi ?? true);
+  const upiQrCodeUrl = business.bankDetails?.upiQrCodeUrl || business.upiQrCodeUrl;
+  const upiId = business.bankDetails?.upiId;
+
   return (
-    <LayoutComponent
-      invoice={invoice}
-      business={business}
-      customer={customer}
-      branding={branding}
-      theme={activeTheme}
-      customization={customization}
-      isPrintMode={isPrintMode}
-    />
+    <PaymentQrProvider>
+      <div className="invoice-engine-container relative">
+        <LayoutComponent
+          invoice={invoice}
+          business={business}
+          customer={customer}
+          branding={branding}
+          theme={activeTheme}
+          customization={customization}
+          isPrintMode={isPrintMode}
+        />
+        <EnginePaymentQrSlot
+          upiQrCodeUrl={upiQrCodeUrl}
+          upiId={upiId}
+          showQrCode={showQrCode}
+          showUpiId={showUpiId}
+          className="px-6"
+        />
+      </div>
+    </PaymentQrProvider>
   );
 };

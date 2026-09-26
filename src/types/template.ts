@@ -78,6 +78,7 @@ export interface DocumentCustomization {
   showHsnSac: boolean;
   showBankDetails: boolean;
   showUpi: boolean;
+  showQrCode?: boolean;
   showUpiQr?: boolean;
   showSignature: boolean;
   showStamp: boolean;

@@ -1282,7 +1282,7 @@ export const SettingsView: React.FC = () => {
                   UPI QR Code (Scan to Pay)
                 </h4>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                  Upload your business UPI QR code (GPay, PhonePe, Paytm, or BHIM) to display on quotation payment sections.
+                  Upload your business UPI QR code (GPay, PhonePe, Paytm, or BHIM) to display on invoice and quotation payment sections.
                 </p>
               </div>
 
@@ -1311,7 +1311,7 @@ export const SettingsView: React.FC = () => {
                       <span>
                         {(formData.upiQrCodeUrl || formData.bankDetails?.upiQrCodeUrl)
                           ? 'Replace QR Code'
-                          : 'Upload UPI QR'}
+                          : 'Upload QR Code'}
                       </span>
                       <input
                         type="file"
@@ -1328,7 +1328,7 @@ export const SettingsView: React.FC = () => {
                         className="px-3 py-1.5 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/50 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        <span>Remove QR</span>
+                        <span>Remove QR Code</span>
                       </button>
                     )}
                   </div>

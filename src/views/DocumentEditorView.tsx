@@ -273,6 +273,8 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           ? settings.showBankDetailsOnInvoice ?? true
           : settings.showBankDetailsOnQuotation ?? true,
       showUpi: true,
+      showQrCode: false,
+      showUpiQr: false,
       showSignature: true,
       showStamp: true,
       showTerms: true,
@@ -1926,6 +1928,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
                   { key: 'showPan', label: 'Show PAN' },
                   { key: 'showBankDetails', label: 'Show Bank Details' },
                   { key: 'showUpi', label: 'Show UPI ID' },
+                  { key: 'showQrCode', label: 'Show QR Code' },
                   { key: 'showSignature', label: 'Show Signature' },
                   { key: 'showStamp', label: 'Show Stamp' },
                   { key: 'showTerms', label: 'Show Terms' },
@@ -1938,11 +1941,12 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
                   >
                     <input
                       type="checkbox"
-                      checked={(customization as any)[toggle.key]}
+                      checked={Boolean((customization as any)[toggle.key])}
                       onChange={(e) =>
                         setCustomization((prev) => ({
                           ...prev,
                           [toggle.key]: e.target.checked,
+                          ...(toggle.key === 'showQrCode' ? { showUpiQr: e.target.checked } : {}),
                         }))
                       }
                       className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
@@ -1951,6 +1955,17 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
                   </label>
                 ))}
               </div>
+
+              {Boolean(customization.showQrCode || customization.showUpiQr) &&
+                !(settings.bankDetails?.upiQrCodeUrl || settings.upiQrCodeUrl || (settings as any).upi_qr_url) && (
+                  <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 text-amber-800 dark:text-amber-300 text-xs animate-fade-in">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                    <div>
+                      <span className="font-bold block">Configuration Notice</span>
+                      <span>QR code is enabled, but no UPI QR code is configured in Settings → Bank & Payments.</span>
+                    </div>
+                  </div>
+                )}
             </div>
           )}
 

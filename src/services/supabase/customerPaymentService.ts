@@ -37,6 +37,7 @@ export interface CustomerPaymentResult {
   balanceAmount?: number;
   status?: string;
   error?: string;
+  isDuplicateIgnored?: boolean;
 }
 
 // In-memory idempotency guard preventing double-submissions within 5 seconds
@@ -105,15 +106,22 @@ export class CustomerPaymentService {
     }
 
     // Overpayment validation
-    if (targetUdhari && amount > (targetUdhari.outstandingAmount + 0.05)) {
+    if (!payload.isUpfrontInvoicePayment) {
+      if (targetUdhari && amount > (targetUdhari.outstandingAmount + 0.05)) {
+        return {
+          success: false,
+          error: `Payment amount (₹${amount.toLocaleString('en-IN')}) exceeds outstanding balance (₹${targetUdhari.outstandingAmount.toLocaleString('en-IN')}). Overpayment rejected.`,
+        };
+      } else if (targetInvoice && !targetUdhari && amount > (targetInvoice.balanceAmount + 0.05)) {
+        return {
+          success: false,
+          error: `Payment amount (₹${amount.toLocaleString('en-IN')}) exceeds invoice balance (₹${targetInvoice.balanceAmount.toLocaleString('en-IN')}). Overpayment rejected.`,
+        };
+      }
+    } else if (targetInvoice && amount > (targetInvoice.grandTotal + 0.05)) {
       return {
         success: false,
-        error: `Payment amount (₹${amount.toLocaleString('en-IN')}) exceeds outstanding balance (₹${targetUdhari.outstandingAmount.toLocaleString('en-IN')}). Overpayment rejected.`,
-      };
-    } else if (targetInvoice && !targetUdhari && amount > (targetInvoice.balanceAmount + 0.05)) {
-      return {
-        success: false,
-        error: `Payment amount (₹${amount.toLocaleString('en-IN')}) exceeds invoice balance (₹${targetInvoice.balanceAmount.toLocaleString('en-IN')}). Overpayment rejected.`,
+        error: `Upfront payment amount (₹${amount.toLocaleString('en-IN')}) exceeds invoice grand total (₹${targetInvoice.grandTotal.toLocaleString('en-IN')}). Overpayment rejected.`,
       };
     }
 
@@ -135,6 +143,29 @@ export class CustomerPaymentService {
     // Clean up stale idempotency entries
     for (const [k, t] of activeSubmissions.entries()) {
       if (nowTs - t > 30000) activeSubmissions.delete(k);
+    }
+
+    // Strict Idempotency for Upfront Invoice Payments (PART O):
+    // If an initial payment for this invoice already exists in the store, do not create a duplicate.
+    if (payload.isUpfrontInvoicePayment && (resolvedInvoiceId || invoiceNumber)) {
+      const existingStorePayment = store.getPayments().find((p) =>
+        (resolvedInvoiceId && p.invoiceId === resolvedInvoiceId) ||
+        (invoiceNumber && p.invoiceNumber === invoiceNumber)
+      );
+      if (existingStorePayment) {
+        return {
+          success: true,
+          paymentId: existingStorePayment.id,
+          paymentCode: existingStorePayment.paymentNumber,
+          invoiceId: resolvedInvoiceId || targetInvoice?.id,
+          udhariId: resolvedUdhariId || targetUdhari?.id,
+          amount: existingStorePayment.amount,
+          paidAmount: targetInvoice?.paidAmount ?? existingStorePayment.amount,
+          balanceAmount: targetInvoice?.balanceAmount ?? 0,
+          status: targetInvoice?.status ?? 'Paid',
+          isDuplicateIgnored: true,
+        };
+      }
     }
 
     const yearStr = (paymentDate ? paymentDate.split('-')[0] : new Date().getFullYear().toString());
@@ -261,15 +292,22 @@ export class CustomerPaymentService {
             }
 
             // Check database-level overpayment
-            if (dbUdhariRow && amount > (Number(dbUdhariRow.outstanding_amount) + 0.05)) {
+            if (!payload.isUpfrontInvoicePayment) {
+              if (dbUdhariRow && amount > (Number(dbUdhariRow.outstanding_amount) + 0.05)) {
+                return {
+                  success: false,
+                  error: `Overpayment rejected: Amount (₹${amount.toLocaleString('en-IN')}) exceeds database outstanding balance (₹${Number(dbUdhariRow.outstanding_amount).toLocaleString('en-IN')}).`,
+                };
+              } else if (dbInvRow && !dbUdhariRow && amount > (Number(dbInvRow.balance_amount) + 0.05)) {
+                return {
+                  success: false,
+                  error: `Overpayment rejected: Amount (₹${amount.toLocaleString('en-IN')}) exceeds database invoice balance (₹${Number(dbInvRow.balance_amount).toLocaleString('en-IN')}).`,
+                };
+              }
+            } else if (dbInvRow && amount > (Number(dbInvRow.grand_total) + 0.05)) {
               return {
                 success: false,
-                error: `Overpayment rejected: Amount (₹${amount.toLocaleString('en-IN')}) exceeds database outstanding balance (₹${Number(dbUdhariRow.outstanding_amount).toLocaleString('en-IN')}).`,
-              };
-            } else if (dbInvRow && !dbUdhariRow && amount > (Number(dbInvRow.balance_amount) + 0.05)) {
-              return {
-                success: false,
-                error: `Overpayment rejected: Amount (₹${amount.toLocaleString('en-IN')}) exceeds database invoice balance (₹${Number(dbInvRow.balance_amount).toLocaleString('en-IN')}).`,
+                error: `Upfront payment rejected: Amount (₹${amount.toLocaleString('en-IN')}) exceeds database invoice grand total (₹${Number(dbInvRow.grand_total).toLocaleString('en-IN')}).`,
               };
             }
 
@@ -294,21 +332,40 @@ export class CustomerPaymentService {
               dbPayPayload.id = dbPaymentId;
             }
 
-            const { data: payInsertData, error: payInsertErr } = await supabase
-              .from('payments')
-              .insert([dbPayPayload])
-              .select('id, payment_number')
-              .single();
-
-            if (payInsertErr) {
-              const errStr = handleSupabaseError(payInsertErr, 'recordCustomerPayment.payments_insert');
-              return { success: false, error: errStr };
+            // Check if upfront payment already exists in database
+            if (payload.isUpfrontInvoicePayment && (dbInvRow?.id || resolvedInvoiceId || invoiceNumber)) {
+              const targetInvId = dbInvRow?.id || resolvedInvoiceId;
+              let checkQuery = supabase.from('payments').select('id, payment_number').eq('workspace_id', wsId);
+              if (targetInvId) {
+                checkQuery = checkQuery.eq('invoice_id', targetInvId);
+              } else if (invoiceNumber) {
+                checkQuery = checkQuery.eq('invoice_number', invoiceNumber);
+              }
+              const { data: existingDbPay } = await checkQuery.maybeSingle();
+              if (existingDbPay) {
+                paymentId = existingDbPay.id;
+                paymentCode = existingDbPay.payment_number || paymentCode;
+                isDbPersisted = true;
+              }
             }
 
-            if (payInsertData?.id) {
-              paymentId = payInsertData.id;
-              paymentCode = payInsertData.payment_number || paymentCode;
-              isDbPersisted = true;
+            if (!isDbPersisted) {
+              const { data: payInsertData, error: payInsertErr } = await supabase
+                .from('payments')
+                .insert([dbPayPayload])
+                .select('id, payment_number')
+                .single();
+
+              if (payInsertErr) {
+                const errStr = handleSupabaseError(payInsertErr, 'recordCustomerPayment.payments_insert');
+                return { success: false, error: errStr };
+              }
+
+              if (payInsertData?.id) {
+                paymentId = payInsertData.id;
+                paymentCode = payInsertData.payment_number || paymentCode;
+                isDbPersisted = true;
+              }
             }
 
             // 4. Insert into public.udhari_payments if linked to an Udhari record

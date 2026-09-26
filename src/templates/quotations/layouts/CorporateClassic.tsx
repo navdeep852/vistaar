@@ -1,6 +1,7 @@
 import React from 'react';
 import { QuotationTemplateProps } from '../types';
 import { formatCurrency, formatDate, LogoComponent, hasValue } from '../helpers';
+import { DocumentPaymentQr } from '../../../components/DocumentPaymentQr';
 
 export const CorporateClassic: React.FC<QuotationTemplateProps> = ({
   quotation,
@@ -92,6 +93,13 @@ export const CorporateClassic: React.FC<QuotationTemplateProps> = ({
               <p className="text-xs text-slate-600">A/C: {business.bankDetails.accountNo}</p>
               <p className="text-xs text-slate-600">IFSC: {business.bankDetails.ifscCode}</p>
               {business.bankDetails.upiId && <p className="text-xs font-semibold text-blue-600">UPI: {business.bankDetails.upiId}</p>}
+              <DocumentPaymentQr
+                upiQrCodeUrl={business.bankDetails.upiQrCodeUrl}
+                upiId={business.bankDetails.upiId}
+                showQrCode={Boolean(customization?.showQrCode ?? customization?.showUpiQr ?? false)}
+                showUpiId={Boolean(customization?.showUpi ?? true)}
+                className="mt-2 ml-auto"
+              />
             </div>
           )}
         </div>

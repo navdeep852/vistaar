@@ -1,7 +1,8 @@
 import React from 'react';
 import { QuotationTemplateProps, TemplateTheme } from './types';
 import { getQuotationTemplateById } from './registry';
-import { QUOTATION_THEMES, DEFAULT_THEME } from './themes';
+import { DEFAULT_THEME } from './themes';
+import { PaymentQrProvider, EnginePaymentQrSlot } from '../../components/DocumentPaymentQr';
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -62,18 +63,34 @@ export const QuotationTemplateEngineRenderer: React.FC<QuotationTemplateEngineRe
       ? { ...DEFAULT_THEME, primaryColor: customization.primaryColor }
       : DEFAULT_THEME);
 
+  const showQrCode = Boolean(customization?.showQrCode ?? customization?.showUpiQr ?? false);
+  const showUpiId = Boolean(customization?.showUpi ?? true);
+  const upiQrCodeUrl = business.bankDetails?.upiQrCodeUrl || business.upiQrCodeUrl;
+  const upiId = business.bankDetails?.upiId;
+
   return (
     <QuotationRendererErrorBoundary>
-      <TemplateComponent
-        quotation={quotation}
-        business={business}
-        customer={customer}
-        branding={branding}
-        theme={resolvedTheme}
-        customization={customization}
-        mode={mode}
-        isPrintMode={isPrintMode}
-      />
+      <PaymentQrProvider>
+        <div className="quotation-engine-container relative">
+          <TemplateComponent
+            quotation={quotation}
+            business={business}
+            customer={customer}
+            branding={branding}
+            theme={resolvedTheme}
+            customization={customization}
+            mode={mode}
+            isPrintMode={isPrintMode}
+          />
+          <EnginePaymentQrSlot
+            upiQrCodeUrl={upiQrCodeUrl}
+            upiId={upiId}
+            showQrCode={showQrCode}
+            showUpiId={showUpiId}
+            className="px-6"
+          />
+        </div>
+      </PaymentQrProvider>
     </QuotationRendererErrorBoundary>
   );
 };

@@ -208,19 +208,27 @@ export class InvoiceService {
           return { error: finRes.error || 'Invoice finalization failed due to insufficient stock.' };
         }
 
-        // If desired final status is Paid or Partially Paid, update status from Issued to target
-        if (invoice.status && invoice.status !== 'Issued' && invoice.status !== 'Draft') {
-          await supabase
-            .from('invoices')
-            .update({ status: invoice.status, updated_at: new Date().toISOString() })
-            .eq('id', invoiceId)
-            .eq('workspace_id', wsId);
-        }
-
         const { grandTotal: total, paidAmount: paid, balanceAmount: remaining } = calculateInvoiceFinancials(
           invoice.grandTotal,
           invoice.paidAmount
         );
+        const authoritativeStatus: InvoiceStatus =
+          invoice.status === 'Draft' || invoice.status === 'Cancelled'
+            ? invoice.status
+            : (remaining <= 0.01 && total > 0 ? 'Paid' : (paid > 0 ? 'Partially Paid' : 'Issued'));
+
+        await supabase
+          .from('invoices')
+          .update({
+            status: authoritativeStatus,
+            paid_amount: paid,
+            balance_amount: remaining,
+            is_stock_finalized: true,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', invoiceId)
+          .eq('workspace_id', wsId);
+
         const pStatus = remaining <= 0.01 ? 'PAID' : (paid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
 
         // Record Daybook sale entry with strictly partitioned Inflow and Gross Total
@@ -397,11 +405,19 @@ export class InvoiceService {
       // Invalidate product service cache so all views receive fresh stock immediately
       productService.invalidateCache();
 
-      // Update local tenant storage invoice status
+      // Update local tenant storage invoice status preserving authoritative financial status
       const local = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
       const target = local.find((i) => i.id === invoiceId);
       if (target) {
-        target.status = 'Issued';
+        const gTotal = Number(target.grand_total ?? target.grandTotal ?? 0);
+        const pAmount = Number(target.paid_amount ?? target.paidAmount ?? 0);
+        const bal = Math.max(0, gTotal - pAmount);
+        target.balance_amount = bal;
+        target.balanceAmount = bal;
+        target.status =
+          target.status === 'Draft' || target.status === 'Cancelled'
+            ? target.status
+            : (bal <= 0.01 && gTotal > 0 ? 'Paid' : (pAmount > 0 ? 'Partially Paid' : 'Issued'));
         safeSaveTenantStorage(LOCAL_INVOICES_KEY, local);
       }
 
@@ -592,45 +608,115 @@ export class InvoiceService {
 
       let authoritativeInvoiceId = payload.id || `inv-${Date.now()}`;
       let authoritativeInvoiceNumber = payload.invoiceNumber;
+      let isAtomicRpcExecuted = false;
 
-      // 5. Persist to Remote Supabase FIRST (enforcing atomic stock deduction)
+      // 5. Persist to Remote Supabase FIRST (enforcing atomic finalization RPC with multi-step fallback)
       if (isSupabaseConfigured() && isValidUuid(wsId) && Boolean(supabaseAuthService.getUser())) {
-        const subRes = await this.createInvoice({
-          ...invoicePayload,
-          invoiceNumber: authoritativeInvoiceNumber || undefined,
-          quotationId: payload.quotationId,
-          status: effectiveStatus,
-          paidAmount: effectivePaid,
-          balanceAmount: effectiveBalance,
-        }, normalizedItems);
+        try {
+          const { data: rpcData, error: rpcErr } = await supabase.rpc('finalize_invoice_transaction', {
+            p_payload: {
+              workspace_id: wsId,
+              id: isValidUuid(authoritativeInvoiceId) ? authoritativeInvoiceId : undefined,
+              invoice_id: isValidUuid(authoritativeInvoiceId) ? authoritativeInvoiceId : undefined,
+              invoice_number: authoritativeInvoiceNumber || undefined,
+              quotation_id: isValidUuid(payload.quotationId) ? payload.quotationId : undefined,
+              customer_id: isValidUuid(payload.customerId) ? payload.customerId : undefined,
+              customer_name: payload.customerName || 'Walk-in Customer',
+              customer_phone: payload.customerPhone || '',
+              customer_whatsapp: payload.customerWhatsapp || '',
+              customer_email: payload.customerEmail || '',
+              customer_address: payload.customerAddress || '',
+              customer_gstin: payload.customerGstin || '',
+              date: payload.date || new Date().toISOString().split('T')[0],
+              due_date: payload.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
+              subtotal: finalSubtotal,
+              discount_total: finalDiscountTotal,
+              tax_total: finalTaxTotal,
+              grand_total: finalGrandTotal,
+              paid_amount: effectivePaid,
+              payment_mode: payload.paymentMode || 'Cash',
+              payment_reference: payload.paymentReference,
+              payment_notes: payload.paymentNotes,
+              payment_date: payload.paymentDate || payload.date || new Date().toISOString().split('T')[0],
+              notes: payload.notes,
+              terms: payload.terms,
+              footer_text: payload.footerText,
+              template_id: payload.templateId || 'inv-modern-blue',
+              branding: payload.branding,
+              theme: payload.theme,
+              customization: payload.customization,
+              snapshot: payload.snapshot,
+              items: normalizedItems,
+            },
+          });
 
-        if (!subRes.invoiceId || subRes.error) {
-          return {
-            success: false,
-            error: subRes.error || 'Invoice finalization failed due to database error.',
-          };
+          if (rpcErr) {
+            // Reject immediately if the database raised a business validation rejection
+            if (
+              rpcErr.message?.includes('INSUFFICIENT_STOCK') ||
+              rpcErr.message?.includes('OVERPAYMENT_REJECTED') ||
+              rpcErr.message?.includes('INVALID_AMOUNT')
+            ) {
+              return { success: false, error: rpcErr.message };
+            }
+            console.warn('[finalizeAuthoritativeInvoice] finalize_invoice_transaction RPC notice, executing fallback pipeline:', rpcErr);
+          } else if (rpcData?.success) {
+            isAtomicRpcExecuted = true;
+            authoritativeInvoiceId = rpcData.invoice_id || authoritativeInvoiceId;
+            authoritativeInvoiceNumber = rpcData.invoice_number || authoritativeInvoiceNumber;
+            if (rpcData.status) {
+              effectiveStatus = rpcData.status as InvoiceStatus;
+            }
+            if (rpcData.paid_amount !== undefined) {
+              effectivePaid = Number(rpcData.paid_amount);
+            }
+            if (rpcData.balance_amount !== undefined) {
+              effectiveBalance = Number(rpcData.balance_amount);
+            }
+          }
+        } catch (rpcEx: any) {
+          console.warn('[finalizeAuthoritativeInvoice] RPC execution exception, falling back:', rpcEx);
         }
 
-        authoritativeInvoiceId = subRes.invoiceId;
+        // Fallback multi-step pipeline if RPC was unavailable (e.g. migration not applied yet)
+        if (!isAtomicRpcExecuted) {
+          const subRes = await this.createInvoice({
+            ...invoicePayload,
+            invoiceNumber: authoritativeInvoiceNumber || undefined,
+            quotationId: payload.quotationId,
+            status: effectiveStatus,
+            paidAmount: effectivePaid,
+            balanceAmount: effectiveBalance,
+          }, normalizedItems);
 
-        if (payload.quotationId || payload.quotationNumber) {
-          try {
-            const updatePayload: any = {
-              status: 'Converted',
-              updated_at: new Date().toISOString(),
+          if (!subRes.invoiceId || subRes.error) {
+            return {
+              success: false,
+              error: subRes.error || 'Invoice finalization failed due to database error.',
             };
-            if (isValidUuid(authoritativeInvoiceId)) {
-              updatePayload.converted_invoice_id = authoritativeInvoiceId;
-            }
+          }
 
-            let updateQuery = supabase.from('quotations').update(updatePayload).eq('workspace_id', wsId);
-            if (isValidUuid(payload.quotationId)) {
-              await updateQuery.eq('id', payload.quotationId);
-            } else if (payload.quotationNumber) {
-              await updateQuery.eq('quotation_number', payload.quotationNumber);
+          authoritativeInvoiceId = subRes.invoiceId;
+
+          if (payload.quotationId || payload.quotationNumber) {
+            try {
+              const updatePayload: any = {
+                status: 'Converted',
+                updated_at: new Date().toISOString(),
+              };
+              if (isValidUuid(authoritativeInvoiceId)) {
+                updatePayload.converted_invoice_id = authoritativeInvoiceId;
+              }
+
+              let updateQuery = supabase.from('quotations').update(updatePayload).eq('workspace_id', wsId);
+              if (isValidUuid(payload.quotationId)) {
+                await updateQuery.eq('id', payload.quotationId);
+              } else if (payload.quotationNumber) {
+                await updateQuery.eq('quotation_number', payload.quotationNumber);
+              }
+            } catch (qtUpErr) {
+              console.warn('[finalizeAuthoritativeInvoice] Quotation Supabase status update notice:', qtUpErr);
             }
-          } catch (qtUpErr) {
-            console.warn('[finalizeAuthoritativeInvoice] Quotation Supabase status update notice:', qtUpErr);
           }
         }
       }
@@ -642,6 +728,8 @@ export class InvoiceService {
         status: effectiveStatus,
         paidAmount: effectivePaid,
         balanceAmount: effectiveBalance,
+        paymentMethod: payload.paymentMode || 'Cash',
+        paymentMode: payload.paymentMode || 'Cash',
       };
 
       let inv: Invoice;
