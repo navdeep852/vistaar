@@ -107,8 +107,11 @@ export function followUpSchedulerPlugin(): Plugin {
           return;
         }
 
-        // 5. POST /api/create-employee
-        if (req.url === '/api/create-employee' && req.method === 'POST') {
+        // 5. POST /api/create-employee & POST /functions/v1/create-employee
+        if (
+          (req.url === '/api/create-employee' || req.url?.startsWith('/functions/v1/create-employee')) &&
+          req.method === 'POST'
+        ) {
           let body = '';
           req.on('data', (chunk) => {
             body += chunk;
@@ -116,52 +119,253 @@ export function followUpSchedulerPlugin(): Plugin {
           req.on('end', async () => {
             try {
               const {
-                workspaceId,
+                action = 'create',
                 name,
                 email,
                 phone,
-                role,
                 department,
                 designation,
-                tempPassword = 'TempPass@2026',
+                employeeId: searchEmpId,
               } = JSON.parse(body || '{}');
 
-              if (!workspaceId || !name || !email) {
-                res.statusCode = 400;
-                res.setHeader('Content-Type', 'application/json');
-                return res.end(
-                  JSON.stringify({ success: false, error: 'workspaceId, name, and email are required.' })
-                );
-              }
-
+              const authHeader = req.headers['authorization'];
               const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
               const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://kluxsykimnjivkqxelba.supabase.co';
+              const publishableKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_j5tuLPC3iQO4pQHU0BeyYQ_CH_7Ls6x';
 
-              if (serviceRoleKey && serviceRoleKey.trim()) {
-                const { createClient } = await import('@supabase/supabase-js');
-                const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+              const { createClient } = await import('@supabase/supabase-js');
+
+              // 1. Verify Caller via Auth Header if present
+              let callerProfile: any = null;
+              if (authHeader) {
+                const supabaseUser = createClient(supabaseUrl, publishableKey, {
+                  global: { headers: { Authorization: authHeader } },
                   auth: { persistSession: false },
                 });
+                const { data: { user: callerUser } } = await supabaseUser.auth.getUser();
+                if (callerUser) {
+                  // Verify profile
+                  const clientForProf = serviceRoleKey
+                    ? createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } })
+                    : supabaseUser;
 
-                // Generate next sequential employee ID
-                let nextEmployeeId = `VST-${String(Date.now()).slice(-5)}`;
-                const { data: rpcEmpId } = await supabaseAdmin.rpc('generate_next_employee_id', {
-                  p_workspace_id: workspaceId,
-                });
-                if (rpcEmpId) {
-                  nextEmployeeId = rpcEmpId;
+                  const { data: prof } = await clientForProf
+                    .from('profiles')
+                    .select('id, role, status, workspace_id')
+                    .eq('id', callerUser.id)
+                    .single();
+
+                  callerProfile = prof;
+                }
+              }
+
+              // Owner authorization enforcement:
+              // Only Owner can create login accounts. Normal employees are forbidden.
+              if (callerProfile) {
+                if (callerProfile.role !== 'owner' || callerProfile.status !== 'Active') {
+                  res.statusCode = 403;
+                  res.setHeader('Content-Type', 'application/json');
+                  return res.end(
+                    JSON.stringify({
+                      success: false,
+                      error: 'Only the workspace owner can create VISTAAR login accounts.',
+                    })
+                  );
+                }
+              }
+
+              const targetWorkspaceId = callerProfile?.workspace_id || '00000000-0000-4000-a000-000000000001';
+
+              // Helper for secure temporary password generation
+              const generateSecureTempPass = () => {
+                const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+                const lower = 'abcdefghijkmnpqrstuvwxyz';
+                const digits = '23456789';
+                const symbols = '!@#$%&*_-+=';
+                const all = upper + lower + digits + symbols;
+                const pick = (s: string) => s[Math.floor(Math.random() * s.length)];
+                const chars = [pick(upper), pick(lower), pick(digits), pick(symbols)];
+                for (let i = 4; i < 14; i++) chars.push(pick(all));
+                for (let i = chars.length - 1; i > 0; i--) {
+                  const j = Math.floor(Math.random() * (i + 1));
+                  [chars[i], chars[j]] = [chars[j], chars[i]];
+                }
+                return chars.join('');
+              };
+
+              // Admin client for backend operations if key is configured
+              const supabaseAdmin = serviceRoleKey
+                ? createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } })
+                : null;
+
+              // =============================================================
+              // ACTION: REPAIR / RE-ISSUE CREDENTIALS FOR EXISTING EMPLOYEE
+              // =============================================================
+              if (action === 'repair') {
+                const cleanEmail = (email || '').trim().toLowerCase();
+                const cleanId = (searchEmpId || '').trim();
+
+                const tempPass = generateSecureTempPass();
+
+                if (supabaseAdmin) {
+                  let q = supabaseAdmin.from('profiles').select('*').eq('workspace_id', targetWorkspaceId);
+                  if (cleanId) q = q.eq('employee_id', cleanId);
+                  else if (cleanEmail) q = q.eq('email', cleanEmail);
+
+                  const { data: profData } = await q.maybeSingle();
+                  if (!profData) {
+                    res.statusCode = 404;
+                    res.setHeader('Content-Type', 'application/json');
+                    return res.end(JSON.stringify({ success: false, error: 'Employee profile not found.' }));
+                  }
+
+                  let authUserId = profData.id;
+                  const { data: listData } = await supabaseAdmin.auth.admin.listUsers();
+                  const authUser = (listData?.users || []).find(
+                    (u: any) => (u.email || '').toLowerCase() === profData.email.toLowerCase()
+                  );
+
+                  if (authUser) {
+                    authUserId = authUser.id;
+                    await supabaseAdmin.auth.admin.updateUserById(authUserId, {
+                      password: tempPass,
+                      user_metadata: {
+                        ...authUser.user_metadata,
+                        must_change_password: true,
+                        employee_id: profData.employee_id,
+                        workspace_id: targetWorkspaceId,
+                        role: 'employee',
+                      },
+                    });
+                  } else {
+                    const { data: newAuth, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+                      email: profData.email,
+                      password: tempPass,
+                      email_confirm: true,
+                      user_metadata: {
+                        workspace_id: targetWorkspaceId,
+                        name: profData.name,
+                        phone: profData.phone || '',
+                        department: profData.department || '',
+                        designation: profData.designation || '',
+                        role: 'employee',
+                        employee_id: profData.employee_id,
+                        must_change_password: true,
+                      },
+                    });
+                    if (createErr || !newAuth?.user) {
+                      res.statusCode = 500;
+                      res.setHeader('Content-Type', 'application/json');
+                      return res.end(JSON.stringify({ success: false, error: createErr?.message || 'Failed to create Auth account' }));
+                    }
+                    authUserId = newAuth.user.id;
+                  }
+
+                  await supabaseAdmin.from('profiles').upsert({
+                    ...profData,
+                    id: authUserId,
+                    status: 'Active',
+                    must_change_password: true,
+                    updated_at: new Date().toISOString(),
+                  }, { onConflict: 'id' });
+
+                  res.statusCode = 200;
+                  res.setHeader('Content-Type', 'application/json');
+                  return res.end(
+                    JSON.stringify({
+                      success: true,
+                      empId: profData.employee_id,
+                      tempPass,
+                      name: profData.name,
+                      user: {
+                        id: authUserId,
+                        email: profData.email,
+                        name: profData.name,
+                        role: 'employee',
+                      },
+                    })
+                  );
+                }
+              }
+
+              // =============================================================
+              // ACTION: CREATE NEW EMPLOYEE ACCOUNT
+              // =============================================================
+              if (!name || !name.trim()) {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'application/json');
+                return res.end(JSON.stringify({ success: false, error: 'Employee name is required.' }));
+              }
+
+              const cleanEmail = (email || '').trim().toLowerCase();
+              const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+              if (!cleanEmail || !emailRegex.test(cleanEmail)) {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'application/json');
+                return res.end(JSON.stringify({ success: false, error: 'A valid email address is required.' }));
+              }
+
+              let cleanPhone = (phone || '').replace(/\D/g, '');
+              if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) cleanPhone = cleanPhone.slice(2);
+              if (cleanPhone.length === 11 && cleanPhone.startsWith('0')) cleanPhone = cleanPhone.slice(1);
+
+              // Generate unique sequential employee ID in VST-EMP-XXX format
+              let nextEmployeeId: string;
+              if (supabaseAdmin) {
+                // Check duplicate email
+                const { data: dupProf } = await supabaseAdmin
+                  .from('profiles')
+                  .select('id')
+                  .eq('email', cleanEmail)
+                  .maybeSingle();
+
+                if (dupProf) {
+                  res.statusCode = 409;
+                  res.setHeader('Content-Type', 'application/json');
+                  return res.end(
+                    JSON.stringify({ success: false, error: 'An account with this email address already exists.' })
+                  );
                 }
 
-                // Create Auth user
+                const { data: rpcEmpId } = await supabaseAdmin.rpc('generate_next_employee_id', {
+                  p_workspace_id: targetWorkspaceId,
+                });
+
+                if (rpcEmpId && typeof rpcEmpId === 'string' && /^VST-EMP-\d+$/i.test(rpcEmpId)) {
+                  nextEmployeeId = rpcEmpId;
+                } else {
+                  const { data: profs } = await supabaseAdmin
+                    .from('profiles')
+                    .select('employee_id')
+                    .eq('workspace_id', targetWorkspaceId);
+
+                  let maxNum = 0;
+                  (profs || []).forEach((p: { employee_id?: string }) => {
+                    const mEmp = (p.employee_id || '').match(/^VST-EMP-(\d+)$/i);
+                    const mVst = (p.employee_id || '').match(/^VST-(\d+)$/i);
+                    if (mEmp) {
+                      const n = parseInt(mEmp[1], 10);
+                      if (n > maxNum) maxNum = n;
+                    } else if (mVst) {
+                      const n = parseInt(mVst[1], 10);
+                      if (n > maxNum) maxNum = n;
+                    }
+                  });
+                  nextEmployeeId = `VST-EMP-${String(maxNum + 1).padStart(3, '0')}`;
+                }
+
+                const tempPassword = generateSecureTempPass();
+
+                // Create Supabase Auth user via Admin API
                 const { data: authCreated, error: authErr } = await supabaseAdmin.auth.admin.createUser({
-                  email: email.trim().toLowerCase(),
+                  email: cleanEmail,
                   password: tempPassword,
                   email_confirm: true,
                   user_metadata: {
-                    workspace_id: workspaceId,
+                    workspace_id: targetWorkspaceId,
                     name: name.trim(),
-                    phone: phone || '',
-                    role: role || 'employee',
+                    phone: cleanPhone,
+                    role: 'employee',
                     department: department || '',
                     designation: designation || '',
                     employee_id: nextEmployeeId,
@@ -172,30 +376,45 @@ export function followUpSchedulerPlugin(): Plugin {
                 if (authErr) {
                   res.statusCode = 400;
                   res.setHeader('Content-Type', 'application/json');
-                  const msg = authErr.message?.includes('already registered')
-                    ? 'An account with this email address already exists in the system.'
+                  const msg = authErr.message?.includes('already registered') || authErr.message?.includes('email_exists')
+                    ? 'An account with this email address already exists.'
                     : authErr.message;
                   return res.end(JSON.stringify({ success: false, error: msg }));
                 }
 
-                // Upsert Profile
-                const userId = authCreated.user?.id;
-                if (userId) {
-                  await supabaseAdmin.from('profiles').upsert(
-                    {
-                      id: userId,
-                      workspace_id: workspaceId,
-                      employee_id: nextEmployeeId,
-                      name: name.trim(),
-                      email: email.trim().toLowerCase(),
-                      phone: phone || '',
-                      role: role || 'employee',
-                      department: department || '',
-                      designation: designation || '',
-                      status: 'Active',
-                      must_change_password: true,
-                    },
-                    { onConflict: 'id' }
+                const newAuthUser = authCreated.user;
+                if (!newAuthUser) {
+                  res.statusCode = 500;
+                  res.setHeader('Content-Type', 'application/json');
+                  return res.end(JSON.stringify({ success: false, error: 'Authentication service did not return a user record.' }));
+                }
+
+                // Upsert Profile linked to Auth User UUID
+                const { error: profErr } = await supabaseAdmin.from('profiles').upsert(
+                  {
+                    id: newAuthUser.id,
+                    workspace_id: targetWorkspaceId,
+                    employee_id: nextEmployeeId,
+                    name: name.trim(),
+                    email: cleanEmail,
+                    phone: cleanPhone,
+                    role: 'employee',
+                    department: (department || '').trim() || null,
+                    designation: (designation || '').trim() || null,
+                    status: 'Active',
+                    must_change_password: true,
+                    updated_at: new Date().toISOString(),
+                  },
+                  { onConflict: 'id' }
+                );
+
+                if (profErr) {
+                  // Rollback auth user
+                  await supabaseAdmin.auth.admin.deleteUser(newAuthUser.id);
+                  res.statusCode = 500;
+                  res.setHeader('Content-Type', 'application/json');
+                  return res.end(
+                    JSON.stringify({ success: false, error: 'Failed to create employee profile record. Action was rolled back.' })
                   );
                 }
 
@@ -206,28 +425,100 @@ export function followUpSchedulerPlugin(): Plugin {
                     success: true,
                     empId: nextEmployeeId,
                     tempPass: tempPassword,
-                    userId,
+                    name: name.trim(),
+                    user: {
+                      id: newAuthUser.id,
+                      email: cleanEmail,
+                      name: name.trim(),
+                      role: 'employee',
+                    },
                   })
                 );
               }
 
-              // Fallback for dev environment without service role key
-              const seqEmpId = `VST-0000${Math.floor(2 + Math.random() * 8)}`;
-              res.statusCode = 200;
+              // If serviceRoleKey is not configured in local dev, provide informative error
+              res.statusCode = 500;
               res.setHeader('Content-Type', 'application/json');
               return res.end(
                 JSON.stringify({
-                  success: true,
-                  empId: seqEmpId,
-                  tempPass: tempPassword,
-                  userId: `dev-${Date.now()}`,
-                  isLocalDevMock: true,
+                  success: false,
+                  error: 'Server configuration error: SUPABASE_SERVICE_ROLE_KEY is not configured on the server to provision Supabase Auth accounts.',
                 })
               );
             } catch (err: any) {
               res.statusCode = 500;
               res.setHeader('Content-Type', 'application/json');
-              return res.end(JSON.stringify({ success: false, error: err.message }));
+              return res.end(JSON.stringify({ success: false, error: err.message || 'Internal error' }));
+            }
+          });
+          return;
+        }
+
+        // 6. POST /api/resolve-employee-id
+        if (req.url === '/api/resolve-employee-id' && req.method === 'POST') {
+          let body = '';
+          req.on('data', (chunk) => {
+            body += chunk;
+          });
+          req.on('end', async () => {
+            try {
+              const { employeeId, workspaceId } = JSON.parse(body || '{}');
+              const cleanId = (employeeId || '').trim();
+              if (!cleanId) {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'application/json');
+                return res.end(JSON.stringify({ found: false, error: 'employeeId is required' }));
+              }
+
+              const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+              const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://kluxsykimnjivkqxelba.supabase.co';
+              const publishableKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_j5tuLPC3iQO4pQHU0BeyYQ_CH_7Ls6x';
+
+              const { createClient } = await import('@supabase/supabase-js');
+              const client = createClient(supabaseUrl, serviceRoleKey || publishableKey, { auth: { persistSession: false } });
+
+              let q = client
+                .from('profiles')
+                .select('id, email, status, workspace_id, role, employee_id')
+                .ilike('employee_id', cleanId);
+
+              if (workspaceId) {
+                q = q.eq('workspace_id', workspaceId);
+              }
+
+              const { data: profs } = await q;
+
+              if (!profs || profs.length === 0) {
+                res.statusCode = 404;
+                res.setHeader('Content-Type', 'application/json');
+                return res.end(JSON.stringify({ found: false, reason: 'EMPLOYEE_ID_NOT_FOUND' }));
+              }
+
+              // If multiple found across tenants without explicit workspace
+              if (profs.length > 1 && !workspaceId) {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'application/json');
+                return res.end(JSON.stringify({ found: false, reason: 'AMBIGUOUS_TENANT_MATCH' }));
+              }
+
+              const profile = profs[0];
+              res.statusCode = 200;
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(
+                JSON.stringify({
+                  found: true,
+                  id: profile.id,
+                  email: profile.email,
+                  status: profile.status,
+                  role: profile.role,
+                  workspaceId: profile.workspace_id,
+                  employeeId: profile.employee_id,
+                })
+              );
+            } catch (err: any) {
+              res.statusCode = 500;
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({ found: false, error: err.message }));
             }
           });
           return;

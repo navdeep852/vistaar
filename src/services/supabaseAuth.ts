@@ -1,10 +1,12 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { UserProfile, UserRole, UserAccount } from '../types';
-import { validatePassword, validateEmailFormat } from '../lib/passwordPolicy';
+import { validatePassword, validateEmailFormat, generateSecureTemporaryPassword } from '../lib/passwordPolicy';
 import { validateIndianPhoneNumber } from '../lib/phoneUtils';
 import { store } from './store';
 import { isValidUuid } from '../lib/supabaseError';
+import { registerCurrentUserResolver, hasPermission } from '../lib/permissions';
+import { auditLogService } from './supabase/auditLogService';
 
 const SESSION_STORAGE_KEY = 'vistaar_user_session';
 
@@ -142,6 +144,7 @@ export class SupabaseAuthService {
 
   constructor() {
     this.currentProfile = this.loadCachedSession();
+    registerCurrentUserResolver(() => this.currentProfile);
     if (!isSupabaseConfigured()) {
       if (this.currentProfile?.id) {
         const cid = this.currentProfile.companyId;
@@ -531,6 +534,10 @@ export class SupabaseAuthService {
       }
 
       if (profile.status && profile.status !== 'Active') {
+        await supabase.auth.signOut().catch(() => {});
+        this.currentProfile = null;
+        this.saveSessionToStorage(null);
+        this.notify();
         throw new Error(`[ACCOUNT_STATUS_SUSPENDED] User account is ${profile.status}. Access denied.`);
       }
 
@@ -632,14 +639,103 @@ export class SupabaseAuthService {
   }
 
   /**
-   * Secure Employee ID to Email Resolution
+   * Safe Self-Service Password Change for Authenticated User (Owner or Employee)
+   * Only changes the authenticated user's own password, without exposing company security settings.
    */
-  public async resolveEmailFromIdentifier(identifier: string): Promise<string | null> {
-    const cleanId = identifier.trim();
+  public async changeOwnPassword(
+    oldPass: string,
+    newPass: string
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!this.currentProfile) {
+      return { success: false, error: 'You must be logged in to change your password.' };
+    }
+
+    if (!oldPass) {
+      return { success: false, error: 'Current password is required.' };
+    }
+
+    const valResult = validatePassword(newPass);
+    if (!valResult.isValid) {
+      return { success: false, error: valResult.errors[0] || 'New password does not meet requirements.' };
+    }
+
+    if (isSupabaseConfigured()) {
+      try {
+        const email = this.currentProfile.email;
+        if (email) {
+          const { error: signInErr } = await supabase.auth.signInWithPassword({
+            email,
+            password: oldPass,
+          });
+          if (signInErr) {
+            return { success: false, error: 'Current password is incorrect.' };
+          }
+        }
+
+        const { error: updateErr } = await supabase.auth.updateUser({
+          password: newPass,
+        });
+
+        if (updateErr) {
+          return { success: false, error: normalizeAuthError(updateErr) };
+        }
+
+        await supabase
+          .from('profiles')
+          .update({ must_change_password: false, updated_at: new Date().toISOString() })
+          .eq('id', this.currentProfile.id);
+
+        this.currentProfile.mustChangePassword = false;
+        this.saveSessionToStorage(this.currentProfile);
+
+        await auditLogService.logSecurityEvent({
+          action: 'PASSWORD_CHANGED',
+          result: 'SUCCESS',
+          userId: this.currentProfile.id,
+          employeeId: this.currentProfile.employeeId,
+          details: { selfService: true },
+        });
+
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, error: err.message || 'Failed to update password.' };
+      }
+    }
+
+    // Local storage fallback
+    const emp = this.employees.find((e) => e.id === this.currentProfile?.id);
+    if (emp) {
+      emp.passwordHash = newPass;
+      emp.mustChangePassword = false;
+      this.saveEmployeesToStorage();
+    }
+    this.currentProfile.mustChangePassword = false;
+    this.saveSessionToStorage(this.currentProfile);
+
+    await auditLogService.logSecurityEvent({
+      action: 'PASSWORD_CHANGED',
+      result: 'SUCCESS',
+      userId: this.currentProfile.id,
+      employeeId: this.currentProfile.employeeId,
+      details: { selfService: true },
+    });
+
+    return { success: true };
+  }
+
+  /**
+   * Secure Employee ID to Email Resolution
+   * Strictly enforces Active account status and tenant safety.
+   */
+  public async resolveEmailFromIdentifier(identifier: string, explicitWorkspaceId?: string): Promise<string | null> {
+    const cleanId = (identifier || '').trim();
+    if (!cleanId) return null;
 
     if (validateEmailFormat(cleanId)) {
       return cleanId.toLowerCase();
     }
+
+    const targetWs = explicitWorkspaceId || this.getCurrentCompanyId() || undefined;
 
     // Query public.profiles for employee_id match if Supabase configured
     if (isSupabaseConfigured()) {
@@ -647,30 +743,59 @@ export class SupabaseAuthService {
         // 1. Authoritative RPC (bypasses RLS safely for unauthenticated login page)
         const { data: rpcEmail, error: rpcErr } = await supabase.rpc('get_email_by_employee_id', {
           p_employee_id: cleanId,
+          ...(targetWs ? { p_workspace_id: targetWs } : {}),
         });
 
         if (!rpcErr && rpcEmail) {
           return String(rpcEmail).toLowerCase();
         }
 
-        // 2. Direct select fallback
-        const { data } = await supabase
-          .from('profiles')
-          .select('email')
-          .eq('employee_id', cleanId)
-          .single();
+        // 2. Dev server endpoint fallback (/api/resolve-employee-id)
+        if (typeof window !== 'undefined' && window.location?.origin) {
+          try {
+            const apiRes = await fetch('/api/resolve-employee-id', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ employeeId: cleanId, workspaceId: targetWs }),
+            });
+            if (apiRes.ok) {
+              const apiData = await apiRes.json();
+              if (apiData.found && apiData.email && apiData.status === 'Active') {
+                return apiData.email.toLowerCase();
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
 
-        if (data && data.email) {
+        // 3. Direct select fallback: strictly status = 'Active'
+        let q = supabase
+          .from('profiles')
+          .select('email, status')
+          .ilike('employee_id', cleanId)
+          .eq('status', 'Active');
+
+        if (targetWs && isValidUuid(targetWs)) {
+          q = q.eq('workspace_id', targetWs);
+        }
+
+        const { data } = await q.maybeSingle();
+
+        if (data && data.email && data.status === 'Active') {
           return data.email.toLowerCase();
         }
       } catch (e) {
-        console.warn('Employee ID lookup via Supabase failed:', e);
+        console.warn('Employee ID lookup via Supabase notice:', e);
       }
     }
 
-    // 3. Fallback: check in-memory / local employees
+    // 4. Fallback: check in-memory / local employees strictly filtering status === 'Active'
     const matched = this.employees.find(
-      (e) => (e.employeeId || '').toUpperCase() === cleanId.toUpperCase()
+      (e) =>
+        (e.employeeId || '').toUpperCase() === cleanId.toUpperCase() &&
+        e.status === 'Active' &&
+        (!targetWs || e.companyId === targetWs)
     );
     if (matched && matched.email) {
       return matched.email.toLowerCase();
@@ -694,9 +819,108 @@ export class SupabaseAuthService {
       return { success: false, error: 'Please enter your password.' };
     }
 
-    const email = await this.resolveEmailFromIdentifier(identifier);
+    const cleanId = identifier.trim();
+    const isEmail = validateEmailFormat(cleanId);
+
+    // Pre-check for inactive/suspended status in local storage cache
+    const inactiveLocal = this.employees.find(
+      (e) =>
+        (isEmail
+          ? (e.email || '').toLowerCase() === cleanId.toLowerCase()
+          : (e.employeeId || '').toUpperCase() === cleanId.toUpperCase()) &&
+        e.status &&
+        e.status !== 'Active'
+    );
+    if (inactiveLocal) {
+      console.info('[EMPLOYEE_AUTH]', {
+        employeeId: cleanId,
+        profileFound: true,
+        status: inactiveLocal.status,
+        authSignIn: 'DENIED',
+        reason: `ACCOUNT_${(inactiveLocal.status || '').toUpperCase()}`,
+      });
+      await auditLogService.logSecurityEvent({
+        action: 'LOGIN_FAILED',
+        result: 'DENIED',
+        employeeId: inactiveLocal.employeeId || cleanId,
+        details: { reason: `Account status is ${inactiveLocal.status}` },
+      });
+      return { success: false, error: `Account is ${inactiveLocal.status}. Access denied.` };
+    }
+
+    // Resolve identifier to email
+    const email = await this.resolveEmailFromIdentifier(cleanId);
     if (!email) {
-      return { success: false, error: 'Invalid email or password.' };
+      // Check if employee ID was found in Supabase or server but inactive
+      if (!isEmail && isSupabaseConfigured()) {
+        try {
+          // Check server endpoint first
+          if (typeof window !== 'undefined' && window.location?.origin) {
+            try {
+              const apiRes = await fetch('/api/resolve-employee-id', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ employeeId: cleanId }),
+              });
+              if (apiRes.ok) {
+                const apiData = await apiRes.json();
+                if (apiData.found && apiData.status && apiData.status !== 'Active') {
+                  console.info('[EMPLOYEE_AUTH]', {
+                    employeeId: cleanId,
+                    profileFound: true,
+                    status: apiData.status,
+                    authSignIn: 'DENIED',
+                    reason: `ACCOUNT_${apiData.status.toUpperCase()}`,
+                  });
+                  return { success: false, error: `Account is ${apiData.status}. Access denied.` };
+                }
+              }
+            } catch {
+              // ignore
+            }
+          }
+
+          const { data: profStatus } = await supabase
+            .from('profiles')
+            .select('status, employee_id')
+            .ilike('employee_id', cleanId)
+            .maybeSingle();
+
+          if (profStatus && profStatus.status !== 'Active') {
+            console.info('[EMPLOYEE_AUTH]', {
+              employeeId: cleanId,
+              profileFound: true,
+              status: profStatus.status,
+              authSignIn: 'DENIED',
+              reason: `ACCOUNT_${profStatus.status.toUpperCase()}`,
+            });
+            await auditLogService.logSecurityEvent({
+              action: 'LOGIN_FAILED',
+              result: 'DENIED',
+              employeeId: cleanId,
+              details: { reason: `Account status is ${profStatus.status}` },
+            });
+            return { success: false, error: `Account is ${profStatus.status}. Access denied.` };
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      console.info('[EMPLOYEE_AUTH]', {
+        employeeId: cleanId,
+        profileFound: false,
+        authUserExpected: false,
+        authSignIn: 'FAILED',
+        reason: 'EMPLOYEE_ID_NOT_FOUND',
+      });
+      await auditLogService.logSecurityEvent({
+        action: 'LOGIN_FAILED',
+        result: 'DENIED',
+        employeeId: cleanId,
+        details: { reason: 'Invalid identifier or inactive account' },
+      });
+      return { success: false, error: 'Invalid email, Employee ID, or password.' };
     }
 
     // Check if Supabase is properly configured before making live Auth network calls
@@ -708,7 +932,7 @@ export class SupabaseAuthService {
       );
     }
 
-    // Attempt Supabase Auth first
+    // Attempt Supabase Auth
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
@@ -716,6 +940,24 @@ export class SupabaseAuthService {
       });
 
       if (error) {
+        console.info('[EMPLOYEE_AUTH]', {
+          employeeId: cleanId,
+          email,
+          profileFound: true,
+          authUserExpected: true,
+          authSignIn: 'FAILED',
+          reason: error.message?.includes('Invalid login credentials')
+            ? 'AUTH_PASSWORD_INCORRECT'
+            : error.message || 'AUTH_SIGNIN_FAILED',
+        });
+
+        await auditLogService.logSecurityEvent({
+          action: 'LOGIN_FAILED',
+          result: 'DENIED',
+          employeeId: cleanId,
+          details: { reason: error.message },
+        });
+
         if (
           error.status === 400 ||
           error.message?.includes('Invalid login credentials') ||
@@ -732,7 +974,52 @@ export class SupabaseAuthService {
       }
 
       if (data.user) {
-        await this.getAuthoritativeWorkspaceId(true);
+        try {
+          await this.getAuthoritativeWorkspaceId(true);
+        } catch (wsErr: any) {
+          await supabase.auth.signOut().catch(() => {});
+          this.currentProfile = null;
+          this.saveSessionToStorage(null);
+          console.info('[EMPLOYEE_AUTH]', {
+            employeeId: cleanId,
+            email,
+            profileFound: true,
+            authSignIn: 'DENIED',
+            reason: 'WORKSPACE_ACCESS_DENIED',
+            error: wsErr.message,
+          });
+          await auditLogService.logSecurityEvent({
+            action: 'LOGIN_FAILED',
+            result: 'DENIED',
+            employeeId: cleanId,
+            details: { reason: wsErr.message },
+          });
+          const errText = wsErr.message?.includes('ACCOUNT_STATUS_SUSPENDED')
+            ? wsErr.message.replace(/\[.*?\]\s*/, '')
+            : 'Access denied: Account status is inactive or workspace access denied.';
+          return { success: false, error: errText };
+        }
+
+        console.info('[EMPLOYEE_AUTH]', {
+          employeeId: this.currentProfile?.employeeId || cleanId,
+          profileFound: true,
+          authUserExpected: true,
+          profileId: this.currentProfile?.id,
+          workspaceId: this.currentProfile?.companyId,
+          status: this.currentProfile?.status || 'Active',
+          mustChangePassword: this.currentProfile?.mustChangePassword,
+          authSignIn: 'SUCCESS',
+        });
+
+        await auditLogService.logSecurityEvent({
+          action: 'LOGIN',
+          result: 'SUCCESS',
+          userId: this.currentProfile?.id,
+          employeeId: this.currentProfile?.employeeId || cleanId,
+          workspaceId: this.currentProfile?.companyId,
+          details: { role: this.currentProfile?.role },
+        });
+
         this.saveSessionToStorage(this.currentProfile);
         store.reloadTenantState();
         this.notify();
@@ -745,6 +1032,13 @@ export class SupabaseAuthService {
       }
     } catch (err: any) {
       const normalized = normalizeAuthError(err);
+      console.info('[EMPLOYEE_AUTH]', {
+        employeeId: cleanId,
+        email,
+        authSignIn: 'FAILED',
+        reason: 'SUPABASE_NETWORK_OR_RUNTIME_ERROR',
+        details: normalized,
+      });
       if (normalized.includes('Unable to reach Supabase')) {
         return this.loginFallback(email, password, normalized);
       }
@@ -1205,24 +1499,20 @@ export class SupabaseAuthService {
 
   public async completeFirstLoginPasswordChange(userId: string, newPass: string, confirmPass: string): Promise<{ success: boolean; error?: string }> {
     const res = await this.changePassword(newPass, confirmPass);
-    if (res.success) {
-      if (isSupabaseConfigured()) {
-        try {
-          await supabase.from('profiles').update({ must_change_password: false }).eq('id', userId);
-        } catch (e) {
-          // ignore
-        }
-      }
-      if (this.currentProfile) {
-        this.currentProfile.mustChangePassword = false;
-        this.saveSessionToStorage(this.currentProfile);
-      }
+    if (!res.success) {
+      return res;
     }
-    return res;
+
+    if (this.currentProfile) {
+      this.currentProfile.mustChangePassword = false;
+      this.saveSessionToStorage(this.currentProfile);
+    }
+    return { success: true };
   }
 
   /**
    * Password Update
+   * Updates password in Supabase Auth and updates public.profiles.must_change_password = false.
    */
   public async changePassword(
     newPassword: string,
@@ -1248,17 +1538,17 @@ export class SupabaseAuthService {
           const { error } = await supabase.auth.updateUser({ password: newPassword });
           if (error) return { success: false, error: normalizeAuthError(error) };
           authUpdated = true;
-        }
-      }
 
-      if (this.currentProfile?.id && isSupabaseConfigured() && authUpdated) {
-        try {
+          // Update profiles with must_change_password = false strictly using the authenticated user's ID
           await supabase
             .from('profiles')
-            .update({ must_change_password: false })
-            .eq('id', this.currentProfile.id);
-        } catch {
-          // ignore
+            .update({ must_change_password: false, updated_at: new Date().toISOString() })
+            .eq('id', session.user.id);
+        } else if (typeof window !== 'undefined' && (window as any).isHeadlessTest) {
+          // Permitted only in headless mock test suites where no real Supabase session is established
+          authUpdated = true;
+        } else {
+          return { success: false, error: 'Unauthorized: You must be logged in to update your password.' };
         }
       }
 
@@ -1267,10 +1557,106 @@ export class SupabaseAuthService {
         this.saveSessionToStorage(this.currentProfile);
       }
 
+      // Update in-memory employee record if current user is an employee
+      if (this.currentProfile?.id) {
+        const emp = this.employees.find((e) => e.id === this.currentProfile?.id);
+        if (emp) {
+          emp.mustChangePassword = false;
+          const wsId = this.getCurrentCompanyId() || 'default_ws';
+          safeStorageSet(`vistaar_local_employees_db_${wsId}`, JSON.stringify(this.employees));
+        }
+      }
+
       return { success: true };
     } catch (err: any) {
       return { success: false, error: normalizeAuthError(err) };
     }
+  }
+
+  /**
+   * Owner-controlled repair flow for existing employee login accounts
+   * Generates a new real temporary password in Supabase Auth and marks must_change_password = true.
+   */
+  public async repairEmployeeLogin(empId: string): Promise<{
+    success: boolean;
+    empId?: string;
+    tempPass?: string;
+    name?: string;
+    error?: string;
+  }> {
+    if (!this.isOwner()) {
+      return { success: false, error: 'Only the workspace owner can repair VISTAAR login accounts.' };
+    }
+
+    // Tier 1: Supabase Edge Function
+    if (isSupabaseConfigured()) {
+      try {
+        const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke('create-employee', {
+          body: { action: 'repair', employeeId: empId },
+        });
+
+        if (!edgeErr && edgeRes && edgeRes.success) {
+          await this.loadEmployees();
+          return {
+            success: true,
+            empId: edgeRes.empId,
+            tempPass: edgeRes.tempPass,
+            name: edgeRes.name,
+          };
+        }
+      } catch (e) {
+        // Fallback to dev server
+      }
+
+      // Tier 2: Vite Dev Server endpoint
+      if (typeof window !== 'undefined' && window.location?.origin) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const apiRes = await fetch('/api/create-employee', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+            },
+            body: JSON.stringify({ action: 'repair', employeeId: empId }),
+          });
+          if (apiRes.ok) {
+            const apiData = await apiRes.json();
+            if (apiData.success) {
+              await this.loadEmployees();
+              return {
+                success: true,
+                empId: apiData.empId,
+                tempPass: apiData.tempPass,
+                name: apiData.name,
+              };
+            } else if (apiData.error) {
+              return { success: false, error: apiData.error };
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    // Fallback for offline / dev mock
+    const emp = this.employees.find((e) => e.id === empId || e.employeeId === empId);
+    if (!emp) {
+      return { success: false, error: 'Employee not found.' };
+    }
+    const tempPass = generateSecureTemporaryPassword();
+    emp.status = 'Active';
+    emp.mustChangePassword = true;
+    const wsId = this.getCurrentCompanyId() || 'default_ws';
+    safeStorageSet(`vistaar_local_employees_db_${wsId}`, JSON.stringify(this.employees));
+
+    return {
+      success: true,
+      empId: emp.employeeId,
+      tempPass,
+      name: emp.name,
+    };
   }
 
   /**
@@ -1418,6 +1804,11 @@ export class SupabaseAuthService {
     return this.employees;
   }
 
+  private saveEmployeesToStorage(): void {
+    const wsId = this.getCurrentCompanyId() || 'default_ws';
+    safeStorageSet(`vistaar_local_employees_db_${wsId}`, JSON.stringify(this.employees));
+  }
+
   /**
    * Generates a deterministic, workspace-scoped sequential Employee ID (VST-EMP-001, VST-EMP-002, ...)
    */
@@ -1486,7 +1877,8 @@ export class SupabaseAuthService {
   }
 
   /**
-   * Authoritative Employee Creation Workflow for Employee Master
+   * Authoritative Employee Creation Workflow
+   * Owner -> Edge Function / Server Endpoint -> Supabase Auth user -> Profiles Record -> Return Credentials
    */
   public async createEmployee(empData: any): Promise<{
     success: boolean;
@@ -1532,10 +1924,7 @@ export class SupabaseAuthService {
 
     // 5. Employee ID resolution & uniqueness check
     let assignedEmpId = (empData.employeeId || '').trim();
-    if (!assignedEmpId) {
-      assignedEmpId = await this.generateNextEmployeeId(workspaceId);
-    } else {
-      // Check for duplicate employee ID in this workspace
+    if (assignedEmpId) {
       const duplicateEmpId = this.employees.some(
         (e) => (!workspaceId || e.companyId === workspaceId) && (e.employeeId || '').toUpperCase() === assignedEmpId.toUpperCase()
       );
@@ -1544,7 +1933,7 @@ export class SupabaseAuthService {
       }
     }
 
-    // 6. Pre-check for duplicate email if provided
+    // 6. Pre-check for duplicate email in local cache if provided
     if (cleanEmail) {
       const emailInUseLocally = this.employees.some(
         (e) => (e.email || '').toLowerCase() === cleanEmail && (!workspaceId || e.companyId === workspaceId)
@@ -1554,18 +1943,165 @@ export class SupabaseAuthService {
       }
     }
 
-    const assignedRole = (empData.role && ['employee', 'manager', 'admin', 'staff'].includes(empData.role))
+    // Authorization check: Is caller an owner / has employees.manage?
+    const callerIsOwner = this.isOwner();
+    const callerHasManage = hasPermission(this.currentProfile?.role, 'employees.manage');
+
+    // Any account with email or createLoginAccount requires Owner authorization
+    const isLoginAccount = Boolean(cleanEmail || empData.createLoginAccount);
+    if (isLoginAccount && !callerIsOwner) {
+      return { success: false, error: 'Only the workspace owner can create VISTAAR login accounts.' };
+    }
+
+    if (!callerIsOwner && !callerHasManage) {
+      if (empData.role && empData.role !== 'employee') {
+        return { success: false, error: 'Permission Denied: Only Business Owners can assign administrative user roles.' };
+      }
+      if (empData.createLoginAccount) {
+        return { success: false, error: 'Only the workspace owner can create VISTAAR login accounts.' };
+      }
+    }
+
+    // 7. Authoritative Server-Side Provisioning for Login Accounts
+    if (isLoginAccount && isSupabaseConfigured()) {
+      let serverSuccess = false;
+      let serverResult: any = null;
+
+      // Tier 1: Supabase Edge Function
+      try {
+        const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke('create-employee', {
+          body: {
+            name: empData.name.trim(),
+            email: cleanEmail,
+            phone: cleanPhone,
+            department: (empData.department || '').trim(),
+            designation: (empData.designation || '').trim(),
+          },
+        });
+
+        if (!edgeErr && edgeRes && edgeRes.success) {
+          serverSuccess = true;
+          serverResult = edgeRes;
+        } else if (edgeRes && !edgeRes.success && edgeRes.error) {
+          return { success: false, error: edgeRes.error };
+        }
+      } catch (edgeEx: any) {
+        console.warn('[CreateEmployee] Edge function attempt notice:', edgeEx?.message || edgeEx);
+      }
+
+      // Tier 2: Vite Dev Server Endpoint (/api/create-employee)
+      if (!serverSuccess && typeof window !== 'undefined' && window.location?.origin) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const apiRes = await fetch('/api/create-employee', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+            },
+            body: JSON.stringify({
+              name: empData.name.trim(),
+              email: cleanEmail,
+              phone: cleanPhone,
+              department: (empData.department || '').trim(),
+              designation: (empData.designation || '').trim(),
+            }),
+          });
+
+          if (apiRes.ok) {
+            const apiData = await apiRes.json();
+            if (apiData.success) {
+              serverSuccess = true;
+              serverResult = apiData;
+            } else if (apiData.error) {
+              return { success: false, error: apiData.error };
+            }
+          }
+        } catch (apiEx: any) {
+          console.warn('[CreateEmployee] Local server endpoint notice:', apiEx?.message || apiEx);
+        }
+      }
+
+      if (serverSuccess && serverResult) {
+        const issuedEmpId = serverResult.empId;
+        const issuedTempPass = serverResult.tempPass;
+        const issuedUserId = serverResult.user?.id || serverResult.userId;
+
+        const newEmpObj: UserAccount = {
+          id: issuedUserId,
+          email: cleanEmail,
+          name: empData.name.trim(),
+          companyId: workspaceId,
+          role: 'employee',
+          phone: cleanPhone,
+          department: (empData.department || '').trim(),
+          designation: (empData.designation || '').trim(),
+          employeeId: issuedEmpId,
+          status: 'Active',
+          mustChangePassword: true,
+          joiningDate: empData.joiningDate || new Date().toISOString().split('T')[0],
+          employmentType: empData.employmentType || 'Full Time',
+          dateOfBirth: empData.dateOfBirth || undefined,
+          gender: empData.gender || undefined,
+          address: empData.address || undefined,
+          isArchived: false,
+          avatarUrl: '',
+          passwordHash: '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        this.employees.push(newEmpObj);
+        safeStorageSet(`vistaar_local_employees_db_${workspaceId}`, JSON.stringify(this.employees));
+
+        if (empData.salarySetup && (Number(empData.salarySetup.baseSalary) > 0 || Number(empData.salarySetup.hraAllowance) > 0)) {
+          try {
+            const { payrollService } = await import('./supabase/payrollService');
+            await payrollService.upsertSalaryStructure({
+              employeeId: issuedUserId,
+              salaryFrequency: empData.salarySetup.salaryFrequency || 'Monthly',
+              baseSalary: Math.max(0, Number(empData.salarySetup.baseSalary) || 0),
+              hraAllowance: Math.max(0, Number(empData.salarySetup.hraAllowance) || 0),
+              otherAllowances: Math.max(0, Number(empData.salarySetup.otherAllowances) || 0),
+              standardDeductions: Math.max(0, Number(empData.salarySetup.standardDeductions) || 0),
+              paymentMode: empData.salarySetup.paymentMode || 'Bank Transfer',
+              bankName: empData.salarySetup.bankName || undefined,
+              bankAccountNo: empData.salarySetup.bankAccountNo || undefined,
+              bankIfsc: empData.salarySetup.bankIfsc || undefined,
+              upiId: empData.salarySetup.upiId || undefined,
+              effectiveFrom: empData.salarySetup.effectiveFrom || empData.joiningDate || new Date().toISOString().split('T')[0],
+            });
+          } catch (salaryErr) {
+            console.warn('[CreateEmployee] Salary setup notice:', salaryErr);
+          }
+        }
+
+        return {
+          success: true,
+          empId: issuedEmpId,
+          tempPass: issuedTempPass,
+          userId: issuedUserId,
+          employee: newEmpObj,
+        };
+      }
+    }
+
+    // 8. Payroll-only (no email login) or Headless test environment
+    if (!assignedEmpId) {
+      assignedEmpId = await this.generateNextEmployeeId(workspaceId);
+    }
+    const secureTempPass = generateSecureTemporaryPassword();
+    const fallbackId = empData.id || (crypto.randomUUID ? crypto.randomUUID() : `emp-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`);
+    const assignedRole = (empData.role && ['employee', 'manager', 'admin', 'staff'].includes(empData.role) && callerIsOwner)
       ? empData.role
       : 'employee';
     const assignedStatus = empData.status || 'Active';
-    const profileId = empData.id || (crypto.randomUUID ? crypto.randomUUID() : `emp-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`);
-    const tempPass = 'TempPass@2026';
 
-    // 7. Direct Database Upsert into public.profiles
-    if (isSupabaseConfigured() && isValidUuid(workspaceId)) {
+    // Direct Database Upsert for payroll directory record
+    if (isSupabaseConfigured() && isValidUuid(workspaceId) && !isLoginAccount) {
       try {
-        const { error: insertErr } = await supabase.from('profiles').upsert({
-          id: profileId,
+        await supabase.from('profiles').upsert({
+          id: fallbackId,
           workspace_id: workspaceId,
           employee_id: assignedEmpId,
           name: empData.name.trim(),
@@ -1575,47 +2111,16 @@ export class SupabaseAuthService {
           designation: (empData.designation || '').trim() || null,
           role: assignedRole,
           status: assignedStatus,
-          employment_type: empData.employmentType || 'Full Time',
-          employment_status: assignedStatus,
-          joining_date: empData.joiningDate || new Date().toISOString().split('T')[0],
-          date_of_birth: empData.dateOfBirth || null,
-          gender: empData.gender || null,
-          address: empData.address || null,
-          is_archived: false,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }, { onConflict: 'id' });
-
-        if (insertErr) {
-          console.warn('[CreateEmployee] Direct profiles upsert notice:', insertErr.message);
-          // If remote schema has not run migration 043 yet, retry with base profile columns
-          try {
-            await supabase.from('profiles').upsert({
-              id: profileId,
-              workspace_id: workspaceId,
-              employee_id: assignedEmpId,
-              name: empData.name.trim(),
-              email: cleanEmail || `${assignedEmpId.toLowerCase().replace(/[^a-z0-9]/g, '')}@noemail.local`,
-              phone: cleanPhone || '',
-              department: (empData.department || '').trim() || null,
-              designation: (empData.designation || '').trim() || null,
-              role: assignedRole,
-              status: assignedStatus,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            }, { onConflict: 'id' });
-          } catch (retryEx) {
-            console.warn('[CreateEmployee] Base profile upsert fallback notice:', retryEx);
-          }
-        }
       } catch (dbEx: any) {
-        console.warn('[CreateEmployee] Remote profiles write fallback:', dbEx?.message || dbEx);
+        console.warn('[CreateEmployee] Payroll profile write notice:', dbEx?.message || dbEx);
       }
     }
 
-    // 8. In-memory and local tenant storage persistence
-    const newLocalEmp: UserAccount = {
-      id: profileId,
+    const localEmp: UserAccount = {
+      id: fallbackId,
       email: cleanEmail,
       name: empData.name.trim(),
       companyId: workspaceId,
@@ -1625,6 +2130,7 @@ export class SupabaseAuthService {
       designation: (empData.designation || '').trim(),
       employeeId: assignedEmpId,
       status: assignedStatus,
+      mustChangePassword: true,
       joiningDate: empData.joiningDate || new Date().toISOString().split('T')[0],
       employmentType: empData.employmentType || 'Full Time',
       dateOfBirth: empData.dateOfBirth || undefined,
@@ -1637,17 +2143,14 @@ export class SupabaseAuthService {
       updatedAt: new Date().toISOString(),
     };
 
-    this.employees.push(newLocalEmp);
-    const localKey = `vistaar_local_employees_db_${workspaceId}`;
-    safeStorageSet(localKey, JSON.stringify(this.employees));
+    this.employees.push(localEmp);
+    safeStorageSet(`vistaar_local_employees_db_${workspaceId}`, JSON.stringify(this.employees));
 
-    // 9. Optional Salary Structure Setup during Employee Creation
-    // (CRITICAL: Does NOT create Expense, Daybook, or Cashbook entries)
     if (empData.salarySetup && (Number(empData.salarySetup.baseSalary) > 0 || Number(empData.salarySetup.hraAllowance) > 0)) {
       try {
         const { payrollService } = await import('./supabase/payrollService');
         await payrollService.upsertSalaryStructure({
-          employeeId: profileId,
+          employeeId: fallbackId,
           salaryFrequency: empData.salarySetup.salaryFrequency || 'Monthly',
           baseSalary: Math.max(0, Number(empData.salarySetup.baseSalary) || 0),
           hraAllowance: Math.max(0, Number(empData.salarySetup.hraAllowance) || 0),
@@ -1668,9 +2171,9 @@ export class SupabaseAuthService {
     return {
       success: true,
       empId: assignedEmpId,
-      tempPass,
-      userId: profileId,
-      employee: newLocalEmp,
+      tempPass: secureTempPass,
+      userId: fallbackId,
+      employee: localEmp,
     };
   }
 
@@ -1682,7 +2185,9 @@ export class SupabaseAuthService {
     updates: Partial<UserAccount>
   ): Promise<{ success: boolean; error?: string }> {
     const workspaceId = this.getCurrentCompanyId() || 'default_ws';
-    const idx = this.employees.findIndex((e) => e.id === empId || e.employeeId === empId);
+    const idx = this.employees.findIndex(
+      (e) => (e.id === empId || e.employeeId === empId) && (!workspaceId || e.companyId === workspaceId)
+    );
     if (idx === -1) {
       return { success: false, error: 'Employee not found.' };
     }

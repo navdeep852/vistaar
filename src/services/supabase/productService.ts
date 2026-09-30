@@ -7,6 +7,8 @@ import { store } from '../store';
 
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
+import { hasCurrentUserPermission, requirePermission } from '../../lib/permissions';
+import { auditLogService } from './auditLogService';
 
 const LOCAL_PRODUCTS_KEY = 'vistaar_local_products_db';
 
@@ -723,11 +725,31 @@ export class ProductService {
   }
 
   public async updateProduct(id: string, product: Partial<Product>): Promise<{ product?: Product; error?: string }> {
+    const attemptedStock = (product as any).currentStock ?? (product as any).current_stock;
+    const isOwner = supabaseAuthService.isOwner();
+
+    // Core Security Requirement: Non-owners cannot directly manipulate stock quantity
+    if (attemptedStock !== undefined && !isOwner) {
+      await auditLogService.logSecurityEvent({
+        action: 'STOCK_ADJUSTMENT_ATTEMPT',
+        result: 'DENIED',
+        details: { productId: id, attemptedStock, method: 'updateProduct' },
+      });
+      return {
+        error: 'Permission Denied: Employees are strictly prohibited from manually modifying stock quantity. Stock adjustments require Owner authorization.',
+      };
+    }
+
+    // Always strip stock quantity from metadata update payload to maintain authoritative single-source accounting
+    const sanitizedProduct = { ...product };
+    delete (sanitizedProduct as any).currentStock;
+    delete (sanitizedProduct as any).current_stock;
+
     if (!isSupabaseConfigured()) {
       const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
       const idx = local.findIndex((p) => p.id === id);
       if (idx !== -1) {
-        local[idx] = { ...local[idx], ...product, updatedAt: new Date().toISOString() };
+        local[idx] = { ...local[idx], ...sanitizedProduct, updatedAt: new Date().toISOString() };
         safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, local);
         return { product: local[idx] };
       }
@@ -735,7 +757,9 @@ export class ProductService {
     }
 
     const wsId = this.getWorkspaceId();
-    const payload = toDbProduct(product, wsId);
+    const payload = toDbProduct(sanitizedProduct, wsId);
+    // Explicitly delete current_stock from DB payload to ensure DB trigger / metadata separation
+    delete (payload as any).current_stock;
 
     try {
       let { data, error } = await supabase
@@ -770,6 +794,189 @@ export class ProductService {
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'updateProduct');
       return { error: errStr };
+    }
+  }
+
+  /**
+   * Authoritative Owner Stock Adjustment Flow
+   * Only Business Owners can perform manual stock adjustments.
+   * Records immutable stock movement and audit logs with previous & resulting quantity.
+   */
+  public async ownerAdjustStock(
+    productIdOrParams: string | {
+      productId: string;
+      actualQuantity: number;
+      reason: string;
+      notes?: string;
+    },
+    actualQuantity?: number,
+    reason?: string,
+    notes?: string
+  ): Promise<{ success: boolean; data?: any; error?: string }> {
+    const params = typeof productIdOrParams === 'object'
+      ? productIdOrParams
+      : {
+          productId: productIdOrParams,
+          actualQuantity: actualQuantity ?? 0,
+          reason: reason || 'Manual stock adjustment',
+          notes,
+        };
+
+    const isOwner = supabaseAuthService.isOwner();
+    const user = supabaseAuthService.getUser();
+
+    if (!isOwner) {
+      await auditLogService.logSecurityEvent({
+        action: 'STOCK_ADJUSTMENT_ATTEMPT',
+        result: 'DENIED',
+        employeeId: user?.employeeId,
+        details: {
+          productId: params.productId,
+          requestedQuantity: params.actualQuantity,
+          reason: params.reason,
+        },
+      });
+      return {
+        success: false,
+        error: 'Permission Denied: Stock adjustment requires Owner authorization.',
+      };
+    }
+
+    if (params.actualQuantity < 0) {
+      return { success: false, error: 'Actual stock quantity cannot be negative.' };
+    }
+
+    if (!isSupabaseConfigured()) {
+      const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, store.getProducts());
+      const p = local.find((item) => item.id === params.productId);
+      const prevStock = p ? (p.currentStock || 0) : 0;
+      const delta = params.actualQuantity - prevStock;
+
+      if (p) {
+        p.currentStock = params.actualQuantity;
+        p.updatedAt = new Date().toISOString();
+        safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, local);
+      }
+
+      store.adjustStock(params.productId, 'Adjustment', delta, params.notes || params.reason);
+      store.syncProductStock(params.productId, params.actualQuantity);
+
+      await auditLogService.logInventoryMutation({
+        productId: params.productId,
+        productName: p?.name,
+        movementType: 'ADJUSTMENT',
+        quantityDelta: delta,
+        previousQuantity: prevStock,
+        resultingQuantity: params.actualQuantity,
+        referenceType: 'OWNER_ADJUSTMENT',
+        referenceId: `ADJ-${Date.now()}`,
+        reason: params.reason,
+      });
+
+      await auditLogService.logSecurityEvent({
+        action: 'OWNER_STOCK_ADJUSTMENT',
+        result: 'SUCCESS',
+        employeeId: user?.employeeId,
+        details: {
+          productId: params.productId,
+          previousQuantity: prevStock,
+          resultingQuantity: params.actualQuantity,
+          difference: delta,
+          reason: params.reason,
+        },
+      });
+
+      this.invalidateCache();
+      return {
+        success: true,
+        data: {
+          productId: params.productId,
+          previousQuantity: prevStock,
+          resultingQuantity: params.actualQuantity,
+          delta,
+        },
+      };
+    }
+
+    const wsId = await this.getOrFetchWorkspaceId();
+    try {
+      const { data, error } = await supabase.rpc('owner_adjust_stock', {
+        p_product_id: params.productId,
+        p_actual_quantity: params.actualQuantity,
+        p_reason: params.reason,
+        p_notes: params.notes || null,
+      });
+
+      if (error) {
+        if (error.code === 'PGRST202' || error.message?.includes('schema cache') || error.message?.includes('owner_adjust_stock')) {
+          console.warn('[ownerAdjustStock] owner_adjust_stock RPC not found in schema cache. Executing resilient fallback.');
+          const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, store.getProducts());
+          const p = local.find((item) => item.id === params.productId);
+          const prevStock = p ? (p.currentStock || 0) : 0;
+          const delta = params.actualQuantity - prevStock;
+
+          if (p) {
+            p.currentStock = params.actualQuantity;
+            p.updatedAt = new Date().toISOString();
+            safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, local);
+          }
+
+          store.adjustStock(params.productId, 'Adjustment', delta, params.notes || params.reason);
+          store.syncProductStock(params.productId, params.actualQuantity);
+
+          await auditLogService.logInventoryMutation({
+            productId: params.productId,
+            productName: p?.name,
+            movementType: 'ADJUSTMENT',
+            quantityDelta: delta,
+            previousQuantity: prevStock,
+            resultingQuantity: params.actualQuantity,
+            referenceType: 'OWNER_ADJUSTMENT',
+            referenceId: `ADJ-${Date.now()}`,
+            reason: params.reason,
+          });
+
+          await auditLogService.logSecurityEvent({
+            action: 'OWNER_STOCK_ADJUSTMENT',
+            result: 'SUCCESS',
+            employeeId: user?.employeeId,
+            details: {
+              productId: params.productId,
+              previousQuantity: prevStock,
+              resultingQuantity: params.actualQuantity,
+              difference: delta,
+              reason: params.reason,
+            },
+          });
+
+          this.invalidateCache();
+          return {
+            success: true,
+            data: {
+              productId: params.productId,
+              previousQuantity: prevStock,
+              resultingQuantity: params.actualQuantity,
+              delta,
+            },
+          };
+        }
+
+        const errStr = handleSupabaseError(error, 'ownerAdjustStock');
+        await auditLogService.logSecurityEvent({
+          action: 'STOCK_ADJUSTMENT_ATTEMPT',
+          result: 'ERROR',
+          details: { productId: params.productId, error: errStr },
+        });
+        return { success: false, error: errStr };
+      }
+
+      store.syncProductStock(params.productId, params.actualQuantity);
+      this.invalidateCache();
+
+      return { success: true, data };
+    } catch (e: any) {
+      const errStr = handleSupabaseError(e, 'ownerAdjustStock');
+      return { success: false, error: errStr };
     }
   }
 

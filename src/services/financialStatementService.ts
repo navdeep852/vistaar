@@ -2,11 +2,13 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { supabaseAuthService } from './supabaseAuth';
 import { isValidUuid } from '../lib/supabaseError';
 import { safeGetTenantStorage } from './supabase/safeStorage';
-import { ResolvedDateRange, addDays } from '../lib/dateRange';
+import { ResolvedDateRange, resolveDateRange, addDays } from '../lib/dateRange';
 import { store } from './store';
 import { Invoice, Product, Expense } from '../types';
 import { dashboardReconciliationService } from './dashboardReconciliationService';
 import { financialReconciliationService } from './financialReconciliationService';
+import { hasCurrentUserPermission, AuthorizationError } from '../lib/permissions';
+import { auditLogService } from './supabase/auditLogService';
 
 export interface TopProductCogsItem {
   productId: string;
@@ -1085,6 +1087,19 @@ class FinancialStatementService {
     return rows;
   }
 
+  public async getProfitLossStatement(range?: ResolvedDateRange): Promise<ComprehensivePLReport> {
+    if (!hasCurrentUserPermission('financial_statements.view')) {
+      await auditLogService.logSecurityEvent({
+        action: 'UNAUTHORIZED_FINANCIAL_STATEMENTS_ATTEMPT',
+        result: 'DENIED',
+        details: { method: 'getProfitLossStatement' },
+      });
+      throw new AuthorizationError('financial_statements.view', 'Permission Denied: Financial statements are strictly restricted to Business Owners.');
+    }
+    const defaultRange: ResolvedDateRange = range || resolveDateRange('this_year');
+    return this.getComprehensiveFinancials(defaultRange);
+  }
+
   /**
    * Main entry point: Get full financial statement with comparison
    */
@@ -1092,6 +1107,15 @@ class FinancialStatementService {
     currentRange: ResolvedDateRange,
     comparisonRange?: ResolvedDateRange | null
   ): Promise<ComprehensivePLReport> {
+    if (!hasCurrentUserPermission('financial_statements.view')) {
+      await auditLogService.logSecurityEvent({
+        action: 'UNAUTHORIZED_FINANCIAL_STATEMENTS_ATTEMPT',
+        result: 'DENIED',
+        details: { method: 'getComprehensiveFinancials' },
+      });
+      throw new AuthorizationError('financial_statements.view', 'Permission Denied: Financial statements are strictly restricted to Business Owners.');
+    }
+
     const currentRaw = await this.fetchRawPeriodTransactions(currentRange);
     const current = this.computePeriodFinancials(currentRange, currentRaw);
 

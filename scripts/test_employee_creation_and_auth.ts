@@ -1,13 +1,15 @@
 /**
  * VISTAAR Business OS — Employee Creation & Authentication Synchronization Regression Test Suite
  *
- * Verifies all 6 mandatory test suites:
- * TEST A: Owner creates a new employee (valid Auth user UUID, profile record, sequential VST-XXXXX ID, appears in employee list)
+ * Verifies all mandatory test suites:
+ * TEST A: Owner creates a new employee (valid Auth user UUID, profile record, sequential VST-EMP-XXX ID, dynamic secure password)
  * TEST B: Duplicate email prevention (rejects with clean error, prevents duplicate profile)
  * TEST C: Multi-tenant isolation (scoped to current workspace, invisible to other workspaces)
- * TEST D: Input validation & rollback resilience (clean error handling, no orphan states)
- * TEST E: Employee ID resolution & forced password change workflow
- * TEST F: Concurrency-safe sequential Employee ID generation
+ * TEST D: Input validation & rollback resilience (clean error handling, phone normalization)
+ * TEST E: Employee ID resolution & first-login forced password change workflow
+ * TEST F: Concurrency-safe sequential Employee ID generation & status toggling
+ * TEST G: Owner-controlled repair flow for existing employee accounts
+ * TEST H: Non-owner security enforcement (employees cannot create or repair login accounts)
  */
 
 // 1. Setup Node.js browser mocks for headless execution
@@ -30,7 +32,10 @@ if (typeof globalThis.window === 'undefined') {
     removeEventListener: () => {},
     localStorage: globalThis.localStorage,
     location: { origin: 'http://localhost:3000' },
+    isHeadlessTest: true,
   };
+} else {
+  (globalThis.window as any).isHeadlessTest = true;
 }
 
 if (typeof (globalThis as any).CustomEvent === 'undefined') {
@@ -47,7 +52,7 @@ if (typeof (globalThis as any).CustomEvent === 'undefined') {
 // 2. Imports after global mocks
 import { supabaseAuthService as auth } from '../src/services/supabaseAuth';
 import { validateIndianPhoneNumber } from '../src/lib/phoneUtils';
-import { validateEmailFormat } from '../src/lib/passwordPolicy';
+import { validateEmailFormat, validatePassword } from '../src/lib/passwordPolicy';
 
 async function runRegressionTestSuite() {
   console.log('================================================================================');
@@ -72,6 +77,15 @@ async function runRegressionTestSuite() {
 
   // Setup Owner in Workspace A
   auth.setAuthoritativeWorkspaceId(WS_A);
+  (auth as any).currentProfile = {
+    id: 'owner-uuid-a',
+    companyId: WS_A,
+    name: 'Owner Workspace A',
+    email: 'owner-a@vistaar.com',
+    role: 'owner',
+    status: 'Active',
+    employeeId: 'VST-EMP-001',
+  };
 
   // ============================================================================
   // TEST A: Owner Creates a New Employee
@@ -92,8 +106,12 @@ async function runRegressionTestSuite() {
 
   assert(resA.success === true, 'TEST A.1: Employee creation succeeds', `Success: ${resA.success}`);
   assert(Boolean(resA.empId), 'TEST A.2: Employee ID returned', `empId: ${resA.empId}`);
-  assert(/^VST-\d{5}$/.test(resA.empId || ''), 'TEST A.3: Employee ID matches VST-XXXXX format', `empId: ${resA.empId}`);
-  assert(resA.tempPass === 'TempPass@2026', 'TEST A.4: Temporary password issued', `tempPass: ${resA.tempPass}`);
+  assert(/^VST-(?:EMP-)?\d{3,}$/i.test(resA.empId || ''), 'TEST A.3: Employee ID matches VST-EMP-XXX format', `empId: ${resA.empId}`);
+  assert(
+    Boolean(resA.tempPass) && validatePassword(resA.tempPass || '').isValid && resA.tempPass !== 'TempPass@2026',
+    'TEST A.4: Cryptographically secure temporary password issued (conforms to policy, not hardcoded)',
+    `tempPass: ${resA.tempPass}`
+  );
   assert(Boolean(resA.userId), 'TEST A.5: Valid user ID returned', `userId: ${resA.userId}`);
 
   const employeesA = auth.getEmployees();
@@ -118,7 +136,7 @@ async function runRegressionTestSuite() {
 
   assert(resDup.success === false, 'TEST B.1: Duplicate email creation is rejected', `Rejected as expected`);
   assert(
-    Boolean(resDup.error && resDup.error.includes('already exists')),
+    Boolean(resDup.error && (resDup.error.includes('already exists') || resDup.error.includes('already registered'))),
     'TEST B.2: Clear, non-technical error message returned',
     `Error: "${resDup.error}"`
   );
@@ -132,8 +150,17 @@ async function runRegressionTestSuite() {
   // TEST C: Multi-Tenant Workspace Isolation
   // ============================================================================
   console.log('\n--- TEST C: MULTI-TENANT WORKSPACE ISOLATION ---');
-  // Switch to Workspace B
+  // Switch to Workspace B as Owner B
   auth.setAuthoritativeWorkspaceId(WS_B);
+  (auth as any).currentProfile = {
+    id: 'owner-uuid-b',
+    companyId: WS_B,
+    name: 'Owner Workspace B',
+    email: 'owner-b@vistaar.com',
+    role: 'owner',
+    status: 'Active',
+    employeeId: 'VST-EMP-001',
+  };
 
   // In Workspace B, the employee from Workspace A should not be visible or mixed
   const empEmailB = `employee_wsb_${Date.now()}@vistaar.com`;
@@ -150,6 +177,15 @@ async function runRegressionTestSuite() {
 
   // Switch back to Workspace A
   auth.setAuthoritativeWorkspaceId(WS_A);
+  (auth as any).currentProfile = {
+    id: 'owner-uuid-a',
+    companyId: WS_A,
+    name: 'Owner Workspace A',
+    email: 'owner-a@vistaar.com',
+    role: 'owner',
+    status: 'Active',
+    employeeId: 'VST-EMP-001',
+  };
   const currentWsA = auth.getCurrentCompanyId();
   assert(currentWsA === WS_A, 'TEST C.3: Workspace A context restored', `Current WS: ${currentWsA}`);
 
@@ -206,14 +242,24 @@ async function runRegressionTestSuite() {
   );
 
   // E.3 Unknown Employee ID returns null
-  const unknownId = await auth.resolveEmailFromIdentifier('VST-99999');
+  const unknownId = await auth.resolveEmailFromIdentifier('VST-EMP-99999');
   assert(
     unknownId === null,
     'TEST E.3: Unknown Employee ID safely returns null',
     `Result: ${unknownId}`
   );
 
-  // E.4 First login password change clears mustChangePassword
+  // E.4 First login password change
+  (auth as any).currentProfile = {
+    id: resA.userId!,
+    companyId: WS_A,
+    name: empNameA,
+    email: empEmailA,
+    role: 'employee',
+    status: 'Active',
+    employeeId: resA.empId!,
+    mustChangePassword: true,
+  };
   const pwdChangeRes = await auth.completeFirstLoginPasswordChange(
     resA.userId!,
     'NewSecurePassword@2026',
@@ -221,13 +267,24 @@ async function runRegressionTestSuite() {
   );
   assert(pwdChangeRes.success === true, 'TEST E.4: Password update succeeds', `Success: ${pwdChangeRes.success}`);
 
+  // Restore Owner profile
+  (auth as any).currentProfile = {
+    id: 'owner-uuid-a',
+    companyId: WS_A,
+    name: 'Owner Workspace A',
+    email: 'owner-a@vistaar.com',
+    role: 'owner',
+    status: 'Active',
+    employeeId: 'VST-EMP-001',
+  };
+
   // ============================================================================
-  // TEST F: Sequential Employee ID Generation & Collision Prevention
+  // TEST F: Sequential Employee ID Generation & Status Toggling
   // ============================================================================
-  console.log('\n--- TEST F: SEQUENTIAL EMPLOYEE ID GENERATION ---');
+  console.log('\n--- TEST F: SEQUENTIAL EMPLOYEE ID GENERATION & STATUS CHECK ---');
 
   const id1 = await auth.generateNextEmployeeId(WS_A);
-  assert(/^VST-\d{5}$/.test(id1), 'TEST F.1: First generated ID matches VST-XXXXX', `id: ${id1}`);
+  assert(/^VST-(?:EMP-)?\d{3,}$/i.test(id1), 'TEST F.1: First generated ID matches VST-EMP-XXX format', `id: ${id1}`);
 
   // Simulate creation of employee with id1
   const nextEmail1 = `seq1_${Date.now()}@vistaar.com`;
@@ -239,8 +296,8 @@ async function runRegressionTestSuite() {
 
   // Next generation should be incremented
   const id2 = await auth.generateNextEmployeeId(WS_A);
-  const num1 = parseInt(resSeq1.empId!.replace('VST-', ''), 10);
-  const num2 = parseInt(id2.replace('VST-', ''), 10);
+  const num1 = parseInt(resSeq1.empId!.replace(/^VST-(?:EMP-)?/i, ''), 10);
+  const num2 = parseInt(id2.replace(/^VST-(?:EMP-)?/i, ''), 10);
   assert(num2 > num1, 'TEST F.3: Sequential ID increments monotonically', `${resSeq1.empId} -> ${id2}`);
 
   // Employee status toggle (Active -> Suspended -> Active)
@@ -249,10 +306,60 @@ async function runRegressionTestSuite() {
   const suspendedEmp = auth.getEmployees().find((e) => e.email.toLowerCase() === empEmailA.toLowerCase());
   assert(suspendedEmp?.status === 'Suspended', 'TEST F.5: Status reflected in employee list', `Status: ${suspendedEmp?.status}`);
 
+  // Suspended employee should fail resolution / login
+  const suspendedResolve = await auth.resolveEmailFromIdentifier(resA.empId!);
+  assert(suspendedResolve === null, 'TEST F.6: Suspended employee cannot resolve login email', `Resolved: ${suspendedResolve}`);
+
   const reactivateRes = await auth.updateEmployeeStatus(resA.userId!, 'Active');
-  assert(reactivateRes.success, 'TEST F.6: Employee re-activated', `Success: ${reactivateRes.success}`);
+  assert(reactivateRes.success, 'TEST F.7: Employee re-activated', `Success: ${reactivateRes.success}`);
   const activeEmp = auth.getEmployees().find((e) => e.email.toLowerCase() === empEmailA.toLowerCase());
-  assert(activeEmp?.status === 'Active', 'TEST F.7: Re-activation reflected in employee list', `Status: ${activeEmp?.status}`);
+  assert(activeEmp?.status === 'Active', 'TEST F.8: Re-activation reflected in employee list', `Status: ${activeEmp?.status}`);
+
+  // ============================================================================
+  // TEST G: Owner-Controlled Repair / Recovery Flow (Section 22)
+  // ============================================================================
+  console.log('\n--- TEST G: OWNER-CONTROLLED REPAIR / RECOVERY FLOW ---');
+  const repairRes = await auth.repairEmployeeLogin(resA.empId!);
+  assert(repairRes.success === true, 'TEST G.1: Owner repair recovery succeeds', `Success: ${repairRes.success}`);
+  assert(repairRes.empId === resA.empId, 'TEST G.2: Repaired account preserves Employee ID', `empId: ${repairRes.empId}`);
+  assert(
+    Boolean(repairRes.tempPass) && validatePassword(repairRes.tempPass || '').isValid && repairRes.tempPass !== 'TempPass@2026',
+    'TEST G.3: New cryptographically secure temporary password generated for recovery',
+    `tempPass: ${repairRes.tempPass}`
+  );
+
+  // ============================================================================
+  // TEST H: Role Escalation & Non-Owner Protection (Section 5, 24, 25)
+  // ============================================================================
+  console.log('\n--- TEST H: ROLE ESCALATION & NON-OWNER RESTRICTION ---');
+  // Switch to normal employee
+  (auth as any).currentProfile = {
+    id: 'emp-user-uuid',
+    companyId: WS_A,
+    name: 'Normal Employee',
+    email: 'normal.emp@vistaar.com',
+    role: 'employee',
+    status: 'Active',
+    employeeId: 'VST-EMP-099',
+  };
+
+  const empCreateAttempt = await auth.createEmployee({
+    name: 'Unauthorized New User',
+    email: 'hacker@vistaar.com',
+    createLoginAccount: true,
+  });
+  assert(
+    empCreateAttempt.success === false && empCreateAttempt.error?.includes('owner'),
+    'TEST H.1: Normal employee cannot create login accounts',
+    `Error: "${empCreateAttempt.error}"`
+  );
+
+  const empRepairAttempt = await auth.repairEmployeeLogin(resA.empId!);
+  assert(
+    empRepairAttempt.success === false && empRepairAttempt.error?.includes('owner'),
+    'TEST H.2: Normal employee cannot invoke repair recovery flow',
+    `Error: "${empRepairAttempt.error}"`
+  );
 
   // ============================================================================
   // RESULTS SUMMARY

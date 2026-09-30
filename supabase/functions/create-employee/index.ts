@@ -1,6 +1,6 @@
-// Follow this setup guide to integrate the Deno language server with your editor:
-// https://deno.land/manual/getting_started/setup_your_environment
-// This code runs on Supabase Edge Functions (Deno runtime).
+// VISTAAR Business OS — Supabase Edge Function: create-employee
+// Secure server-side provisioning of employee login accounts
+// Runs on Supabase Edge Runtime (Deno).
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.8';
@@ -12,14 +12,66 @@ const corsHeaders = {
 };
 
 interface CreateEmployeeRequest {
-  workspaceId: string;
-  name: string;
-  email: string;
+  action?: 'create' | 'repair';
+  name?: string;
+  email?: string;
   phone?: string;
-  role?: string;
   department?: string;
   designation?: string;
-  tempPassword?: string;
+  employeeId?: string; // only used during repair
+}
+
+/**
+ * Generates a cryptographically secure temporary password.
+ * Satisfies the VISTAAR password policy:
+ * - Minimum 14 characters (> 12)
+ * - At least 1 uppercase letter
+ * - At least 1 lowercase letter
+ * - At least 1 digit
+ * - At least 1 symbol
+ */
+function generateSecureTemporaryPassword(length = 14): string {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnpqrstuvwxyz';
+  const digits = '23456789';
+  const symbols = '!@#$%&*_-+=';
+  const allChars = upper + lower + digits + symbols;
+
+  const getRandomChar = (charset: string): string => {
+    const arr = new Uint32Array(1);
+    crypto.getRandomValues(arr);
+    return charset[arr[0] % charset.length];
+  };
+
+  const chars: string[] = [
+    getRandomChar(upper),
+    getRandomChar(lower),
+    getRandomChar(digits),
+    getRandomChar(symbols),
+  ];
+
+  for (let i = 4; i < Math.max(14, length); i++) {
+    chars.push(getRandomChar(allChars));
+  }
+
+  for (let i = chars.length - 1; i > 0; i--) {
+    const arr = new Uint32Array(1);
+    crypto.getRandomValues(arr);
+    const j = arr[0] % (i + 1);
+    const temp = chars[i];
+    chars[i] = chars[j];
+    chars[j] = temp;
+  }
+
+  const generated = chars.join('');
+  const isValid =
+    generated.length >= 12 &&
+    /[A-Z]/.test(generated) &&
+    /[a-z]/.test(generated) &&
+    /[0-9]/.test(generated) &&
+    /[^A-Za-z0-9]/.test(generated);
+
+  return isValid ? generated : generateSecureTemporaryPassword(length);
 }
 
 serve(async (req: Request) => {
@@ -41,7 +93,7 @@ serve(async (req: Request) => {
       );
     }
 
-    // 2. Validate Authorization
+    // 2. Validate Authorization Header & Caller Identity
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(
@@ -50,7 +102,6 @@ serve(async (req: Request) => {
       );
     }
 
-    // Client for verifying caller
     const supabaseUser = createClient(supabaseUrl, supabaseAnonKey || supabaseServiceRoleKey, {
       global: { headers: { Authorization: authHeader } },
       auth: { persistSession: false },
@@ -64,23 +115,172 @@ serve(async (req: Request) => {
       );
     }
 
-    // Admin Client with Service Role privileges
+    // Admin Client with Service Role privileges (server-side only)
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
       auth: { persistSession: false },
     });
 
-    // 3. Parse and validate body
-    const body: CreateEmployeeRequest = await req.json();
-    const { workspaceId, name, email, phone, role, department, designation } = body;
-    const tempPassword = body.tempPassword || 'TempPass@2026';
+    // 3. OWNER AUTHORIZATION: Caller must be an Active Owner
+    const { data: callerProfile, error: callerProfErr } = await supabaseAdmin
+      .from('profiles')
+      .select('id, role, status, workspace_id')
+      .eq('id', callerUser.id)
+      .single();
 
-    if (!workspaceId) {
+    if (callerProfErr || !callerProfile) {
       return new Response(
-        JSON.stringify({ success: false, error: 'Missing required field: workspaceId.' }),
+        JSON.stringify({ success: false, error: 'Caller profile could not be verified.' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (callerProfile.role !== 'owner' || callerProfile.status !== 'Active') {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Only the workspace owner can create VISTAAR login accounts.' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Authoritative Workspace derived strictly from caller's owner profile
+    const ownerWorkspaceId = callerProfile.workspace_id;
+    if (!ownerWorkspaceId) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Owner workspace could not be identified.' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
+    // 4. Parse Request Body
+    const body: CreateEmployeeRequest = await req.json().catch(() => ({}));
+    const action = body.action || 'create';
+
+    // =========================================================================
+    // ACTION: REPAIR / RE-ISSUE CREDENTIALS FOR EXISTING BROKEN EMPLOYEE PROFILE
+    // =========================================================================
+    if (action === 'repair') {
+      const searchEmpId = (body.employeeId || '').trim();
+      const searchEmail = (body.email || '').trim().toLowerCase();
+
+      if (!searchEmpId && !searchEmail) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'Employee ID or email is required for account repair.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      let profileQuery = supabaseAdmin
+        .from('profiles')
+        .select('*')
+        .eq('workspace_id', ownerWorkspaceId);
+
+      if (searchEmpId) {
+        profileQuery = profileQuery.eq('employee_id', searchEmpId);
+      } else {
+        profileQuery = profileQuery.eq('email', searchEmail);
+      }
+
+      const { data: targetProfile, error: targetErr } = await profileQuery.maybeSingle();
+      if (targetErr || !targetProfile) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'Employee profile not found in your workspace.' }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const repairPassword = generateSecureTemporaryPassword();
+      const targetEmail = targetProfile.email;
+
+      // Check if Auth user exists for this email
+      let existingAuthUser: any = null;
+      try {
+        const { data: listData } = await supabaseAdmin.auth.admin.listUsers();
+        existingAuthUser = (listData?.users || []).find(
+          (u: any) => (u.email || '').toLowerCase() === targetEmail.toLowerCase()
+        );
+      } catch (listErr) {
+        console.warn('[RepairEmployee] listUsers notice:', listErr);
+      }
+
+      let targetAuthId = targetProfile.id;
+
+      if (existingAuthUser) {
+        targetAuthId = existingAuthUser.id;
+        // Update password for existing Auth account
+        const { error: updateAuthErr } = await supabaseAdmin.auth.admin.updateUserById(targetAuthId, {
+          password: repairPassword,
+          user_metadata: {
+            ...existingAuthUser.user_metadata,
+            workspace_id: ownerWorkspaceId,
+            employee_id: targetProfile.employee_id,
+            role: 'employee',
+            must_change_password: true,
+          },
+        });
+        if (updateAuthErr) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'Failed to update employee authentication credentials.' }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      } else {
+        // Create new Auth account
+        const { data: newAuthData, error: newAuthErr } = await supabaseAdmin.auth.admin.createUser({
+          email: targetEmail,
+          password: repairPassword,
+          email_confirm: true,
+          user_metadata: {
+            workspace_id: ownerWorkspaceId,
+            name: targetProfile.name,
+            phone: targetProfile.phone || '',
+            department: targetProfile.department || '',
+            designation: targetProfile.designation || '',
+            role: 'employee',
+            employee_id: targetProfile.employee_id,
+            must_change_password: true,
+          },
+        });
+
+        if (newAuthErr || !newAuthData?.user) {
+          return new Response(
+            JSON.stringify({ success: false, error: newAuthErr?.message || 'Failed to provision missing auth account.' }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        targetAuthId = newAuthData.user.id;
+      }
+
+      // Ensure profile ID matches Auth user UUID & flags must_change_password = true
+      await supabaseAdmin.from('profiles').upsert({
+        ...targetProfile,
+        id: targetAuthId,
+        must_change_password: true,
+        status: 'Active',
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          empId: targetProfile.employee_id,
+          tempPass: repairPassword,
+          name: targetProfile.name,
+          user: {
+            id: targetAuthId,
+            email: targetEmail,
+            name: targetProfile.name,
+            role: 'employee',
+          },
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // =========================================================================
+    // ACTION: CREATE NEW EMPLOYEE ACCOUNT
+    // =========================================================================
+    const { name, email, phone, department, designation } = body;
+
+    // Validate name
     if (!name || !name.trim()) {
       return new Response(
         JSON.stringify({ success: false, error: 'Employee name is required.' }),
@@ -88,6 +288,7 @@ serve(async (req: Request) => {
       );
     }
 
+    // Validate email
     const cleanEmail = (email || '').trim().toLowerCase();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!cleanEmail || !emailRegex.test(cleanEmail)) {
@@ -97,7 +298,7 @@ serve(async (req: Request) => {
       );
     }
 
-    // Phone validation (Indian 10-digit)
+    // Validate phone (Indian 10-digit)
     let cleanPhone = (phone || '').replace(/\D/g, '');
     if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
       cleanPhone = cleanPhone.slice(2);
@@ -112,31 +313,10 @@ serve(async (req: Request) => {
       );
     }
 
-    // 4. Verify caller permissions (must be owner or admin of target workspace)
-    const { data: callerProfile, error: callerProfErr } = await supabaseAdmin
-      .from('profiles')
-      .select('role, workspace_id')
-      .eq('id', callerUser.id)
-      .single();
-
-    if (callerProfErr || !callerProfile) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'Caller profile could not be verified.' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    if (callerProfile.workspace_id !== workspaceId || !['owner', 'admin'].includes(callerProfile.role)) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'Forbidden: Only owners and administrators may create employee accounts.' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // 5. Check for duplicate email in existing profiles
+    // Check for duplicate email in existing profiles
     const { data: existingProfile } = await supabaseAdmin
       .from('profiles')
-      .select('id')
+      .select('id, workspace_id')
       .eq('email', cleanEmail)
       .maybeSingle();
 
@@ -147,45 +327,50 @@ serve(async (req: Request) => {
       );
     }
 
-    // 6. Generate next sequential Employee ID for this workspace
+    // Generate unique sequential Employee ID for this workspace (VST-EMP-001 format)
     let nextEmployeeId: string;
     const { data: rpcEmpId, error: rpcErr } = await supabaseAdmin
-      .rpc('generate_next_employee_id', { p_workspace_id: workspaceId });
+      .rpc('generate_next_employee_id', { p_workspace_id: ownerWorkspaceId });
 
-    if (!rpcErr && rpcEmpId) {
+    if (!rpcErr && rpcEmpId && typeof rpcEmpId === 'string' && /^VST-EMP-\d+$/i.test(rpcEmpId)) {
       nextEmployeeId = rpcEmpId;
     } else {
-      // Fallback query if RPC cache is refreshing
+      // Deterministic query across both VST-EMP-XXX and VST-XXXXX patterns
       const { data: profilesList } = await supabaseAdmin
         .from('profiles')
         .select('employee_id')
-        .eq('workspace_id', workspaceId);
+        .eq('workspace_id', ownerWorkspaceId);
 
       let maxNum = 0;
       (profilesList || []).forEach((p: { employee_id?: string }) => {
-        const match = (p.employee_id || '').match(/^VST-(\d+)$/);
-        if (match) {
-          const n = parseInt(match[1], 10);
+        const mEmp = (p.employee_id || '').match(/^VST-EMP-(\d+)$/i);
+        const mVst = (p.employee_id || '').match(/^VST-(\d+)$/i);
+        if (mEmp) {
+          const n = parseInt(mEmp[1], 10);
+          if (n > maxNum) maxNum = n;
+        } else if (mVst) {
+          const n = parseInt(mVst[1], 10);
           if (n > maxNum) maxNum = n;
         }
       });
-      nextEmployeeId = `VST-${String(maxNum + 1).padStart(5, '0')}`;
+      nextEmployeeId = `VST-EMP-${String(maxNum + 1).padStart(3, '0')}`;
     }
 
-    // 7. Create Supabase Auth User via Admin API
-    const assignedRole = (role && ['employee', 'manager', 'admin', 'staff'].includes(role)) ? role : 'employee';
+    // Generate cryptographically secure temporary password (never hardcoded)
+    const temporaryPassword = generateSecureTemporaryPassword();
 
+    // Create Supabase Auth User via Admin API
     const { data: authCreated, error: createErr } = await supabaseAdmin.auth.admin.createUser({
       email: cleanEmail,
-      password: tempPassword,
+      password: temporaryPassword,
       email_confirm: true,
       user_metadata: {
-        workspace_id: workspaceId,
+        workspace_id: ownerWorkspaceId,
         name: name.trim(),
         phone: cleanPhone,
         department: (department || '').trim(),
         designation: (designation || '').trim(),
-        role: assignedRole,
+        role: 'employee',
         employee_id: nextEmployeeId,
         must_change_password: true,
       },
@@ -195,7 +380,7 @@ serve(async (req: Request) => {
       console.error('[CreateEmployee] Admin createUser error:', createErr);
       let clientMsg = 'Failed to create employee authentication account.';
       if (createErr.message?.includes('already registered') || createErr.message?.includes('email_exists')) {
-        clientMsg = 'An account with this email address already exists in the system.';
+        clientMsg = 'An account with this email address already exists.';
       }
       return new Response(
         JSON.stringify({ success: false, error: clientMsg }),
@@ -211,21 +396,20 @@ serve(async (req: Request) => {
       );
     }
 
-    // 8. Ensure Profile Record exists with correct Auth UUID
-    // Trigger on_auth_user_created handles this, but we explicitly confirm or provision to guarantee consistency
+    // Atomic Profile Creation (id = newAuthUser.id)
     try {
       const { error: upsertErr } = await supabaseAdmin
         .from('profiles')
         .upsert({
           id: newAuthUser.id,
-          workspace_id: workspaceId,
+          workspace_id: ownerWorkspaceId,
           employee_id: nextEmployeeId,
           name: name.trim(),
           email: cleanEmail,
           phone: cleanPhone,
-          department: (department || '').trim(),
-          designation: (designation || '').trim(),
-          role: assignedRole,
+          department: (department || '').trim() || null,
+          designation: (designation || '').trim() || null,
+          role: 'employee',
           status: 'Active',
           must_change_password: true,
           updated_at: new Date().toISOString(),
@@ -233,7 +417,7 @@ serve(async (req: Request) => {
 
       if (upsertErr) {
         console.error('[CreateEmployee] Profile upsert error, rolling back Auth user:', upsertErr);
-        // Rollback created auth user to avoid orphan record
+        // Rollback Auth user to avoid orphan account
         await supabaseAdmin.auth.admin.deleteUser(newAuthUser.id);
         return new Response(
           JSON.stringify({ success: false, error: 'Failed to create employee profile record. Action was rolled back.' }),
@@ -249,17 +433,18 @@ serve(async (req: Request) => {
       );
     }
 
-    // 9. Success Response
+    // Success response: return Employee ID + exact temporary password once
     return new Response(
       JSON.stringify({
         success: true,
         empId: nextEmployeeId,
-        tempPass: tempPassword,
+        tempPass: temporaryPassword,
+        name: name.trim(),
         user: {
           id: newAuthUser.id,
           email: cleanEmail,
           name: name.trim(),
-          role: assignedRole,
+          role: 'employee',
         },
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

@@ -32,6 +32,7 @@ import logoIcon from '../assets/Vistaar_Icon_logo.png';
 import { supabaseAuthService } from '../services/supabaseAuth';
 import { UserAvatar } from './UserAvatar';
 import { useTheme } from '../context/ThemeContext';
+import { hasCurrentUserPermission } from '../lib/permissions';
 
 interface SidebarProps {
   activeTab: string;
@@ -72,7 +73,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const logoFullName = theme === 'dark' ? logoLightText : logoDarkText;
 
-  const navGroups: NavGroup[] = [
+  const rawNavGroups: NavGroup[] = [
     {
       title: 'OVERVIEW',
       items: [
@@ -121,7 +122,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ],
     },
 
-
     {
       title: 'MARKETING & MORE',
       items: [
@@ -131,6 +131,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ],
     },
   ];
+
+  // RBAC Permission-Filtered Navigation
+  const navGroups = rawNavGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => {
+        if (item.id === 'analytics') return hasCurrentUserPermission('analytics.view');
+        if (item.id === 'profit-loss' || item.id === 'financial-statements') {
+          return hasCurrentUserPermission('financial_statements.view');
+        }
+        return true;
+      }),
+    }))
+    .filter((group) => group.items.length > 0);
 
   return (
     <aside className={`${isCollapsed ? 'w-20' : 'w-64'} bg-white dark:bg-slate-950 text-slate-700 dark:text-slate-400 flex flex-col h-screen fixed left-0 top-0 z-30 border-r border-slate-200 dark:border-slate-900 hidden lg:flex no-print transition-colors duration-200`}>

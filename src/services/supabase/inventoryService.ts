@@ -1,7 +1,9 @@
-import { supabase } from '../../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { StockReceipt, StockMovement } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
+import { hasCurrentUserPermission, AuthorizationError } from '../../lib/permissions';
+import { auditLogService } from './auditLogService';
 
 const LOCAL_RECEIPTS_KEY = 'vistaar_local_stock_receipts';
 const LOCAL_MOVEMENTS_KEY = 'vistaar_local_stock_movements';
@@ -106,6 +108,8 @@ export class InventoryService {
 
   public async createStockReceipt(receipt: Partial<StockReceipt>): Promise<{ receipt?: any; error?: string }> {
     const wsId = this.getWorkspaceId();
+    const qty = Number(receipt.quantityReceived) || 0;
+
     const payload = {
       workspace_id: wsId,
       product_id: receipt.productId,
@@ -113,8 +117,8 @@ export class InventoryService {
       receipt_number: receipt.receiptNumber || `GRN-${Date.now()}`,
       purchase_order_number: receipt.purchaseOrderNumber || null,
       received_date: receipt.receivedDate || new Date().toISOString().split('T')[0],
-      quantity_received: receipt.quantityReceived,
-      quantity_remaining: receipt.quantityRemaining ?? receipt.quantityReceived,
+      quantity_received: qty,
+      quantity_remaining: receipt.quantityRemaining ?? qty,
       buy_price: receipt.buyPrice,
       notes: receipt.notes || null,
     };
@@ -133,10 +137,25 @@ export class InventoryService {
           const local = safeStorageGet(LOCAL_RECEIPTS_KEY);
           local.unshift(newReceipt);
           safeStorageSave(LOCAL_RECEIPTS_KEY, local);
+
+          if (receipt.productId) {
+            await auditLogService.logInventoryMutation({
+              productId: receipt.productId,
+              movementType: 'STOCK_RECEIVED',
+              quantityDelta: qty,
+              previousQuantity: 0,
+              resultingQuantity: qty,
+              referenceType: 'STOCK_RECEIPT',
+              referenceId: payload.receipt_number,
+              reason: receipt.notes || 'Goods Received Note',
+            });
+          }
+
           return { receipt: newReceipt };
         }
         return { error: errStr };
       }
+
       if (data && data.product_id) {
         // Also update products table current_stock in Supabase
         const { data: recs } = await supabase
@@ -148,6 +167,17 @@ export class InventoryService {
           const sum = recs.reduce((acc: number, r: { quantity_remaining?: number | string | null }) => acc + (Number(r.quantity_remaining) || 0), 0);
           await supabase.from('products').update({ current_stock: sum, updated_at: new Date().toISOString() }).eq('id', data.product_id).eq('workspace_id', wsId);
         }
+
+        await auditLogService.logInventoryMutation({
+          productId: data.product_id,
+          movementType: 'STOCK_RECEIVED',
+          quantityDelta: qty,
+          previousQuantity: 0,
+          resultingQuantity: qty,
+          referenceType: 'STOCK_RECEIPT',
+          referenceId: data.receipt_number || payload.receipt_number,
+          reason: receipt.notes || 'Goods Received Note',
+        });
       }
       return { receipt: data };
     } catch (e: any) {
@@ -156,6 +186,20 @@ export class InventoryService {
       const local = safeStorageGet(LOCAL_RECEIPTS_KEY);
       local.unshift(newReceipt);
       safeStorageSave(LOCAL_RECEIPTS_KEY, local);
+
+      if (receipt.productId) {
+        await auditLogService.logInventoryMutation({
+          productId: receipt.productId,
+          movementType: 'STOCK_RECEIVED',
+          quantityDelta: qty,
+          previousQuantity: 0,
+          resultingQuantity: qty,
+          referenceType: 'STOCK_RECEIPT',
+          referenceId: payload.receipt_number,
+          reason: receipt.notes || 'Goods Received Note',
+        });
+      }
+
       return { receipt: newReceipt };
     }
   }
@@ -185,6 +229,66 @@ export class InventoryService {
       const local = safeStorageGet(LOCAL_MOVEMENTS_KEY);
       const filtered = productId ? local.filter((m) => m.productId === productId || m.product_id === productId) : local;
       return { data: filtered, error: errStr };
+    }
+  }
+
+  /**
+   * Delete Stock Movement (Owner-only operation)
+   */
+  public async deleteStockMovement(id: string): Promise<{ success: boolean; error?: string }> {
+    if (!supabaseAuthService.isOwner()) {
+      return {
+        success: false,
+        error: 'Permission Denied: Deletion of stock movements is strictly restricted to Business Owners.',
+      };
+    }
+
+    if (!isSupabaseConfigured()) {
+      const local = safeStorageGet(LOCAL_MOVEMENTS_KEY);
+      const updated = local.filter((m) => m.id !== id);
+      safeStorageSave(LOCAL_MOVEMENTS_KEY, updated);
+      return { success: true };
+    }
+
+    const wsId = this.getWorkspaceId();
+    try {
+      const { error } = await supabase.from('stock_movements').delete().eq('workspace_id', wsId).eq('id', id);
+      if (error) {
+        return { success: false, error: handleSupabaseError(error, 'deleteStockMovement') };
+      }
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: handleSupabaseError(e, 'deleteStockMovement') };
+    }
+  }
+
+  /**
+   * Delete Stock Receipt (Owner-only operation)
+   */
+  public async deleteStockReceipt(id: string): Promise<{ success: boolean; error?: string }> {
+    if (!supabaseAuthService.isOwner()) {
+      return {
+        success: false,
+        error: 'Permission Denied: Deletion of stock receipts is strictly restricted to Business Owners.',
+      };
+    }
+
+    if (!isSupabaseConfigured()) {
+      const local = safeStorageGet(LOCAL_RECEIPTS_KEY);
+      const updated = local.filter((r) => r.id !== id);
+      safeStorageSave(LOCAL_RECEIPTS_KEY, updated);
+      return { success: true };
+    }
+
+    const wsId = this.getWorkspaceId();
+    try {
+      const { error } = await supabase.from('stock_receipts').delete().eq('workspace_id', wsId).eq('id', id);
+      if (error) {
+        return { success: false, error: handleSupabaseError(error, 'deleteStockReceipt') };
+      }
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: handleSupabaseError(e, 'deleteStockReceipt') };
     }
   }
 }

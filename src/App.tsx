@@ -3,10 +3,12 @@ import { Loader2, AlertOctagon, RefreshCw, LogOut } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { MobileNav } from './components/MobileNav';
 import { Header } from './components/Header';
-import { ToastContainer } from './components/Toast';
+import { ToastContainer, showToast } from './components/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { supabaseAuthService, AuthResolutionState } from './services/supabaseAuth';
 import { productService, followUpService, notificationService } from './services/supabase';
+import { hasCurrentUserPermission } from './lib/permissions';
+import { auditLogService } from './services/supabase/auditLogService';
 
 // Views
 import { LoginView } from './views/LoginView';
@@ -144,35 +146,73 @@ function MainAppContent() {
     return <LoginView onSuccess={() => supabaseAuthService.initializeAuth()} />;
   }
 
+  const handleSafeSetActiveTab = (tab: string) => {
+    setModalToOpen(null);
+
+    // Route guard for Analytics
+    if (tab === 'analytics' && !hasCurrentUserPermission('analytics.view')) {
+      showToast('Access Denied: Analytics is restricted to Workspace Owners.', 'error');
+      auditLogService.logSecurityEvent(
+        'UNAUTHORIZED_ANALYTICS_ATTEMPT',
+        'Unauthorized navigation to Analytics',
+        'DENIED',
+        { attemptedTab: tab }
+      );
+      setActiveTab('dashboard');
+      return;
+    }
+
+    // Route guard for Financial Statements
+    if (
+      (tab === 'financial-statements' || tab === 'profit-loss' || tab === 'reports') &&
+      !hasCurrentUserPermission('financial_statements.view')
+    ) {
+      showToast('Access Denied: Financial statements are restricted to Workspace Owners.', 'error');
+      auditLogService.logSecurityEvent(
+        'UNAUTHORIZED_FINANCIAL_STATEMENTS_ATTEMPT',
+        'Unauthorized navigation to Financial Statements',
+        'DENIED',
+        { attemptedTab: tab }
+      );
+      setActiveTab('dashboard');
+      return;
+    }
+
+    setActiveTab(tab);
+  };
+
   const handleOpenQuickModal = (modalType: string) => {
     if (modalType === 'quotation') {
-      setActiveTab('quotations');
+      handleSafeSetActiveTab('quotations');
       setModalToOpen('quotation');
     } else if (modalType === 'invoice') {
-      setActiveTab('invoices');
+      handleSafeSetActiveTab('invoices');
       setModalToOpen('invoice');
     } else if (modalType === 'customer') {
-      setActiveTab('customers');
+      handleSafeSetActiveTab('customers');
       setModalToOpen('customer');
     } else if (modalType === 'product') {
-      setActiveTab('products');
+      handleSafeSetActiveTab('products');
       setModalToOpen('product');
     } else if (modalType === 'payment') {
-      setActiveTab('invoices');
+      handleSafeSetActiveTab('invoices');
     }
   };
 
   const renderActiveView = () => {
     switch (activeTab) {
       case 'dashboard':
-        return <DashboardView setActiveTab={setActiveTab} openModal={handleOpenQuickModal} />;
+        return <DashboardView setActiveTab={handleSafeSetActiveTab} openModal={handleOpenQuickModal} />;
       case 'analytics':
-        return <AnalyticsView onNavigateTab={setActiveTab} />;
+        if (!hasCurrentUserPermission('analytics.view')) {
+          return <DashboardView setActiveTab={handleSafeSetActiveTab} openModal={handleOpenQuickModal} />;
+        }
+        return <AnalyticsView onNavigateTab={handleSafeSetActiveTab} />;
       case 'quotations':
         return (
           <QuotationsView
             initialOpenCreate={modalToOpen === 'quotation'}
-            onNavigateTab={setActiveTab}
+            onNavigateTab={handleSafeSetActiveTab}
             activeTab={activeTab}
           />
         );
@@ -180,7 +220,7 @@ function MainAppContent() {
         return (
           <InvoicesView
             initialOpenCreate={modalToOpen === 'invoice'}
-            onNavigateTab={setActiveTab}
+            onNavigateTab={handleSafeSetActiveTab}
             activeTab={activeTab}
           />
         );
@@ -191,24 +231,23 @@ function MainAppContent() {
       case 'supplier-catalogue':
         return <SupplierCatalogueView />;
 
-
       case 'customers':
         return (
           <CustomersView
             initialOpenCreate={modalToOpen === 'customer'}
-            onNavigateTab={setActiveTab}
+            onNavigateTab={handleSafeSetActiveTab}
             activeTab={activeTab}
           />
         );
       case 'udhari':
         return <UdhariView />;
       case 'payments':
-        return <InvoicesView onNavigateTab={setActiveTab} activeTab={activeTab} />;
+        return <InvoicesView onNavigateTab={handleSafeSetActiveTab} activeTab={activeTab} />;
       case 'products':
         return (
           <ProductsView
             initialOpenCreate={modalToOpen === 'product'}
-            onNavigateTab={setActiveTab}
+            onNavigateTab={handleSafeSetActiveTab}
             activeTab={activeTab}
             initialCategoryFilter={selectedCategoryFilter}
           />
@@ -218,7 +257,7 @@ function MainAppContent() {
           <CategoriesView
             onNavigateTab={(tab, catId) => {
               setSelectedCategoryFilter(catId);
-              setActiveTab(tab);
+              handleSafeSetActiveTab(tab);
             }}
           />
         );
@@ -226,39 +265,40 @@ function MainAppContent() {
         return (
           <SuppliersView
             onNavigateTab={(tab) => {
-              setActiveTab(tab);
+              handleSafeSetActiveTab(tab);
             }}
           />
         );
       case 'stock':
-        return <StockView onNavigateTab={setActiveTab} activeTab={activeTab} />;
+        return <StockView onNavigateTab={handleSafeSetActiveTab} activeTab={activeTab} />;
       case 'counter-sale':
-        return <CounterSaleView onNavigateTab={setActiveTab} activeTab={activeTab} />;
+        return <CounterSaleView onNavigateTab={handleSafeSetActiveTab} activeTab={activeTab} />;
       case 'expenses':
-        return <ExpensesView onNavigateTab={setActiveTab} activeTab={activeTab} />;
+        return <ExpensesView onNavigateTab={handleSafeSetActiveTab} activeTab={activeTab} />;
       case 'daybook':
         return <DaybookView />;
       case 'cashbook':
         return <CashbookView />;
       case 'financial-statements':
       case 'profit-loss':
-        return <FinancialStatementsView onNavigateTab={setActiveTab} />;
+      case 'reports':
+        if (!hasCurrentUserPermission('financial_statements.view')) {
+          return <DashboardView setActiveTab={handleSafeSetActiveTab} openModal={handleOpenQuickModal} />;
+        }
+        return <FinancialStatementsView onNavigateTab={handleSafeSetActiveTab} />;
       case 'salary-payroll':
       case 'payroll':
-        return <SalaryPayrollView onNavigateTab={setActiveTab} activeTab={activeTab} />;
+        return <SalaryPayrollView onNavigateTab={handleSafeSetActiveTab} activeTab={activeTab} />;
       case 'follow-ups':
         return <FollowUpsView />;
       case 'feedback':
         return <FeedbackView />;
       case 'offers':
         return <OffersView />;
-      case 'reports':
-        // Backward-compatibility redirect:
-        return <FinancialStatementsView onNavigateTab={setActiveTab} />;
       case 'settings':
         return <SettingsView />;
       default:
-        return <DashboardView setActiveTab={setActiveTab} openModal={handleOpenQuickModal} />;
+        return <DashboardView setActiveTab={handleSafeSetActiveTab} openModal={handleOpenQuickModal} />;
     }
   };
 
@@ -268,10 +308,7 @@ function MainAppContent() {
       {!isWorkspaceActive && (
         <Sidebar
           activeTab={activeTab}
-          setActiveTab={(tab) => {
-            setModalToOpen(null);
-            setActiveTab(tab);
-          }}
+          setActiveTab={handleSafeSetActiveTab}
           lowStockCount={lowStockCount}
           pendingFollowupsCount={pendingFollowupsCount}
         />
@@ -281,10 +318,7 @@ function MainAppContent() {
       {!isWorkspaceActive && (
         <MobileNav
           activeTab={activeTab}
-          setActiveTab={(tab) => {
-            setModalToOpen(null);
-            setActiveTab(tab);
-          }}
+          setActiveTab={handleSafeSetActiveTab}
           unreadNotifsCount={unreadNotifsCount}
         />
       )}
@@ -294,10 +328,7 @@ function MainAppContent() {
         {!isWorkspaceActive && (
           <Header
             activeTab={activeTab}
-            setActiveTab={(tab) => {
-              setModalToOpen(null);
-              setActiveTab(tab);
-            }}
+            setActiveTab={handleSafeSetActiveTab}
             openModal={handleOpenQuickModal}
           />
         )}

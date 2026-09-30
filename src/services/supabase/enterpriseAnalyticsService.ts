@@ -9,6 +9,8 @@ import { quotationService } from './quotationService';
 import { financialStatementService } from '../financialStatementService';
 import { store } from '../store';
 import { Invoice, Product, Expense } from '../../types';
+import { hasCurrentUserPermission, AuthorizationError } from '../../lib/permissions';
+import { auditLogService } from './auditLogService';
 
 export interface AnalyticsKPIs {
   totalSales: number;
@@ -156,10 +158,32 @@ export class EnterpriseAnalyticsService {
     return supabaseAuthService.getCurrentCompanyId() || '';
   }
 
+  public async getExecutiveKpis(dateRange?: ResolvedDateRange): Promise<any> {
+    if (!hasCurrentUserPermission('analytics.view')) {
+      await auditLogService.logSecurityEvent({
+        action: 'UNAUTHORIZED_ANALYTICS_ATTEMPT',
+        result: 'DENIED',
+        details: { method: 'getExecutiveKpis' },
+      });
+      throw new AuthorizationError('analytics.view', 'Permission Denied: Analytics is strictly restricted to Business Owners.');
+    }
+    const defaultRange: ResolvedDateRange = dateRange || resolveDateRange('this_year');
+    return this.getAnalyticsOverview(defaultRange);
+  }
+
   public async getAnalyticsOverview(
     dateRange: ResolvedDateRange,
     forceFresh = false
   ): Promise<EnterpriseAnalyticsData> {
+    if (!hasCurrentUserPermission('analytics.view')) {
+      await auditLogService.logSecurityEvent({
+        action: 'UNAUTHORIZED_ANALYTICS_ATTEMPT',
+        result: 'DENIED',
+        details: { method: 'getAnalyticsOverview' },
+      });
+      throw new AuthorizationError('analytics.view', 'Permission Denied: Analytics is strictly restricted to Business Owners.');
+    }
+
     const wsId = await this.getWorkspaceId();
 
     // 1. Fetch Authoritative Dashboard Sales Metrics & Raw Invoices / Counter Sales (Read-Only)

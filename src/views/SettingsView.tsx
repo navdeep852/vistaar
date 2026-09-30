@@ -47,6 +47,8 @@ import { ImageCropModal } from '../components/ImageCropModal';
 import { getUserInitials } from '../lib/utils';
 import { PhoneInput } from '../components/PhoneInput';
 import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
+import { hasCurrentUserPermission } from '../lib/permissions';
+import { auditLogService } from '../services/supabase/auditLogService';
 
 const defaultBusinessSettings: BusinessSettings = {
   businessName: '',
@@ -135,6 +137,100 @@ export const SettingsView: React.FC = () => {
   }));
   const [activeSubTab, setActiveSubTab] = useState<SettingsSubTabId>('profile');
 
+  // RBAC Permission Check for Settings Subtabs
+  const isTabAllowed = (tabId: SettingsSubTabId): boolean => {
+    switch (tabId) {
+      case 'profile':
+        return true;
+      case 'info':
+        return hasCurrentUserPermission('business_info.view');
+      case 'branding':
+        return true; // Contains split permissions inside
+      case 'bank':
+        return hasCurrentUserPermission('settings.bank.edit');
+      case 'defaults':
+        return hasCurrentUserPermission('settings.defaults.edit');
+      case 'employees':
+        return hasCurrentUserPermission('employees.view');
+      case 'security':
+        return hasCurrentUserPermission('security.manage');
+      case 'terms':
+        return hasCurrentUserPermission('settings.terms.edit');
+      case 'preview':
+        return hasCurrentUserPermission('settings.preview.view');
+      default:
+        return false;
+    }
+  };
+
+  const visibleTabs = SETTINGS_TABS.filter((t) => isTabAllowed(t.id));
+
+  const handleSwitchSubTab = (tabId: SettingsSubTabId) => {
+    if (!isTabAllowed(tabId)) {
+      showToast(`Access Denied: Section '${tabId}' is restricted to Workspace Owners.`, 'error');
+      auditLogService.logSecurityEvent(
+        'UNAUTHORIZED_SETTINGS_ATTEMPT',
+        `Unauthorized attempt to open Settings tab '${tabId}'`,
+        'DENIED',
+        { attemptedTab: tabId }
+      );
+      setActiveSubTab('profile');
+      return;
+    }
+    setActiveSubTab(tabId);
+  };
+
+  // Guard active subtab if permission lost or attempted via direct state
+  useEffect(() => {
+    if (!isTabAllowed(activeSubTab)) {
+      showToast('Access Denied: That settings section is restricted to Workspace Owners.', 'error');
+      auditLogService.logSecurityEvent(
+        'UNAUTHORIZED_SETTINGS_ATTEMPT',
+        `Attempted access to restricted settings tab: ${activeSubTab}`,
+        'DENIED',
+        { attemptedTab: activeSubTab }
+      );
+      setActiveSubTab('profile');
+    }
+  }, [activeSubTab]);
+
+  // Self-Service Own Password State (Section 17 & 25)
+  const [ownCurrentPass, setOwnCurrentPass] = useState('');
+  const [ownNewPass, setOwnNewPass] = useState('');
+  const [ownConfirmNewPass, setOwnConfirmNewPass] = useState('');
+  const [ownPassChanging, setOwnPassChanging] = useState(false);
+
+  const handleOwnPasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ownCurrentPass) {
+      showToast('Please enter your current password.', 'error');
+      return;
+    }
+    if (ownNewPass !== ownConfirmNewPass) {
+      showToast('New passwords do not match.', 'error');
+      return;
+    }
+    const valRes = validatePassword(ownNewPass);
+    if (!valRes.isValid) {
+      showToast(valRes.errors[0] || 'Password does not meet security requirements.', 'error');
+      return;
+    }
+    setOwnPassChanging(true);
+    try {
+      const res = await auth.changeOwnPassword(ownCurrentPass, ownNewPass);
+      if (res.success) {
+        showToast('Your password was updated successfully!', 'success');
+        setOwnCurrentPass('');
+        setOwnNewPass('');
+        setOwnConfirmNewPass('');
+      } else {
+        showToast(res.error || 'Failed to change password.', 'error');
+      }
+    } finally {
+      setOwnPassChanging(false);
+    }
+  };
+
   // Horizontal Tab Navigation State & Refs
   const tabsContainerRef = useRef<HTMLDivElement | null>(null);
   const tabButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -214,25 +310,25 @@ export const SettingsView: React.FC = () => {
   const handleTabKeyDown = (e: React.KeyboardEvent, index: number) => {
     if (e.key === 'ArrowRight') {
       e.preventDefault();
-      const nextIndex = (index + 1) % SETTINGS_TABS.length;
-      const nextTab = SETTINGS_TABS[nextIndex].id;
-      setActiveSubTab(nextTab);
+      const nextIndex = (index + 1) % visibleTabs.length;
+      const nextTab = visibleTabs[nextIndex].id;
+      handleSwitchSubTab(nextTab);
       tabButtonRefs.current[nextTab]?.focus();
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
-      const prevIndex = (index - 1 + SETTINGS_TABS.length) % SETTINGS_TABS.length;
-      const prevTab = SETTINGS_TABS[prevIndex].id;
-      setActiveSubTab(prevTab);
+      const prevIndex = (index - 1 + visibleTabs.length) % visibleTabs.length;
+      const prevTab = visibleTabs[prevIndex].id;
+      handleSwitchSubTab(prevTab);
       tabButtonRefs.current[prevTab]?.focus();
     } else if (e.key === 'Home') {
       e.preventDefault();
-      const firstTab = SETTINGS_TABS[0].id;
-      setActiveSubTab(firstTab);
+      const firstTab = visibleTabs[0].id;
+      handleSwitchSubTab(firstTab);
       tabButtonRefs.current[firstTab]?.focus();
     } else if (e.key === 'End') {
       e.preventDefault();
-      const lastTab = SETTINGS_TABS[SETTINGS_TABS.length - 1].id;
-      setActiveSubTab(lastTab);
+      const lastTab = visibleTabs[visibleTabs.length - 1].id;
+      handleSwitchSubTab(lastTab);
       tabButtonRefs.current[lastTab]?.focus();
     }
   };
@@ -355,13 +451,42 @@ export const SettingsView: React.FC = () => {
       }
       return;
     }
-    const cleanFormData: BusinessSettings = {
+
+    const stored = store.getSettings();
+    let cleanFormData: BusinessSettings = {
       ...formData,
       businessName: (formData.businessName || formData.legalName || '').trim(),
       legalName: (formData.legalName || formData.businessName || '').trim(),
       phone: formData.phone ? normalizeIndianPhoneNumber(formData.phone) : '',
       alternatePhone: altPhone ? normalizeIndianPhoneNumber(altPhone) : '',
     };
+
+    // If user lacks business_info.edit permission, preserve company identity and branding
+    if (!hasCurrentUserPermission('business_info.edit')) {
+      cleanFormData = {
+        ...cleanFormData,
+        businessName: stored.businessName,
+        legalName: stored.legalName,
+        businessType: stored.businessType,
+        businessDescription: stored.businessDescription,
+        ownerName: stored.ownerName,
+        phone: stored.phone,
+        alternatePhone: stored.alternatePhone,
+        email: stored.email,
+        website: stored.website,
+        gstin: stored.gstin,
+        pan: stored.pan,
+        regNumber: stored.regNumber,
+        address: stored.address,
+        addressLine2: stored.addressLine2,
+        city: stored.city,
+        state: stored.state,
+        pincode: stored.pincode,
+        country: stored.country,
+        logoUrl: stored.logoUrl,
+        stampUrl: stored.stampUrl,
+      };
+    }
 
     const res = await businessSettingsService.updateSettings(cleanFormData);
     if (res.success) {
@@ -372,7 +497,7 @@ export const SettingsView: React.FC = () => {
         await loadSettings();
         store.updateSettings(cleanFormData);
       }
-      showToast('Business Profile & Document Branding saved successfully!', 'success');
+      showToast('Settings saved successfully!', 'success');
     } else {
       showToast(res.error || 'Failed to save settings.', 'error');
     }
@@ -385,6 +510,17 @@ export const SettingsView: React.FC = () => {
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if ((type === 'logo' || type === 'stamp') && !hasCurrentUserPermission('branding.logo.edit')) {
+      showToast('Access Denied: Logo and stamp modification requires Owner authorization.', 'error');
+      auditLogService.logSecurityEvent('UNAUTHORIZED_SETTINGS_ATTEMPT', 'Attempted company logo/stamp edit', 'DENIED');
+      return;
+    }
+    if (type === 'upiQr' && !hasCurrentUserPermission('settings.bank.edit')) {
+      showToast('Access Denied: Bank and UPI modifications require Owner authorization.', 'error');
+      auditLogService.logSecurityEvent('UNAUTHORIZED_SETTINGS_ATTEMPT', 'Attempted UPI QR edit', 'DENIED');
+      return;
+    }
 
     const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
     if (!validTypes.includes(file.type.toLowerCase())) {
@@ -422,6 +558,17 @@ export const SettingsView: React.FC = () => {
   };
 
   const handleRemoveAsset = (type: 'logo' | 'signature' | 'stamp' | 'upiQr') => {
+    if ((type === 'logo' || type === 'stamp') && !hasCurrentUserPermission('branding.logo.edit')) {
+      showToast('Access Denied: Logo and stamp modification requires Owner authorization.', 'error');
+      auditLogService.logSecurityEvent('UNAUTHORIZED_SETTINGS_ATTEMPT', 'Attempted company logo/stamp removal', 'DENIED');
+      return;
+    }
+    if (type === 'upiQr' && !hasCurrentUserPermission('settings.bank.edit')) {
+      showToast('Access Denied: Bank and UPI modifications require Owner authorization.', 'error');
+      auditLogService.logSecurityEvent('UNAUTHORIZED_SETTINGS_ATTEMPT', 'Attempted UPI QR removal', 'DENIED');
+      return;
+    }
+
     if (type === 'logo') setFormData((prev) => ({ ...prev, logoUrl: '' }));
     if (type === 'signature') setFormData((prev) => ({ ...prev, signatureUrl: '' }));
     if (type === 'stamp') setFormData((prev) => ({ ...prev, stampUrl: '' }));
@@ -572,6 +719,27 @@ export const SettingsView: React.FC = () => {
     }
   };
 
+  // Repair / Re-issue Credentials Handler (Owner-controlled recovery flow)
+  const [isRepairingEmp, setIsRepairingEmp] = useState<string | null>(null);
+  const handleRepairCredentials = async (emp: UserAccount) => {
+    setIsRepairingEmp(emp.employeeId);
+    try {
+      const res = await auth.repairEmployeeLogin(emp.employeeId);
+      if (res.success && res.empId && res.tempPass) {
+        setCreatedEmpCreds({
+          empId: res.empId,
+          tempPass: res.tempPass,
+          name: res.name || emp.name,
+        });
+        showToast(`Credentials re-issued & Auth account provisioned for ${res.empId}!`, 'success');
+      } else {
+        showToast(res.error || 'Failed to repair employee account.', 'error');
+      }
+    } finally {
+      setIsRepairingEmp(null);
+    }
+  };
+
   // Revoke Other Sessions Handler
   const handleRevokeOtherSessions = async () => {
     const res = await auth.revokeOtherSessions();
@@ -628,7 +796,7 @@ export const SettingsView: React.FC = () => {
           aria-label="Settings navigation tabs"
           className="settings-tabs-scroll flex items-center gap-2 pb-2 pt-0.5 px-0.5 border-b border-slate-200 dark:border-slate-800 w-full overflow-x-auto overflow-y-hidden"
         >
-          {SETTINGS_TABS.map((tab, idx) => {
+          {visibleTabs.map((tab, idx) => {
             const Icon = tab.icon;
             const isActive = activeSubTab === tab.id;
             return (
@@ -643,7 +811,7 @@ export const SettingsView: React.FC = () => {
                 aria-controls={`settings-tabpanel-${tab.id}`}
                 aria-selected={isActive}
                 tabIndex={isActive ? 0 : -1}
-                onClick={() => setActiveSubTab(tab.id)}
+                onClick={() => handleSwitchSubTab(tab.id)}
                 onKeyDown={(e) => handleTabKeyDown(e, idx)}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 flex-shrink-0 transition-colors border select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${
                   isActive
@@ -829,11 +997,70 @@ export const SettingsView: React.FC = () => {
                 </button>
               </div>
             </div>
+
+            {/* Change My Password (Self-Service - Section 17 & 25) */}
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card space-y-5 transition-colors">
+              <div className="border-b pb-3 border-slate-100 dark:border-slate-800">
+                <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                  <KeyRound className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  <span>Change My Password</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Update your individual account password securely. Requires verification of your current password.
+                </p>
+              </div>
+
+              <div className="space-y-4 max-w-md">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Current Password *
+                  </label>
+                  <PasswordInput
+                    value={ownCurrentPass}
+                    onChange={(e) => setOwnCurrentPass(e.target.value)}
+                    placeholder="Enter current password"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    New Password *
+                  </label>
+                  <PasswordInput
+                    value={ownNewPass}
+                    onChange={(e) => setOwnNewPass(e.target.value)}
+                    placeholder="Enter new strong password"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Confirm New Password *
+                  </label>
+                  <PasswordInput
+                    value={ownConfirmNewPass}
+                    onChange={(e) => setOwnConfirmNewPass(e.target.value)}
+                    placeholder="Re-type new password"
+                  />
+                </div>
+
+                {ownNewPass && <PasswordRequirementsWidget password={ownNewPass} />}
+
+                <button
+                  type="button"
+                  disabled={ownPassChanging || !ownCurrentPass || !ownNewPass || !ownConfirmNewPass}
+                  onClick={handleOwnPasswordChange}
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer transition-colors"
+                >
+                  {ownPassChanging ? 'Updating Password...' : 'Update My Password'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* 2. BUSINESS INFORMATION TAB */}
-        {activeSubTab === 'info' && (
+        {/* 2. BUSINESS INFORMATION TAB (OWNER ONLY - SECTION 13) */}
+        {activeSubTab === 'info' && isTabAllowed('info') && (
           <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card space-y-5 animate-fade-in transition-colors">
             <div className="border-b pb-3 border-slate-100 dark:border-slate-800 flex items-center justify-between">
               <div>
@@ -1055,7 +1282,12 @@ export const SettingsView: React.FC = () => {
                     Uploaded ONCE at workspace level. Automatically embedded in all new Quotations and Invoices.
                   </p>
                 </div>
-                {formData.logoUrl ? (
+                {!hasCurrentUserPermission('branding.logo.edit') ? (
+                  <span className="px-2.5 py-1 bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[10px] font-extrabold rounded-full flex items-center gap-1">
+                    <Lock className="w-3 h-3" />
+                    <span>Owner Controlled</span>
+                  </span>
+                ) : formData.logoUrl ? (
                   <span className="px-2.5 py-1 bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 text-[10px] font-extrabold rounded-full flex items-center gap-1">
                     <CheckCircle className="w-3.5 h-3.5" />
                     <span>Active Saved Logo</span>
@@ -1067,88 +1299,107 @@ export const SettingsView: React.FC = () => {
                 )}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
-                <div className="md:col-span-4 bg-slate-50 dark:bg-slate-950/60 p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center flex flex-col items-center justify-center min-h-[140px]">
+              {!hasCurrentUserPermission('branding.logo.edit') ? (
+                <div className="py-2">
                   {formData.logoUrl ? (
-                    <div className="space-y-3 w-full">
+                    <div className="flex items-center gap-4">
                       <img
                         src={formData.logoUrl}
                         alt="Company Logo"
-                        className="max-h-24 mx-auto object-contain"
-                        style={{ transform: `scale(${formData.logoScale || 1})` }}
+                        className="max-h-20 object-contain p-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
                       />
-                      <div className="flex justify-center gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
-                        <label className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-blue-700">
-                          <span>Replace</span>
-                          <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
-                            className="hidden"
-                            onChange={(e) => handleAssetUpload(e, 'logo')}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveAsset('logo')}
-                          className="px-3 py-1.5 bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/60 rounded-lg text-xs font-bold hover:bg-rose-100"
-                        >
-                          Remove
-                        </button>
-                      </div>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Active company logo is automatically displayed on your invoices and quotes.
+                      </p>
                     </div>
                   ) : (
-                    <label className="cursor-pointer space-y-2 py-4">
-                      <Upload className="w-8 h-8 text-blue-500 mx-auto" />
-                      <span className="block text-xs font-bold text-blue-600 dark:text-blue-400">Upload Company Logo</span>
-                      <span className="block text-[10px] text-slate-400 dark:text-slate-500">PNG, JPG, WEBP, SVG (&lt; 5MB)</span>
-                      <input
-                        type="file"
-                        accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
-                        className="hidden"
-                        onChange={(e) => handleAssetUpload(e, 'logo')}
-                      />
-                    </label>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 italic">No company logo uploaded by owner.</p>
                   )}
                 </div>
-
-                <div className="md:col-span-8 space-y-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Logo Placement / Alignment</label>
-                    <div className="flex gap-2">
-                      {['left', 'center', 'right'].map((align) => (
-                        <button
-                          key={align}
-                          type="button"
-                          onClick={() => setFormData({ ...formData, logoAlignment: align as any })}
-                          className={`flex-1 py-2 text-xs font-bold capitalize rounded-xl border transition-colors ${
-                            (formData.logoAlignment || 'left') === align
-                              ? 'bg-blue-600 text-white border-blue-600'
-                              : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
-                          }`}
-                        >
-                          {align}
-                        </button>
-                      ))}
-                    </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+                  <div className="md:col-span-4 bg-slate-50 dark:bg-slate-950/60 p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center flex flex-col items-center justify-center min-h-[140px]">
+                    {formData.logoUrl ? (
+                      <div className="space-y-3 w-full">
+                        <img
+                          src={formData.logoUrl}
+                          alt="Company Logo"
+                          className="max-h-24 mx-auto object-contain"
+                          style={{ transform: `scale(${formData.logoScale || 1})` }}
+                        />
+                        <div className="flex justify-center gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                          <label className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-blue-700">
+                            <span>Replace</span>
+                            <input
+                              type="file"
+                              accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+                              className="hidden"
+                              onChange={(e) => handleAssetUpload(e, 'logo')}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAsset('logo')}
+                            className="px-3 py-1.5 bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/60 rounded-lg text-xs font-bold hover:bg-rose-100"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <label className="cursor-pointer space-y-2 py-4">
+                        <Upload className="w-8 h-8 text-blue-500 mx-auto" />
+                        <span className="block text-xs font-bold text-blue-600 dark:text-blue-400">Upload Company Logo</span>
+                        <span className="block text-[10px] text-slate-400 dark:text-slate-500">PNG, JPG, WEBP, SVG (&lt; 5MB)</span>
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+                          className="hidden"
+                          onChange={(e) => handleAssetUpload(e, 'logo')}
+                        />
+                      </label>
+                    )}
                   </div>
 
-                  <div>
-                    <div className="flex justify-between text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      <span>Logo Scale Size</span>
-                      <span>{Math.round((formData.logoScale || 1) * 100)}%</span>
+                  <div className="md:col-span-8 space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Logo Placement / Alignment</label>
+                      <div className="flex gap-2">
+                        {['left', 'center', 'right'].map((align) => (
+                          <button
+                            key={align}
+                            type="button"
+                            onClick={() => setFormData({ ...formData, logoAlignment: align as any })}
+                            className={`flex-1 py-2 text-xs font-bold capitalize rounded-xl border transition-colors ${
+                              (formData.logoAlignment || 'left') === align
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
+                            }`}
+                          >
+                            {align}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <input
-                      type="range"
-                      min="0.5"
-                      max="1.5"
-                      step="0.05"
-                      value={formData.logoScale || 1}
-                      onChange={(e) => setFormData({ ...formData, logoScale: parseFloat(e.target.value) })}
-                      className="w-full"
-                    />
+
+                    <div>
+                      <div className="flex justify-between text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        <span>Logo Scale Size</span>
+                        <span>{Math.round((formData.logoScale || 1) * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.5"
+                        max="1.5"
+                        step="0.05"
+                        value={formData.logoScale || 1}
+                        onChange={(e) => setFormData({ ...formData, logoScale: parseFloat(e.target.value) })}
+                        className="w-full"
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
 
             {/* B. AUTHORIZED SIGNATURE */}
@@ -1157,7 +1408,7 @@ export const SettingsView: React.FC = () => {
                 <div>
                   <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">Authorized Signature</h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Uploaded ONCE at workspace level. Renders above Authorized Signatory line.
+                    Your personal signature. Embedded above Authorized Signatory on invoices and quotations.
                   </p>
                 </div>
                 {formData.signatureUrl ? (
@@ -1245,7 +1496,12 @@ export const SettingsView: React.FC = () => {
                     Uploaded ONCE at workspace level. Embedded next to signatory on official documents.
                   </p>
                 </div>
-                {formData.stampUrl ? (
+                {!hasCurrentUserPermission('branding.logo.edit') ? (
+                  <span className="px-2.5 py-1 bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[10px] font-extrabold rounded-full flex items-center gap-1">
+                    <Lock className="w-3 h-3" />
+                    <span>Owner Controlled</span>
+                  </span>
+                ) : formData.stampUrl ? (
                   <span className="px-2.5 py-1 bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 text-[10px] font-extrabold rounded-full flex items-center gap-1">
                     <CheckCircle className="w-3.5 h-3.5" />
                     <span>Active Saved Stamp</span>
@@ -1257,74 +1513,93 @@ export const SettingsView: React.FC = () => {
                 )}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
-                <div className="md:col-span-4 bg-slate-50 dark:bg-slate-950/60 p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center flex flex-col items-center justify-center min-h-[140px]">
+              {!hasCurrentUserPermission('branding.logo.edit') ? (
+                <div className="py-2">
                   {formData.stampUrl ? (
-                    <div className="space-y-3 w-full">
+                    <div className="flex items-center gap-4">
                       <img
                         src={formData.stampUrl}
                         alt="Official Stamp"
-                        className="max-h-20 mx-auto object-contain"
-                        style={{ transform: `scale(${formData.stampScale || 1})` }}
+                        className="max-h-20 object-contain p-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
                       />
-                      <div className="flex justify-center gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
-                        <label className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-blue-700">
-                          <span>Replace</span>
-                          <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
-                            className="hidden"
-                            onChange={(e) => handleAssetUpload(e, 'stamp')}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveAsset('stamp')}
-                          className="px-3 py-1.5 bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/60 rounded-lg text-xs font-bold hover:bg-rose-100"
-                        >
-                          Remove
-                        </button>
-                      </div>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Active official business seal is embedded on invoices.
+                      </p>
                     </div>
                   ) : (
-                    <label className="cursor-pointer space-y-2 py-4">
-                      <Upload className="w-8 h-8 text-blue-500 mx-auto" />
-                      <span className="block text-xs font-bold text-blue-600 dark:text-blue-400">Upload Seal / Stamp Image</span>
-                      <span className="block text-[10px] text-slate-400 dark:text-slate-500">PNG / JPG (&lt; 5MB)</span>
-                      <input
-                        type="file"
-                        accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
-                        className="hidden"
-                        onChange={(e) => handleAssetUpload(e, 'stamp')}
-                      />
-                    </label>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 italic">No official seal uploaded by owner.</p>
                   )}
                 </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+                  <div className="md:col-span-4 bg-slate-50 dark:bg-slate-950/60 p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center flex flex-col items-center justify-center min-h-[140px]">
+                    {formData.stampUrl ? (
+                      <div className="space-y-3 w-full">
+                        <img
+                          src={formData.stampUrl}
+                          alt="Official Stamp"
+                          className="max-h-20 mx-auto object-contain"
+                          style={{ transform: `scale(${formData.stampScale || 1})` }}
+                        />
+                        <div className="flex justify-center gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                          <label className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-blue-700">
+                            <span>Replace</span>
+                            <input
+                              type="file"
+                              accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+                              className="hidden"
+                              onChange={(e) => handleAssetUpload(e, 'stamp')}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAsset('stamp')}
+                            className="px-3 py-1.5 bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/60 rounded-lg text-xs font-bold hover:bg-rose-100"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <label className="cursor-pointer space-y-2 py-4">
+                        <Upload className="w-8 h-8 text-blue-500 mx-auto" />
+                        <span className="block text-xs font-bold text-blue-600 dark:text-blue-400">Upload Seal / Stamp Image</span>
+                        <span className="block text-[10px] text-slate-400 dark:text-slate-500">PNG / JPG (&lt; 5MB)</span>
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+                          className="hidden"
+                          onChange={(e) => handleAssetUpload(e, 'stamp')}
+                        />
+                      </label>
+                    )}
+                  </div>
 
-                <div className="md:col-span-8 space-y-4">
-                  <div>
-                    <div className="flex justify-between text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      <span>Stamp Scale Size</span>
-                      <span>{Math.round((formData.stampScale || 1) * 100)}%</span>
+                  <div className="md:col-span-8 space-y-4">
+                    <div>
+                      <div className="flex justify-between text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        <span>Stamp Scale Size</span>
+                        <span>{Math.round((formData.stampScale || 1) * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.5"
+                        max="1.5"
+                        step="0.05"
+                        value={formData.stampScale || 1}
+                        onChange={(e) => setFormData({ ...formData, stampScale: parseFloat(e.target.value) })}
+                        className="w-full"
+                      />
                     </div>
-                    <input
-                      type="range"
-                      min="0.5"
-                      max="1.5"
-                      step="0.05"
-                      value={formData.stampScale || 1}
-                      onChange={(e) => setFormData({ ...formData, stampScale: parseFloat(e.target.value) })}
-                      className="w-full"
-                    />
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         )}
 
         {/* 3. BANK DETAILS TAB */}
-        {activeSubTab === 'bank' && (
+        {activeSubTab === 'bank' && isTabAllowed('bank') && (
           <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card space-y-5 animate-fade-in transition-colors">
             <div className="border-b pb-3 border-slate-100 dark:border-slate-800 flex items-center justify-between">
               <div>
@@ -1535,7 +1810,7 @@ export const SettingsView: React.FC = () => {
         )}
 
         {/* 4. DOCUMENT DEFAULTS TAB */}
-        {activeSubTab === 'defaults' && (
+        {activeSubTab === 'defaults' && isTabAllowed('defaults') && (
           <div className="space-y-6 animate-fade-in">
             {/* Visual Theme Selection Card */}
             <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card space-y-4 transition-colors">
@@ -1672,8 +1947,8 @@ export const SettingsView: React.FC = () => {
         </div>
         )}
 
-        {/* 5. EMPLOYEES & TEAM MANAGEMENT TAB */}
-        {activeSubTab === 'employees' && (
+        {/* 5. EMPLOYEES & TEAM MANAGEMENT TAB (OWNER ONLY - SECTION 15) */}
+        {activeSubTab === 'employees' && isTabAllowed('employees') && (
           <div className="space-y-5 animate-fade-in pb-4">
             <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 transition-colors">
               <div>
@@ -1765,17 +2040,28 @@ export const SettingsView: React.FC = () => {
                         </td>
                         <td className="p-3.5 text-center">
                           {emp.role !== 'owner' ? (
-                            <button
-                              type="button"
-                              onClick={() => handleToggleStatus(emp)}
-                              className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-colors ${
-                                emp.status === 'Active'
-                                  ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 hover:bg-rose-100 border border-rose-200 dark:border-rose-900/60'
-                                  : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-900/60'
-                              }`}
-                            >
-                              {emp.status === 'Active' ? 'Suspend' : 'Reactivate'}
-                            </button>
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleStatus(emp)}
+                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer ${
+                                  emp.status === 'Active'
+                                    ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 hover:bg-rose-100 border border-rose-200 dark:border-rose-900/60'
+                                    : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-900/60'
+                                }`}
+                              >
+                                {emp.status === 'Active' ? 'Suspend' : 'Reactivate'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isRepairingEmp === emp.employeeId}
+                                onClick={() => handleRepairCredentials(emp)}
+                                className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 hover:bg-amber-100 border border-amber-200 dark:border-amber-900/60 transition-colors cursor-pointer disabled:opacity-50"
+                                title="Re-issue temporary password and ensure Supabase Auth user is provisioned"
+                              >
+                                {isRepairingEmp === emp.employeeId ? 'Repairing...' : 'Reset Login'}
+                              </button>
+                            </div>
                           ) : (
                             <span className="text-[10px] text-slate-400 font-medium italic">Owner Access</span>
                           )}
@@ -1789,8 +2075,8 @@ export const SettingsView: React.FC = () => {
           </div>
         )}
 
-        {/* 6. SECURITY & PASSWORD MANAGEMENT TAB */}
-        {activeSubTab === 'security' && (
+        {/* 6. SECURITY & PASSWORD MANAGEMENT TAB (OWNER ONLY - SECTION 17) */}
+        {activeSubTab === 'security' && isTabAllowed('security') && (
           <div className="space-y-6 animate-fade-in pb-4">
             {/* Change Password Card */}
             <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card space-y-5 transition-colors">
@@ -1943,7 +2229,7 @@ export const SettingsView: React.FC = () => {
         )}
 
         {/* 7. DEFAULT TERMS & CONDITIONS TAB */}
-        {activeSubTab === 'terms' && (
+        {activeSubTab === 'terms' && isTabAllowed('terms') && (
           <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card space-y-5 animate-fade-in transition-colors">
             <div className="border-b pb-3 border-slate-100 dark:border-slate-800 flex items-center justify-between">
               <div>
@@ -1992,7 +2278,7 @@ export const SettingsView: React.FC = () => {
         )}
 
         {/* 6. LIVE DOCUMENT SAMPLE PREVIEW TAB */}
-        {activeSubTab === 'preview' && (
+        {activeSubTab === 'preview' && isTabAllowed('preview') && (
           <div className="space-y-4 animate-fade-in">
             <div className="bg-slate-900 dark:bg-slate-950 text-white p-4 rounded-2xl flex items-center justify-between shadow-md border border-slate-800">
               <span className="text-xs font-bold flex items-center gap-2">
@@ -2227,14 +2513,14 @@ export const SettingsView: React.FC = () => {
         <Modal
           isOpen={!!createdEmpCreds}
           onClose={() => setCreatedEmpCreds(null)}
-          title="🎉 Employee Created & Credentials Issued"
+          title="🎉 Employee Account Provisioned & Credentials Issued"
           maxWidth="md"
         >
           <div className="space-y-4 text-xs">
             <div className="p-4 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-900/60 rounded-xl text-emerald-900 dark:text-emerald-200 space-y-1">
               <span className="font-extrabold text-sm block">Account Ready for {createdEmpCreds.name}</span>
-              <p className="text-xs">
-                Provide the credentials below to the employee. They will log in using their Employee ID and this temporary password, then set their permanent password.
+              <p className="text-xs leading-relaxed">
+                These credentials have been successfully created for this employee. They must use the Employee ID and temporary password for their first login. They will be required to create a permanent password.
               </p>
             </div>
 

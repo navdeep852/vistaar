@@ -93,9 +93,9 @@ interface LoginViewProps {
 export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
   const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'forgot' | 'reset'>('signin');
 
-  // Sign In State
-  const [identifier, setIdentifier] = useState('admin@vistaar.com');
-  const [loginPassword, setLoginPassword] = useState('Vistaar@2026Secure');
+  // Sign In State - No plaintext demo passwords in production (Section 28)
+  const [identifier, setIdentifier] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -970,26 +970,28 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
             </div>
           )}
 
-          {/* Quick Demo Access Bar */}
-          <div className="mt-6 pt-6 border-t border-slate-200 dark:border-slate-800 text-center">
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">Quick Demo Access:</p>
-            <div className="flex justify-center gap-2">
-              <button
-                type="button"
-                onClick={() => handleQuickDemoLogin('owner')}
-                className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[11px] text-slate-700 dark:text-slate-300 font-medium transition-colors cursor-pointer"
-              >
-                Owner Demo (admin@vistaar.com)
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickDemoLogin('staff')}
-                className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[11px] text-slate-700 dark:text-slate-300 font-medium transition-colors cursor-pointer"
-              >
-                Employee Demo (VST-00002)
-              </button>
+          {/* Quick Demo Access Bar (Isolated strictly to Development - Section 28) */}
+          {import.meta.env.DEV && (
+            <div className="mt-6 pt-6 border-t border-slate-200 dark:border-slate-800 text-center">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">Quick Demo Access (Dev Only):</p>
+              <div className="flex justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleQuickDemoLogin('owner')}
+                  className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[11px] text-slate-700 dark:text-slate-300 font-medium transition-colors cursor-pointer"
+                >
+                  Owner Demo (admin@vistaar.com)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickDemoLogin('staff')}
+                  className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[11px] text-slate-700 dark:text-slate-300 font-medium transition-colors cursor-pointer"
+                >
+                  Employee Demo (VST-00002)
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <p className="mt-8 text-center text-xs text-slate-500 dark:text-slate-400 flex items-center justify-center gap-1.5">

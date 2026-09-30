@@ -38,6 +38,7 @@ import logoIcon from '../assets/Vistaar_Icon_logo.png';
 import { ThemeToggle } from './ThemeToggle';
 import { UserAvatar } from './UserAvatar';
 import { useTheme } from '../context/ThemeContext';
+import { hasCurrentUserPermission } from '../lib/permissions';
 
 interface MobileNavProps {
   activeTab: string;
@@ -70,7 +71,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
     { id: 'more', label: 'More', icon: MoreHorizontal },
   ];
 
-  const allDrawerItems = [
+  const rawDrawerItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'follow-ups', label: 'Follow-ups', icon: CalendarCheck },
@@ -93,11 +94,18 @@ export const MobileNav: React.FC<MobileNavProps> = ({
     { id: 'daybook', label: 'Daybook Journal', icon: BookOpen },
     { id: 'cashbook', label: 'Cashbook', icon: Wallet },
 
-
     { id: 'feedback', label: 'Customer Feedback', icon: Star },
     { id: 'offers', label: 'Offers', icon: Tag },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
+
+  const allDrawerItems = rawDrawerItems.filter((item) => {
+    if (item.id === 'analytics') return hasCurrentUserPermission('analytics.view');
+    if (item.id === 'profit-loss' || item.id === 'financial-statements') {
+      return hasCurrentUserPermission('financial_statements.view');
+    }
+    return true;
+  });
 
   const handleTabClick = (tabId: string) => {
     if (tabId === 'more') {
@@ -152,8 +160,12 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           <div className="flex items-center gap-3 min-w-0">
             <UserAvatar name={user?.name} avatarUrl={user?.avatarUrl} size="md" />
             <div className="min-w-0">
-              <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">{user?.name || 'Owner'}</p>
-              <p className="text-[10px] text-blue-600 dark:text-blue-400 font-mono font-semibold truncate">{user?.employeeId || 'VST-00001'}</p>
+              <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">{user?.name || 'Workspace User'}</p>
+              <p className="text-[10px] text-blue-600 dark:text-blue-400 font-mono font-semibold truncate flex items-center gap-1">
+                <span>{user?.employeeId || 'VST-00001'}</span>
+                <span>•</span>
+                <span className="capitalize">{user?.role || 'Owner'}</span>
+              </p>
             </div>
           </div>
           <button
