@@ -1714,7 +1714,7 @@ export class SupabaseAuthService {
       if (!isHeadless) {
         return {
           success: false,
-          error: lastServerError || 'Failed to repair employee Supabase Auth account. Ensure migration 048 has been executed.',
+          error: lastServerError || 'Failed to repair employee Supabase Auth account. Ensure migration 049 has been executed in Supabase SQL editor.',
         };
       }
     }
@@ -2253,7 +2253,7 @@ export class SupabaseAuthService {
           success: false,
           error:
             lastServerError ||
-            'Failed to provision Supabase Auth account. Please ensure migration 048 has been executed or the create-employee Edge function is deployed.',
+            'Failed to provision Supabase Auth account. Please ensure migration 049 has been executed in Supabase SQL editor or the create-employee Edge function is deployed.',
         };
       }
     }

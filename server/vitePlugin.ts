@@ -243,6 +243,7 @@ export function followUpSchedulerPlugin(): Plugin {
                       password: tempPass,
                       email_confirm: true,
                       user_metadata: {
+                        account_type: 'employee',
                         workspace_id: targetWorkspaceId,
                         name: profData.name,
                         phone: profData.phone || '',
@@ -362,6 +363,7 @@ export function followUpSchedulerPlugin(): Plugin {
                   password: tempPassword,
                   email_confirm: true,
                   user_metadata: {
+                    account_type: 'employee',
                     workspace_id: targetWorkspaceId,
                     name: name.trim(),
                     phone: cleanPhone,

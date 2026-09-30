@@ -210,6 +210,7 @@ serve(async (req: Request) => {
           password: repairPassword,
           user_metadata: {
             ...existingAuthUser.user_metadata,
+            account_type: 'employee',
             workspace_id: ownerWorkspaceId,
             employee_id: targetProfile.employee_id,
             role: 'employee',
@@ -229,6 +230,7 @@ serve(async (req: Request) => {
           password: repairPassword,
           email_confirm: true,
           user_metadata: {
+            account_type: 'employee',
             workspace_id: ownerWorkspaceId,
             name: targetProfile.name,
             phone: targetProfile.phone || '',
@@ -365,6 +367,7 @@ serve(async (req: Request) => {
       password: temporaryPassword,
       email_confirm: true,
       user_metadata: {
+        account_type: 'employee',
         workspace_id: ownerWorkspaceId,
         name: name.trim(),
         phone: cleanPhone,
