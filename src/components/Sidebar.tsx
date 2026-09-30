@@ -214,7 +214,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="min-w-0 flex-1">
             <p className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">{user?.businessName || 'Main Workspace'}</p>
             <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1 font-mono">
-              <span>{user?.employeeId || 'VST-00001'}</span>
+              <span>{user?.employeeId || 'VST-EMP-001'}</span>
               <span>•</span>
               <span className="capitalize">{user?.role || 'Owner'}</span>
             </p>

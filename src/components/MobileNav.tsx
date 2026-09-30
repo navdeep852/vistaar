@@ -162,7 +162,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
             <div className="min-w-0">
               <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">{user?.name || 'Workspace User'}</p>
               <p className="text-[10px] text-blue-600 dark:text-blue-400 font-mono font-semibold truncate flex items-center gap-1">
-                <span>{user?.employeeId || 'VST-00001'}</span>
+                <span>{user?.employeeId || 'VST-EMP-001'}</span>
                 <span>•</span>
                 <span className="capitalize">{user?.role || 'Owner'}</span>
               </p>

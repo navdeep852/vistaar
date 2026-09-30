@@ -403,7 +403,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
       setIdentifier('admin@vistaar.com');
       setLoginPassword('Vistaar@2026Secure');
     } else {
-      setIdentifier('VST-00002');
+      setIdentifier('VST-EMP-002');
       setLoginPassword('Staff@2026Secure');
     }
     setAuthMode('signin');
@@ -505,11 +505,11 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value)}
                     className="block w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold"
-                    placeholder="admin@company.com or VST-00001"
+                    placeholder="admin@company.com or VST-EMP-001"
                   />
                 </div>
                 <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 block">
-                  Log in using your email address or assigned Employee ID (e.g. VST-00002)
+                  Log in using your email address or assigned Employee ID (e.g. VST-EMP-004)
                 </span>
               </div>
 
@@ -987,7 +987,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                   onClick={() => handleQuickDemoLogin('staff')}
                   className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[11px] text-slate-700 dark:text-slate-300 font-medium transition-colors cursor-pointer"
                 >
-                  Employee Demo (VST-00002)
+                  Employee Demo (VST-EMP-002)
                 </button>
               </div>
             </div>

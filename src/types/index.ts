@@ -17,7 +17,7 @@ export interface CompanyWorkspace {
 export interface UserAccount {
   id: string; // e.g. usr-1001
   companyId: string;
-  employeeId: string; // e.g. VST-EMP-001 or VST-00001
+  employeeId: string; // e.g. VST-EMP-001 or VST-EMP-004
   name: string;
   email: string;
   phone: string;

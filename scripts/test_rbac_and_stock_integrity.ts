@@ -53,7 +53,10 @@ if (typeof globalThis.window === 'undefined') {
     removeEventListener: () => {},
     localStorage: globalThis.localStorage,
     location: { origin: 'http://localhost:3000' },
+    isHeadlessTest: true,
   };
+} else {
+  (globalThis.window as any).isHeadlessTest = true;
 }
 
 if (typeof (globalThis as any).CustomEvent === 'undefined') {

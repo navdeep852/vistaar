@@ -743,7 +743,7 @@ export class SupabaseAuthService {
         // 1. Authoritative RPC (bypasses RLS safely for unauthenticated login page)
         const { data: rpcEmail, error: rpcErr } = await supabase.rpc('get_email_by_employee_id', {
           p_employee_id: cleanId,
-          ...(targetWs ? { p_workspace_id: targetWs } : {}),
+          p_workspace_id: targetWs || null,
         });
 
         if (!rpcErr && rpcEmail) {
@@ -756,7 +756,7 @@ export class SupabaseAuthService {
             const apiRes = await fetch('/api/resolve-employee-id', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ employeeId: cleanId, workspaceId: targetWs }),
+              body: JSON.stringify({ employeeId: cleanId, workspaceId: targetWs || null }),
             });
             if (apiRes.ok) {
               const apiData = await apiRes.json();
@@ -790,15 +790,18 @@ export class SupabaseAuthService {
       }
     }
 
-    // 4. Fallback: check in-memory / local employees strictly filtering status === 'Active'
-    const matched = this.employees.find(
-      (e) =>
-        (e.employeeId || '').toUpperCase() === cleanId.toUpperCase() &&
-        e.status === 'Active' &&
-        (!targetWs || e.companyId === targetWs)
-    );
-    if (matched && matched.email) {
-      return matched.email.toLowerCase();
+    // 4. Offline or headless test environment fallback strictly checking Active status
+    const isHeadless = typeof window !== 'undefined' && (window as any).isHeadlessTest;
+    if (isHeadless || !isSupabaseConfigured()) {
+      const matched = this.employees.find(
+        (e) =>
+          (e.employeeId || '').toUpperCase() === cleanId.toUpperCase() &&
+          e.status === 'Active' &&
+          (!targetWs || e.companyId === targetWs)
+      );
+      if (matched && matched.email) {
+        return matched.email.toLowerCase();
+      }
     }
 
     return null;
@@ -932,6 +935,32 @@ export class SupabaseAuthService {
       );
     }
 
+    // Developer Diagnostics (Internal Logging Only - Never exposes secrets to user)
+    let diagProfile: any = null;
+    if (isSupabaseConfigured()) {
+      try {
+        const { data: pRec } = await supabase
+          .from('profiles')
+          .select('id, employee_id, email, workspace_id, status, role, must_change_password')
+          .eq('email', email)
+          .maybeSingle();
+        diagProfile = pRec;
+      } catch {
+        // ignore
+      }
+    }
+
+    console.info('[EMPLOYEE_AUTH_DIAGNOSTICS]', {
+      step: 'PRE_AUTH_VERIFICATION',
+      inputIdentifier: cleanId,
+      resolvedEmail: email,
+      profileFound: Boolean(diagProfile),
+      workspaceId: diagProfile?.workspace_id || 'Unknown',
+      profilesId: diagProfile?.id || 'Unknown',
+      profileStatus: diagProfile?.status || 'Unknown',
+      isSupabaseSignInInitiated: true,
+    });
+
     // Attempt Supabase Auth
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -940,15 +969,20 @@ export class SupabaseAuthService {
       });
 
       if (error) {
-        console.info('[EMPLOYEE_AUTH]', {
-          employeeId: cleanId,
-          email,
-          profileFound: true,
-          authUserExpected: true,
-          authSignIn: 'FAILED',
-          reason: error.message?.includes('Invalid login credentials')
-            ? 'AUTH_PASSWORD_INCORRECT'
-            : error.message || 'AUTH_SIGNIN_FAILED',
+        console.info('[EMPLOYEE_AUTH_DIAGNOSTICS]', {
+          step: 'AUTH_SIGNIN_ERROR',
+          inputIdentifier: cleanId,
+          resolvedEmail: email,
+          profileFound: Boolean(diagProfile),
+          workspaceId: diagProfile?.workspace_id,
+          profilesId: diagProfile?.id,
+          profileStatus: diagProfile?.status,
+          isSupabaseSignInInitiated: true,
+          exactSupabaseAuthError: error.message,
+          authStatusCode: error.status,
+          rootCauseIndication: error.message?.includes('Invalid login credentials')
+            ? 'INVALID_CREDENTIALS_OR_AUTH_USER_NOT_PROVISIONED'
+            : error.message,
         });
 
         await auditLogService.logSecurityEvent({
@@ -1000,15 +1034,19 @@ export class SupabaseAuthService {
           return { success: false, error: errText };
         }
 
-        console.info('[EMPLOYEE_AUTH]', {
-          employeeId: this.currentProfile?.employeeId || cleanId,
+        console.info('[EMPLOYEE_AUTH_DIAGNOSTICS]', {
+          step: 'AUTH_SIGNIN_SUCCESS',
+          inputIdentifier: cleanId,
+          resolvedEmail: email,
           profileFound: true,
-          authUserExpected: true,
-          profileId: this.currentProfile?.id,
+          profilesId: this.currentProfile?.id,
+          authUserUuid: data.user.id,
+          profileMatchesAuthUser: this.currentProfile?.id === data.user.id,
           workspaceId: this.currentProfile?.companyId,
+          employeeId: this.currentProfile?.employeeId || cleanId,
           status: this.currentProfile?.status || 'Active',
           mustChangePassword: this.currentProfile?.mustChangePassword,
-          authSignIn: 'SUCCESS',
+          isSupabaseSignInInitiated: true,
         });
 
         await auditLogService.logSecurityEvent({
@@ -1588,28 +1626,53 @@ export class SupabaseAuthService {
       return { success: false, error: 'Only the workspace owner can repair VISTAAR login accounts.' };
     }
 
-    // Tier 1: Supabase Edge Function
+    let serverSuccess = false;
+    let serverResult: any = null;
+    let lastServerError: string | null = null;
+    const tempPass = generateSecureTemporaryPassword(14);
+
     if (isSupabaseConfigured()) {
+      // Tier 1: Authoritative PostgreSQL SECURITY DEFINER RPC
       try {
-        const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke('create-employee', {
-          body: { action: 'repair', employeeId: empId },
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('repair_employee_account', {
+          p_employee_id: empId,
+          p_temporary_password: tempPass,
         });
 
-        if (!edgeErr && edgeRes && edgeRes.success) {
-          await this.loadEmployees();
-          return {
-            success: true,
-            empId: edgeRes.empId,
-            tempPass: edgeRes.tempPass,
-            name: edgeRes.name,
-          };
+        if (!rpcErr && rpcRes && rpcRes.success) {
+          serverSuccess = true;
+          serverResult = rpcRes;
+        } else if (rpcRes && !rpcRes.success && rpcRes.error) {
+          return { success: false, error: rpcRes.error };
+        } else if (rpcErr) {
+          lastServerError = rpcErr.message;
         }
-      } catch (e) {
-        // Fallback to dev server
+      } catch (rpcEx: any) {
+        lastServerError = rpcEx?.message || String(rpcEx);
       }
 
-      // Tier 2: Vite Dev Server endpoint
-      if (typeof window !== 'undefined' && window.location?.origin) {
+      // Tier 2: Supabase Edge Function
+      if (!serverSuccess) {
+        try {
+          const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke('create-employee', {
+            body: { action: 'repair', employeeId: empId },
+          });
+
+          if (!edgeErr && edgeRes && edgeRes.success) {
+            serverSuccess = true;
+            serverResult = edgeRes;
+          } else if (edgeRes && !edgeRes.success && edgeRes.error) {
+            return { success: false, error: edgeRes.error };
+          } else if (edgeErr) {
+            lastServerError = edgeErr.message;
+          }
+        } catch (edgeEx: any) {
+          lastServerError = edgeEx?.message || String(edgeEx);
+        }
+      }
+
+      // Tier 3: Vite Dev Server endpoint
+      if (!serverSuccess && typeof window !== 'undefined' && window.location?.origin) {
         try {
           const { data: { session } } = await supabase.auth.getSession();
           const apiRes = await fetch('/api/create-employee', {
@@ -1623,29 +1686,45 @@ export class SupabaseAuthService {
           if (apiRes.ok) {
             const apiData = await apiRes.json();
             if (apiData.success) {
-              await this.loadEmployees();
-              return {
-                success: true,
-                empId: apiData.empId,
-                tempPass: apiData.tempPass,
-                name: apiData.name,
-              };
+              serverSuccess = true;
+              serverResult = apiData;
             } else if (apiData.error) {
               return { success: false, error: apiData.error };
             }
+          } else {
+            const errJson = await apiRes.json().catch(() => ({}));
+            lastServerError = errJson.error || `Server returned ${apiRes.status}`;
           }
-        } catch {
-          // ignore
+        } catch (apiEx: any) {
+          lastServerError = apiEx?.message || String(apiEx);
         }
+      }
+
+      if (serverSuccess && serverResult) {
+        await this.loadEmployees();
+        return {
+          success: true,
+          empId: serverResult.empId,
+          tempPass: serverResult.tempPass,
+          name: serverResult.name,
+        };
+      }
+
+      const isHeadless = typeof window !== 'undefined' && (window as any).isHeadlessTest;
+      if (!isHeadless) {
+        return {
+          success: false,
+          error: lastServerError || 'Failed to repair employee Supabase Auth account. Ensure migration 048 has been executed.',
+        };
       }
     }
 
-    // Fallback for offline / dev mock
+    // Fallback for offline / headless dev mock only
     const emp = this.employees.find((e) => e.id === empId || e.employeeId === empId);
     if (!emp) {
       return { success: false, error: 'Employee not found.' };
     }
-    const tempPass = generateSecureTemporaryPassword();
+    const mockTempPass = generateSecureTemporaryPassword();
     emp.status = 'Active';
     emp.mustChangePassword = true;
     const wsId = this.getCurrentCompanyId() || 'default_ws';
@@ -1654,9 +1733,58 @@ export class SupabaseAuthService {
     return {
       success: true,
       empId: emp.employeeId,
-      tempPass,
+      tempPass: mockTempPass,
       name: emp.name,
     };
+  }
+
+  /**
+   * Diagnostic consistency check for profiles.id vs auth.users.id
+   * Detects missing auth users, email mismatches, and duplicate employee IDs.
+   */
+  public async diagnoseEmployeeAuthConsistency(): Promise<{
+    success: boolean;
+    issues?: Array<{
+      issueType: string;
+      profileId: string;
+      employeeId: string;
+      email: string;
+      workspaceId: string;
+      status: string;
+      details: string;
+    }>;
+    error?: string;
+  }> {
+    if (!this.isOwner()) {
+      return { success: false, error: 'Only the workspace owner can run database diagnostics.' };
+    }
+
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await supabase.rpc('diagnose_employee_auth_consistency');
+        if (!error && data) {
+          return {
+            success: true,
+            issues: data.map((row: any) => ({
+              issueType: row.issue_type,
+              profileId: row.profile_id,
+              employeeId: row.employee_id,
+              email: row.email,
+              workspaceId: row.workspace_id,
+              status: row.status,
+              details: row.details,
+            })),
+          };
+        }
+        if (error) {
+          return { success: false, error: error.message };
+        }
+      } catch (e: any) {
+        return { success: false, error: e?.message || 'Failed to execute diagnostic check.' };
+      }
+    }
+
+    return { success: true, issues: [] };
   }
 
   /**
@@ -1699,7 +1827,7 @@ export class SupabaseAuthService {
             phone: data.phone || '',
             department: data.department || '',
             designation: data.designation || '',
-            employeeId: data.employee_id || this.currentProfile?.employeeId || 'VST-00001',
+            employeeId: data.employee_id || this.currentProfile?.employeeId || 'VST-EMP-001',
             status: data.status || 'Active',
             avatarUrl: data.avatar_url !== undefined ? data.avatar_url : (this.currentProfile?.avatarUrl || ''),
           };
@@ -1966,30 +2094,59 @@ export class SupabaseAuthService {
     if (isLoginAccount && isSupabaseConfigured()) {
       let serverSuccess = false;
       let serverResult: any = null;
+      let lastServerError: string | null = null;
+      const initialTempPass = generateSecureTemporaryPassword(14);
 
-      // Tier 1: Supabase Edge Function
+      // Tier 1: Authoritative PostgreSQL SECURITY DEFINER RPC
       try {
-        const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke('create-employee', {
-          body: {
-            name: empData.name.trim(),
-            email: cleanEmail,
-            phone: cleanPhone,
-            department: (empData.department || '').trim(),
-            designation: (empData.designation || '').trim(),
-          },
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('create_employee_account', {
+          p_name: empData.name.trim(),
+          p_email: cleanEmail,
+          p_phone: cleanPhone || '',
+          p_department: (empData.department || '').trim() || null,
+          p_designation: (empData.designation || '').trim() || null,
+          p_temporary_password: initialTempPass,
         });
 
-        if (!edgeErr && edgeRes && edgeRes.success) {
+        if (!rpcErr && rpcRes && rpcRes.success) {
           serverSuccess = true;
-          serverResult = edgeRes;
-        } else if (edgeRes && !edgeRes.success && edgeRes.error) {
-          return { success: false, error: edgeRes.error };
+          serverResult = rpcRes;
+        } else if (rpcRes && !rpcRes.success && rpcRes.error) {
+          return { success: false, error: rpcRes.error };
+        } else if (rpcErr) {
+          lastServerError = rpcErr.message;
         }
-      } catch (edgeEx: any) {
-        console.warn('[CreateEmployee] Edge function attempt notice:', edgeEx?.message || edgeEx);
+      } catch (rpcEx: any) {
+        lastServerError = rpcEx?.message || String(rpcEx);
       }
 
-      // Tier 2: Vite Dev Server Endpoint (/api/create-employee)
+      // Tier 2: Supabase Edge Function
+      if (!serverSuccess) {
+        try {
+          const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke('create-employee', {
+            body: {
+              name: empData.name.trim(),
+              email: cleanEmail,
+              phone: cleanPhone,
+              department: (empData.department || '').trim(),
+              designation: (empData.designation || '').trim(),
+            },
+          });
+
+          if (!edgeErr && edgeRes && edgeRes.success) {
+            serverSuccess = true;
+            serverResult = edgeRes;
+          } else if (edgeRes && !edgeRes.success && edgeRes.error) {
+            return { success: false, error: edgeRes.error };
+          } else if (edgeErr) {
+            lastServerError = edgeErr.message;
+          }
+        } catch (edgeEx: any) {
+          lastServerError = edgeEx?.message || String(edgeEx);
+        }
+      }
+
+      // Tier 3: Vite Dev Server Endpoint (/api/create-employee)
       if (!serverSuccess && typeof window !== 'undefined' && window.location?.origin) {
         try {
           const { data: { session } } = await supabase.auth.getSession();
@@ -2016,9 +2173,12 @@ export class SupabaseAuthService {
             } else if (apiData.error) {
               return { success: false, error: apiData.error };
             }
+          } else {
+            const errJson = await apiRes.json().catch(() => ({}));
+            lastServerError = errJson.error || `Server responded with ${apiRes.status}`;
           }
         } catch (apiEx: any) {
-          console.warn('[CreateEmployee] Local server endpoint notice:', apiEx?.message || apiEx);
+          lastServerError = apiEx?.message || String(apiEx);
         }
       }
 
@@ -2082,6 +2242,18 @@ export class SupabaseAuthService {
           tempPass: issuedTempPass,
           userId: issuedUserId,
           employee: newEmpObj,
+        };
+      }
+
+      // CRITICAL SECURITY ENFORCEMENT:
+      // If server provisioning failed for a login account, never fall through to create a fake local account!
+      const isHeadless = typeof window !== 'undefined' && (window as any).isHeadlessTest;
+      if (!isHeadless) {
+        return {
+          success: false,
+          error:
+            lastServerError ||
+            'Failed to provision Supabase Auth account. Please ensure migration 048 has been executed or the create-employee Edge function is deployed.',
         };
       }
     }

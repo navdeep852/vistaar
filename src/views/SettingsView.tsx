@@ -860,7 +860,7 @@ export const SettingsView: React.FC = () => {
                 </div>
 
                 <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300">
-                  {currentUser?.employeeId || 'VST-00001'}
+                  {currentUser?.employeeId || 'VST-EMP-001'}
                 </span>
               </div>
 
@@ -2405,7 +2405,7 @@ export const SettingsView: React.FC = () => {
           <div className="p-3 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900/60 text-blue-900 dark:text-blue-200 rounded-xl space-y-1">
             <span className="font-bold block">Automatic Employee ID & Credentials</span>
             <p className="text-[11px]">
-              VISTAAR will automatically assign a unique Employee ID (e.g. VST-00027) and generate a secure temporary password. The employee will be forced to set their permanent password on first login.
+              VISTAAR will automatically assign a unique Employee ID (e.g. VST-EMP-004) and generate a secure temporary password. The employee will be forced to set their permanent password on first login.
             </p>
           </div>
 
