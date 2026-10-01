@@ -750,7 +750,7 @@ export class SupabaseAuthService {
           return String(rpcEmail).toLowerCase();
         }
 
-        // 2. Dev server endpoint fallback (/api/resolve-employee-id)
+        // 2. Server endpoint fallback (/api/resolve-employee-id)
         if (typeof window !== 'undefined' && window.location?.origin) {
           try {
             const apiRes = await fetch('/api/resolve-employee-id', {
@@ -759,9 +759,12 @@ export class SupabaseAuthService {
               body: JSON.stringify({ employeeId: cleanId, workspaceId: targetWs || null }),
             });
             if (apiRes.ok) {
-              const apiData = await apiRes.json();
-              if (apiData.found && apiData.email && apiData.status === 'Active') {
-                return apiData.email.toLowerCase();
+              const contentType = apiRes.headers.get('content-type') || '';
+              if (contentType.includes('application/json')) {
+                const apiData = await apiRes.json();
+                if (apiData.found && apiData.email && apiData.status === 'Active') {
+                  return apiData.email.toLowerCase();
+                }
               }
             }
           } catch {
@@ -2166,12 +2169,17 @@ export class SupabaseAuthService {
           });
 
           if (apiRes.ok) {
-            const apiData = await apiRes.json();
-            if (apiData.success) {
-              serverSuccess = true;
-              serverResult = apiData;
-            } else if (apiData.error) {
-              return { success: false, error: apiData.error };
+            const contentType = apiRes.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+              const apiData = await apiRes.json();
+              if (apiData.success) {
+                serverSuccess = true;
+                serverResult = apiData;
+              } else if (apiData.error) {
+                return { success: false, error: apiData.error };
+              }
+            } else {
+              lastServerError = 'Server endpoint returned HTML instead of JSON. Ensure vercel.json rewrites do not intercept /api/ routes.';
             }
           } else {
             const errJson = await apiRes.json().catch(() => ({}));
@@ -2186,6 +2194,13 @@ export class SupabaseAuthService {
         const issuedEmpId = serverResult.empId;
         const issuedTempPass = serverResult.tempPass;
         const issuedUserId = serverResult.user?.id || serverResult.userId;
+
+        if (!issuedUserId || !isValidUuid(issuedUserId)) {
+          return {
+            success: false,
+            error: 'Employee provisioning failed: Supabase Auth did not return a valid user ID.',
+          };
+        }
 
         const newEmpObj: UserAccount = {
           id: issuedUserId,
