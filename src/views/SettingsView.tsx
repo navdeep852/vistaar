@@ -679,6 +679,11 @@ export const SettingsView: React.FC = () => {
     });
 
     if (res.success && res.empId && res.tempPass) {
+      if (res.employee) {
+        setEmployees((prev) => [...prev.filter((e) => e.id !== res.employee!.id), res.employee!]);
+      } else {
+        auth.loadEmployees().then(setEmployees).catch(() => {});
+      }
       setCreatedEmpCreds({
         empId: res.empId,
         tempPass: res.tempPass,
@@ -713,6 +718,9 @@ export const SettingsView: React.FC = () => {
     const nextStatus: EmployeeStatus = emp.status === 'Active' ? 'Suspended' : 'Active';
     const res = await auth.updateEmployeeStatus(emp.id, nextStatus);
     if (res.success) {
+      setEmployees((prev) =>
+        prev.map((e) => (e.id === emp.id ? { ...e, status: nextStatus } : e))
+      );
       showToast(`Employee ${emp.employeeId} status updated to ${nextStatus}.`, 'info');
     } else {
       showToast(res.error || 'Failed to update employee status.', 'error');

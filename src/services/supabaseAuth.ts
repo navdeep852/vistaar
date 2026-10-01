@@ -1898,8 +1898,8 @@ export class SupabaseAuthService {
           department: p.department || '',
           designation: p.designation || '',
           employeeId: p.employee_id || `VST-${p.id.slice(0, 5)}`,
-          status: (p.employment_status || p.status || 'Active') as any,
-          joiningDate: p.joining_date || undefined,
+          status: (p.status || 'Active') as any,
+          joiningDate: p.joining_date || (p.created_at ? p.created_at.split('T')[0] : undefined),
           employmentType: p.employment_type || 'Full Time',
           dateOfBirth: p.date_of_birth || undefined,
           gender: p.gender || undefined,
@@ -2117,6 +2117,12 @@ export class SupabaseAuthService {
         } else if (rpcRes && !rpcRes.success && rpcRes.error) {
           return { success: false, error: rpcRes.error };
         } else if (rpcErr) {
+          console.error('[CreateEmployee] RPC create_employee_account returned error:', {
+            code: rpcErr.code,
+            message: rpcErr.message,
+            details: rpcErr.details,
+            hint: rpcErr.hint,
+          });
           lastServerError = rpcErr.message;
         }
       } catch (rpcEx: any) {
@@ -2268,7 +2274,7 @@ export class SupabaseAuthService {
           success: false,
           error:
             lastServerError ||
-            'Failed to provision Supabase Auth account. Please ensure migration 049 has been executed in Supabase SQL editor or the create-employee Edge function is deployed.',
+            'Failed to provision Supabase Auth account. Please ensure migration 051 has been executed in Supabase SQL editor or the create-employee Edge function is deployed.',
         };
       }
     }
@@ -2278,7 +2284,9 @@ export class SupabaseAuthService {
       assignedEmpId = await this.generateNextEmployeeId(workspaceId);
     }
     const secureTempPass = generateSecureTemporaryPassword();
-    const fallbackId = empData.id || (crypto.randomUUID ? crypto.randomUUID() : `emp-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`);
+    const fallbackId = (empData.id && isValidUuid(empData.id))
+      ? empData.id
+      : (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : '00000000-0000-4000-8000-' + Math.random().toString(16).substring(2, 14).padEnd(12, '0'));
     const assignedRole = (empData.role && ['employee', 'manager', 'admin', 'staff'].includes(empData.role) && callerIsOwner)
       ? empData.role
       : 'employee';
@@ -2429,19 +2437,20 @@ export class SupabaseAuthService {
         if (updates.designation !== undefined) payload.designation = updates.designation;
         if (updates.status !== undefined) {
           payload.status = updates.status;
-          payload.employment_status = updates.status;
         }
-        if (updates.joiningDate !== undefined) payload.joining_date = updates.joiningDate;
-        if (updates.employmentType !== undefined) payload.employment_type = updates.employmentType;
-        if (updates.dateOfBirth !== undefined) payload.date_of_birth = updates.dateOfBirth;
-        if (updates.gender !== undefined) payload.gender = updates.gender;
-        if (updates.address !== undefined) payload.address = updates.address;
         if (updates.isArchived !== undefined) {
           payload.is_archived = updates.isArchived;
-          if (updates.isArchived) payload.archived_at = new Date().toISOString();
+          payload.archived_at = updates.isArchived ? new Date().toISOString() : null;
         }
 
-        await supabase.from('profiles').update(payload).eq('id', this.employees[idx].id);
+        const targetId = this.employees[idx].id;
+        const targetEmpId = this.employees[idx].employeeId;
+
+        if (isValidUuid(targetId)) {
+          await supabase.from('profiles').update(payload).eq('id', targetId);
+        } else if (targetEmpId) {
+          await supabase.from('profiles').update(payload).eq('employee_id', targetEmpId);
+        }
       } catch (err: any) {
         console.warn('Error updating profile in Supabase:', err);
       }
@@ -2500,9 +2509,13 @@ export class SupabaseAuthService {
       const localKey = `vistaar_local_employees_db_${workspaceId}`;
       safeStorageSet(localKey, JSON.stringify(this.employees));
 
-      if (isSupabaseConfigured() && isValidUuid(realId)) {
+      if (isSupabaseConfigured()) {
         try {
-          await supabase.from('profiles').delete().eq('id', realId);
+          if (isValidUuid(realId)) {
+            await supabase.from('profiles').delete().eq('id', realId);
+          } else if (empId) {
+            await supabase.from('profiles').delete().eq('employee_id', empId);
+          }
         } catch (e) {
           console.warn('Error deleting profile:', e);
         }

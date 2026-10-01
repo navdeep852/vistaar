@@ -136,9 +136,11 @@ export function categorizeSupabaseError(error: any): CategorizedError {
     msg.includes('column') ||
     msg.includes('does not exist')
   ) {
+    const isDev = typeof window !== 'undefined' && ((window as any).__DEV__ || (import.meta as any).env?.DEV);
+    const devHint = isDev && (details || msg) ? ` [${code}: ${details || msg}]` : ` (${code || 'PGRST'})`;
     return {
       category: 'DATABASE_SCHEMA_ERROR',
-      userMessage: `Database Schema Error: Query failed on database table/column structure (${code || 'PGRST'}).`,
+      userMessage: `Database Schema Error: Query failed on database table/column structure${devHint}.`,
       technicalDetails: tech,
     };
   }

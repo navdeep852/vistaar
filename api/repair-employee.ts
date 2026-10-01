@@ -40,6 +40,11 @@ function generateSecureTempPass(length = 14): string {
     : generateSecureTempPass(length);
 }
 
+function isValidUuid(id?: string | null): boolean {
+  if (!id || typeof id !== 'string') return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -89,12 +94,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(403).json({ success: false, error: 'Only the workspace owner can repair employee accounts.' });
     }
 
-    const { data: prof } = await supabaseAdmin
+    let profQuery = supabaseAdmin
       .from('profiles')
       .select('*')
-      .eq('workspace_id', callerProf.workspace_id)
-      .or(`employee_id.eq.${employeeId},id.eq.${employeeId}`)
-      .single();
+      .eq('workspace_id', callerProf.workspace_id);
+
+    if (isValidUuid(employeeId)) {
+      profQuery = profQuery.or(`employee_id.eq.${employeeId},id.eq.${employeeId}`);
+    } else {
+      profQuery = profQuery.eq('employee_id', employeeId);
+    }
+
+    const { data: prof } = await profQuery.single();
 
     if (!prof) {
       return res.status(404).json({ success: false, error: 'Employee profile not found in your workspace.' });
