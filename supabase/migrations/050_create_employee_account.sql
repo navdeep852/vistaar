@@ -25,7 +25,9 @@ BEGIN;
 -- 1. Ensure pgcrypto extension is installed
 CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
 
--- 2. Enforce unique employee_id per workspace
+-- 2. Enforce unique employee_id per workspace and ensure is_archived column exists
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT FALSE;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_workspace_employee_id 
 ON public.profiles (workspace_id, employee_id) 
 WHERE employee_id IS NOT NULL;
@@ -102,7 +104,6 @@ BEGIN
     FROM public.profiles
     WHERE UPPER(TRIM(employee_id)) = v_clean_id
       AND status = 'Active'
-      AND (is_archived IS NOT TRUE)
       AND (p_workspace_id IS NULL OR workspace_id = p_workspace_id)
     LIMIT 1;
 
