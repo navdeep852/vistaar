@@ -9,6 +9,7 @@ import { registerCurrentUserResolver, hasPermission } from '../lib/permissions';
 import { auditLogService } from './supabase/auditLogService';
 
 const SESSION_STORAGE_KEY = 'vistaar_user_session';
+const REGISTERED_USERS_KEY = 'vistaar_local_users_db';
 
 const getLocalStorage = (): Storage | null => {
   if (typeof window !== 'undefined' && window.localStorage) {
@@ -724,91 +725,150 @@ export class SupabaseAuthService {
   }
 
   /**
-   * Secure Employee ID to Email Resolution
-   * Strictly enforces Active account status and tenant safety.
+   * Secure Employee ID -> Email Resolution
+   *
+   * Employee IDs must be resolvable BEFORE authentication.
+   * Therefore do NOT depend on an RLS-protected profiles query from
+   * the unauthenticated browser client.
+   *
+   * Resolution order:
+   * 1. Email input -> use directly
+   * 2. Static demo IDs
+   * 3. Server-side /api/resolve-employee-id
+   * 4. RPC fallback
+   * 5. Local legacy database fallback
    */
-  public async resolveEmailFromIdentifier(identifier: string, explicitWorkspaceId?: string): Promise<string | null> {
-    const cleanId = (identifier || '').trim();
-    if (!cleanId) return null;
+  public async resolveEmailFromIdentifier(identifier: string): Promise<string | null> {
+    const cleanId = identifier.trim();
 
+    if (!cleanId) {
+      return null;
+    }
+
+    // ------------------------------------------------------------
+    // 1. Normal email login
+    // ------------------------------------------------------------
     if (validateEmailFormat(cleanId)) {
       return cleanId.toLowerCase();
     }
 
-    const targetWs = explicitWorkspaceId || this.getCurrentCompanyId() || undefined;
+    const normalizedId = cleanId.toUpperCase();
 
-    // Query public.profiles for employee_id match if Supabase configured
+    // ------------------------------------------------------------
+    // 2. Legacy/demo mappings
+    // ------------------------------------------------------------
+    if (normalizedId === 'VST-00001') return 'admin@vistaar.com';
+    if (normalizedId === 'VST-00002') return 'priya@vistaar.com';
+
+    // ------------------------------------------------------------
+    // 3. AUTHORITATIVE SERVER-SIDE EMPLOYEE ID RESOLUTION
+    // ------------------------------------------------------------
     if (isSupabaseConfigured()) {
       try {
-        // 1. Authoritative RPC (bypasses RLS safely for unauthenticated login page)
-        const { data: rpcEmail, error: rpcErr } = await supabase.rpc('get_email_by_employee_id', {
-          p_employee_id: cleanId,
-          p_workspace_id: targetWs || null,
+        const response = await fetch('/api/resolve-employee-id', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            employeeId: cleanId,
+          }),
         });
 
-        if (!rpcErr && rpcEmail) {
-          return String(rpcEmail).toLowerCase();
-        }
+        if (response.ok) {
+          const result = await response.json();
 
-        // 2. Server endpoint fallback (/api/resolve-employee-id)
-        if (typeof window !== 'undefined' && window.location?.origin) {
-          try {
-            const apiRes = await fetch('/api/resolve-employee-id', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ employeeId: cleanId, workspaceId: targetWs || null }),
-            });
-            if (apiRes.ok) {
-              const contentType = apiRes.headers.get('content-type') || '';
-              if (contentType.includes('application/json')) {
-                const apiData = await apiRes.json();
-                if (apiData.found && apiData.email && apiData.status === 'Active') {
-                  return apiData.email.toLowerCase();
-                }
-              }
-            }
-          } catch {
-            // ignore
+          if (result?.found && result?.email) {
+            console.log(
+              '[EMPLOYEE_ID_RESOLUTION] Resolved employee ID:',
+              cleanId,
+              '->',
+              result.email
+            );
+
+            return String(result.email).trim().toLowerCase();
           }
         }
 
-        // 3. Direct select fallback: strictly status = 'Active'
-        let q = supabase
-          .from('profiles')
-          .select('email, status')
-          .ilike('employee_id', cleanId)
-          .eq('status', 'Active');
-
-        if (targetWs && isValidUuid(targetWs)) {
-          q = q.eq('workspace_id', targetWs);
-        }
-
-        const { data } = await q.maybeSingle();
-
-        if (data && data.email && data.status === 'Active') {
-          return data.email.toLowerCase();
-        }
-      } catch (e) {
-        console.warn('Employee ID lookup via Supabase notice:', e);
+        console.warn(
+          '[EMPLOYEE_ID_RESOLUTION] API did not resolve employee ID:',
+          cleanId,
+          response.status
+        );
+      } catch (error) {
+        console.warn(
+          '[EMPLOYEE_ID_RESOLUTION] Server API lookup failed:',
+          error
+        );
       }
     }
 
-    // 4. Offline or headless test environment fallback strictly checking Active status
-    const isHeadless = typeof window !== 'undefined' && (window as any).isHeadlessTest;
-    if (isHeadless || !isSupabaseConfigured()) {
-      const matched = this.employees.find(
-        (e) =>
-          (e.employeeId || '').toUpperCase() === cleanId.toUpperCase() &&
-          e.status === 'Active' &&
-          (!targetWs || e.companyId === targetWs)
-      );
-      if (matched && matched.email) {
-        return matched.email.toLowerCase();
+    // ------------------------------------------------------------
+    // 4. Direct SECURITY DEFINER RPC fallback
+    // ------------------------------------------------------------
+    if (isSupabaseConfigured()) {
+      try {
+        const { data: rpcEmail, error: rpcError } = await supabase.rpc(
+          'get_email_by_employee_id',
+          {
+            p_employee_id: cleanId,
+            p_workspace_id: null,
+          }
+        );
+
+        if (!rpcError && rpcEmail) {
+          console.log(
+            '[EMPLOYEE_ID_RESOLUTION] RPC resolved employee ID:',
+            cleanId,
+            '->',
+            rpcEmail
+          );
+
+          return String(rpcEmail).trim().toLowerCase();
+        }
+
+        if (rpcError) {
+          console.warn(
+            '[EMPLOYEE_ID_RESOLUTION] RPC lookup failed:',
+            rpcError
+          );
+        }
+      } catch (error) {
+        console.warn(
+          '[EMPLOYEE_ID_RESOLUTION] RPC exception:',
+          error
+        );
       }
+    }
+
+    // ------------------------------------------------------------
+    // 5. Legacy localStorage fallback
+    // ------------------------------------------------------------
+    try {
+      const localDbStr = safeStorageGet(REGISTERED_USERS_KEY);
+
+      if (localDbStr) {
+        const localDb: any[] = JSON.parse(localDbStr);
+
+        const match = localDb.find(
+          (u) =>
+            u.employeeId?.toUpperCase() === normalizedId
+        );
+
+        if (match?.email) {
+          return match.email.trim().toLowerCase();
+        }
+      }
+    } catch (error) {
+      console.warn(
+        '[EMPLOYEE_ID_RESOLUTION] Local fallback failed:',
+        error
+      );
     }
 
     return null;
   }
+
 
   /**
    * Login with Email or Employee ID via Supabase Auth
