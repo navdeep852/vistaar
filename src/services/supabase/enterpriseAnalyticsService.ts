@@ -22,6 +22,19 @@ export interface AnalyticsKPIs {
   profitMarginPercent: number;
 }
 
+export interface DashboardKPIs {
+  totalSales: number;
+  invoiceSales: number;
+  counterSales: number;
+  collections: number;
+  cashCollections: number;
+  upiCollections: number;
+  grossProfit: number;
+  profitMarginPercent: number;
+  outstandingUdhari: number;
+  overdueUdhari: number;
+}
+
 export interface TrendDataPoint {
   label: string;
   fullDate?: string;
@@ -171,29 +184,142 @@ export class EnterpriseAnalyticsService {
     return this.getAnalyticsOverview(defaultRange);
   }
 
-  public async getAnalyticsOverview(
+  /**
+   * Dedicated Dashboard KPI pipeline
+   * Authorized strictly for users with 'dashboard.view' permission.
+   * Does NOT require 'analytics.view' (which is restricted to Business Owners).
+   */
+  public async getDashboardKpis(
     dateRange: ResolvedDateRange,
     forceFresh = false
-  ): Promise<EnterpriseAnalyticsData> {
-    if (!hasCurrentUserPermission('analytics.view')) {
+  ): Promise<DashboardKPIs> {
+    if (!hasCurrentUserPermission('dashboard.view')) {
       await auditLogService.logSecurityEvent({
-        action: 'UNAUTHORIZED_ANALYTICS_ATTEMPT',
+        action: 'UNAUTHORIZED_DASHBOARD_ATTEMPT',
         result: 'DENIED',
-        details: { method: 'getAnalyticsOverview' },
+        details: { method: 'getDashboardKpis' },
       });
-      throw new AuthorizationError('analytics.view', 'Permission Denied: Analytics is strictly restricted to Business Owners.');
+      throw new AuthorizationError('dashboard.view', 'Permission Denied: Dashboard is restricted.');
     }
 
     const wsId = await this.getWorkspaceId();
 
-    // 1. Fetch Authoritative Dashboard Sales Metrics & Raw Invoices / Counter Sales (Read-Only)
-    const [salesMetricsRes, udhariMetricsRes, quotationsRes] = await Promise.all([
+    const [salesMetricsRes, udhariMetricsRes, raw] = await Promise.all([
       salesAnalyticsService.getSalesMetrics(dateRange, forceFresh, wsId),
       udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId),
-      quotationService.getQuotations(),
+      this.fetchRawTransactionsForPeriod(wsId, dateRange),
     ]);
 
-    // Fetch Invoices with Items, Counter Sales with Items, Payments, Products, and Expenses (Strictly Read-Only)
+    const { totalCollections, cashCollections, upiCollections } = this.computeCollections(
+      raw.payments,
+      raw.counterSales
+    );
+
+    const periodFinancials = financialStatementService.computePeriodFinancials(dateRange, {
+      invoices: raw.invoices,
+      counterSales: raw.counterSales,
+      expenses: raw.expensesList,
+      products: raw.productsList,
+    });
+
+    return {
+      totalSales: salesMetricsRes.totalSales,
+      invoiceSales: salesMetricsRes.invoiceSales,
+      counterSales: salesMetricsRes.counterSales,
+      collections: totalCollections,
+      cashCollections,
+      upiCollections,
+      grossProfit: periodFinancials.grossProfit.grossProfit,
+      profitMarginPercent: periodFinancials.grossProfit.grossMarginPercent,
+      outstandingUdhari: udhariMetricsRes.outstanding,
+      overdueUdhari: udhariMetricsRes.overdue,
+    };
+  }
+
+  /**
+   * Helper to compute cash, UPI, and total collections from payments and counter sales.
+   */
+  public computeCollections(
+    payments: any[],
+    counterSales: any[]
+  ): {
+    totalCollections: number;
+    cashCollections: number;
+    upiCollections: number;
+  } {
+    let cashCollectionsVal = 0;
+    let upiCollectionsVal = 0;
+
+    // 1. Process customer/invoice/udhari payments received in this period
+    payments.forEach((p) => {
+      const totalAmt = Number(p.amount || 0);
+      if (totalAmt <= 0) return;
+
+      const splitCash = Number(p.cash_amount ?? p.cashAmount ?? 0);
+      const splitUpi = Number(p.upi_amount ?? p.upiAmount ?? 0);
+
+      if (splitCash > 0 || splitUpi > 0) {
+        cashCollectionsVal += splitCash;
+        upiCollectionsVal += splitUpi;
+      } else {
+        const method = String(p.payment_method || p.method || '').toLowerCase();
+        if (method.includes('cash')) {
+          cashCollectionsVal += totalAmt;
+        } else {
+          upiCollectionsVal += totalAmt;
+        }
+      }
+    });
+
+    // 2. Process counter sales in this period
+    counterSales.forEach((cs) => {
+      const method = String(cs.payment_method ?? cs.paymentMethod ?? '').toLowerCase();
+      if (method.includes('credit') || method.includes('udhari')) {
+        return;
+      }
+
+      const rec = Number(cs.amount_received ?? cs.amountReceived ?? cs.final_total ?? cs.finalTotal ?? 0);
+      if (rec <= 0) return;
+
+      const splitCash = Number(cs.cash_amount ?? cs.cashAmount ?? 0);
+      const splitUpi = Number(cs.upi_amount ?? cs.upiAmount ?? 0);
+
+      if (splitCash > 0 || splitUpi > 0) {
+        cashCollectionsVal += splitCash;
+        upiCollectionsVal += splitUpi;
+      } else {
+        if (method.includes('cash')) {
+          cashCollectionsVal += rec;
+        } else {
+          upiCollectionsVal += rec;
+        }
+      }
+    });
+
+    const roundedCash = Math.round(cashCollectionsVal);
+    const roundedUpi = Math.round(upiCollectionsVal);
+    const totalCollections = roundedCash + roundedUpi;
+
+    return {
+      totalCollections,
+      cashCollections: roundedCash,
+      upiCollections: roundedUpi,
+    };
+  }
+
+  /**
+   * Helper to fetch raw invoices, counter sales, payments, products, and expenses for a period.
+   */
+  public async fetchRawTransactionsForPeriod(
+    wsId: string,
+    dateRange: ResolvedDateRange
+  ): Promise<{
+    invoices: any[];
+    counterSales: any[];
+    payments: any[];
+    productsList: any[];
+    expensesList: any[];
+  }> {
     let invoices: any[] = [];
     let counterSales: any[] = [];
     let payments: any[] = [];
@@ -290,6 +416,40 @@ export class EnterpriseAnalyticsService {
         return d >= dateRange.startDateStr && d <= dateRange.endDateStr;
       });
     }
+
+    return {
+      invoices,
+      counterSales,
+      payments,
+      productsList,
+      expensesList,
+    };
+  }
+
+  public async getAnalyticsOverview(
+    dateRange: ResolvedDateRange,
+    forceFresh = false
+  ): Promise<EnterpriseAnalyticsData> {
+    if (!hasCurrentUserPermission('analytics.view')) {
+      await auditLogService.logSecurityEvent({
+        action: 'UNAUTHORIZED_ANALYTICS_ATTEMPT',
+        result: 'DENIED',
+        details: { method: 'getAnalyticsOverview' },
+      });
+      throw new AuthorizationError('analytics.view', 'Permission Denied: Analytics is strictly restricted to Business Owners.');
+    }
+
+    const wsId = await this.getWorkspaceId();
+
+    // 1. Fetch Authoritative Dashboard Sales Metrics & Raw Invoices / Counter Sales (Read-Only)
+    const [salesMetricsRes, udhariMetricsRes, quotationsRes, raw] = await Promise.all([
+      salesAnalyticsService.getSalesMetrics(dateRange, forceFresh, wsId),
+      udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId),
+      quotationService.getQuotations(),
+      this.fetchRawTransactionsForPeriod(wsId, dateRange),
+    ]);
+
+    const { invoices, counterSales, payments, productsList, expensesList } = raw;
 
     // De-duplication: Track seen counter sales invoice numbers
     const seenCounterInvoiceNumbers = new Set<string>();
@@ -858,64 +1018,10 @@ export class EnterpriseAnalyticsService {
     // -------------------------------------------------------------
     // SUMMARY KPIS (Strictly Consistent with Dashboard & Ledgers)
     // -------------------------------------------------------------
-    // Collections = Payments received in period + completed counter sale cash/upi
-    let cashCollectionsVal = 0;
-    let upiCollectionsVal = 0;
-
-    // 1. Process customer/invoice/udhari payments received in this period
-    payments.forEach((p) => {
-      const totalAmt = Number(p.amount || 0);
-      if (totalAmt <= 0) return;
-
-      // Handle split payment if present on the record
-      const splitCash = Number(p.cash_amount ?? p.cashAmount ?? 0);
-      const splitUpi = Number(p.upi_amount ?? p.upiAmount ?? 0);
-
-      if (splitCash > 0 || splitUpi > 0) {
-        cashCollectionsVal += splitCash;
-        upiCollectionsVal += splitUpi;
-      } else {
-        const method = String(p.payment_method || p.method || '').toLowerCase();
-        if (method.includes('cash')) {
-          cashCollectionsVal += totalAmt;
-        } else {
-          // UPI, Bank Transfer, Card, etc. attributed to UPI/Digital
-          upiCollectionsVal += totalAmt;
-        }
-      }
-    });
-
-    // 2. Process counter sales in this period
-    counterSales.forEach((cs) => {
-      const method = String(cs.payment_method ?? cs.paymentMethod ?? '').toLowerCase();
-      if (method.includes('credit') || method.includes('udhari')) {
-        // Credit counter sale: no cash/upi collected upfront.
-        // If cleared later, payment is recorded in `payments` on clearance date.
-        return;
-      }
-
-      const rec = Number(cs.amount_received ?? cs.amountReceived ?? cs.final_total ?? cs.finalTotal ?? 0);
-      if (rec <= 0) return;
-
-      // Handle split payment if present on counter sale
-      const splitCash = Number(cs.cash_amount ?? cs.cashAmount ?? 0);
-      const splitUpi = Number(cs.upi_amount ?? cs.upiAmount ?? 0);
-
-      if (splitCash > 0 || splitUpi > 0) {
-        cashCollectionsVal += splitCash;
-        upiCollectionsVal += splitUpi;
-      } else {
-        if (method.includes('cash')) {
-          cashCollectionsVal += rec;
-        } else {
-          upiCollectionsVal += rec;
-        }
-      }
-    });
-
-    const roundedCash = Math.round(cashCollectionsVal);
-    const roundedUpi = Math.round(upiCollectionsVal);
-    const totalCollections = roundedCash + roundedUpi;
+    const { totalCollections, cashCollections: roundedCash, upiCollections: roundedUpi } = this.computeCollections(
+      payments,
+      counterSales
+    );
 
     const kpis: AnalyticsKPIs = {
       totalSales: salesMetricsRes.totalSales,

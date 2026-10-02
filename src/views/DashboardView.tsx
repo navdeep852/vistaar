@@ -22,9 +22,11 @@ import {
 import {
   enterpriseAnalyticsService,
   EnterpriseAnalyticsData,
+  DashboardKPIs,
 } from '../services/supabase/enterpriseAnalyticsService';
 import { supabaseAuthService } from '../services/supabaseAuth';
 import { isValidUuid } from '../lib/supabaseError';
+import { hasCurrentUserPermission } from '../lib/permissions';
 import {
   DatePresetType,
   ResolvedDateRange,
@@ -143,6 +145,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     activeCount: 0,
   });
 
+  const [dashboardKpis, setDashboardKpis] = useState<DashboardKPIs | null>(null);
   const [analyticsData, setAnalyticsData] = useState<EnterpriseAnalyticsData | null>(null);
 
   // Authoritative Data Fetching Pipeline (Guarded against re-entrant fetches)
@@ -166,12 +169,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       // 2. Outstanding Udhari
       const udhariPromise = udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId);
 
-      // 3. Enterprise Analytics Overview (kpis & signals - strictly read-only)
-      const analyticsPromise = enterpriseAnalyticsService.getAnalyticsOverview(dateRange, forceFresh);
+      // 3. Dedicated Dashboard KPIs (strictly authorized by 'dashboard.view')
+      const kpisPromise = enterpriseAnalyticsService.getDashboardKpis(dateRange, forceFresh);
 
-      const [smRes, umRes, anRes] = await Promise.all([
+      // 4. Executive Analytics (strictly restricted to Business Owners with 'analytics.view')
+      const isOwner = hasCurrentUserPermission('analytics.view');
+      const analyticsPromise = isOwner
+        ? enterpriseAnalyticsService.getAnalyticsOverview(dateRange, forceFresh).catch((e) => {
+            console.warn('[DashboardView] Executive summary notice:', e);
+            return null;
+          })
+        : Promise.resolve(null);
+
+      const [smRes, umRes, kpisRes, anRes] = await Promise.all([
         salesPromise,
         udhariPromise,
+        kpisPromise,
         analyticsPromise,
       ]);
 
@@ -179,6 +192,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       setSalesMetrics(smRes);
       setUdhariMetrics(umRes);
+      setDashboardKpis(kpisRes);
       setAnalyticsData(anRes);
 
       // 4. Invoices & Follow-ups from Store
@@ -265,7 +279,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         {/* KPI 1: Total Sales */}
         <KpiCard
           title="Total Sales"
-          value={formatInr(salesMetrics.totalSales)}
+          value={formatInr(dashboardKpis?.totalSales ?? salesMetrics.totalSales)}
           color={PBI_PALETTE[0]}
           icon={<DollarSign className="w-4 h-4" />}
           deltaPercent={12.4}
@@ -274,10 +288,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           footer={
             <div className="flex justify-between items-center text-[11px]">
               <span>
-                Inv: <strong className="text-slate-800 dark:text-slate-200">{formatInr(salesMetrics.invoiceSales)}</strong>
+                Inv: <strong className="text-slate-800 dark:text-slate-200">{formatInr(dashboardKpis?.invoiceSales ?? salesMetrics.invoiceSales)}</strong>
               </span>
               <span>
-                POS: <strong className="text-slate-800 dark:text-slate-200">{formatInr(salesMetrics.counterSales)}</strong>
+                POS: <strong className="text-slate-800 dark:text-slate-200">{formatInr(dashboardKpis?.counterSales ?? salesMetrics.counterSales)}</strong>
               </span>
             </div>
           }
@@ -286,7 +300,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         {/* KPI 2: Collections */}
         <KpiCard
           title="Collections"
-          value={formatInr(analyticsData?.kpis?.collections ?? salesMetrics.paidSales)}
+          value={formatInr(dashboardKpis?.collections ?? salesMetrics.paidSales)}
           color={PBI_SEMANTIC.positive}
           icon={<CreditCard className="w-4 h-4" />}
           deltaPercent={8.1}
@@ -295,10 +309,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           footer={
             <div className="flex justify-between items-center text-[11px]">
               <span>
-                Cash: <strong className="text-slate-800 dark:text-slate-200">{formatInr(analyticsData?.kpis?.cashCollections ?? salesMetrics.cashSales ?? 0)}</strong>
+                Cash: <strong className="text-slate-800 dark:text-slate-200">{formatInr(dashboardKpis?.cashCollections ?? salesMetrics.cashSales ?? 0)}</strong>
               </span>
               <span>
-                UPI: <strong className="text-slate-800 dark:text-slate-200">{formatInr(analyticsData?.kpis?.upiCollections ?? salesMetrics.bankUpiSales ?? 0)}</strong>
+                UPI: <strong className="text-slate-800 dark:text-slate-200">{formatInr(dashboardKpis?.upiCollections ?? salesMetrics.bankUpiSales ?? 0)}</strong>
               </span>
             </div>
           }
@@ -307,17 +321,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         {/* KPI 3: Gross Profit */}
         <KpiCard
           title="Gross Profit"
-          value={formatInr(analyticsData?.kpis?.grossProfit ?? 0)}
+          value={formatInr(dashboardKpis?.grossProfit ?? 0)}
           color={PBI_PALETTE[5]}
           icon={<TrendingUp className="w-4 h-4" />}
-          deltaPercent={analyticsData?.kpis?.profitMarginPercent ?? 24}
+          deltaPercent={dashboardKpis?.profitMarginPercent ?? 24}
           deltaLabel="gross margin"
           loading={loading}
           footer={
             <div className="flex justify-between items-center text-[11px]">
               <span>Sales − COGS Margin</span>
               <strong className="text-indigo-600 dark:text-indigo-400">
-                {analyticsData?.kpis?.profitMarginPercent ?? 0}%
+                {dashboardKpis?.profitMarginPercent ?? 0}%
               </strong>
             </div>
           }
@@ -326,14 +340,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         {/* KPI 4: Outstanding Udhari */}
         <KpiCard
           title="Outstanding Udhari"
-          value={formatInr(udhariMetrics.outstanding)}
+          value={formatInr(dashboardKpis?.outstandingUdhari ?? udhariMetrics.outstanding)}
           color={PBI_PALETTE[2]}
           icon={<Scale className="w-4 h-4" />}
           loading={loading}
           footer={
             <div className="flex justify-between items-center text-[11px]">
-              <span className={udhariMetrics.overdue > 0 ? 'text-rose-600 dark:text-rose-400 font-bold' : ''}>
-                Overdue: {formatInr(udhariMetrics.overdue)}
+              <span className={(dashboardKpis?.overdueUdhari ?? udhariMetrics.overdue) > 0 ? 'text-rose-600 dark:text-rose-400 font-bold' : ''}>
+                Overdue: {formatInr(dashboardKpis?.overdueUdhari ?? udhariMetrics.overdue)}
               </span>
               <button
                 type="button"
@@ -403,15 +417,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* ========================================================================= */}
       {/* 4 & 5. EXECUTIVE SUMMARY & SIGNALS + PENDING CUSTOMER FOLLOW-UPS          */}
       {/* ========================================================================= */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* 4. Executive Summary & Signals */}
-        <div>
-          <ExecutiveSummaryCards
-            data={analyticsData}
-            onNavigateTab={setActiveTab}
-            loading={loading}
-          />
-        </div>
+      <div className={`grid grid-cols-1 ${hasCurrentUserPermission('analytics.view') && analyticsData ? 'lg:grid-cols-2' : ''} gap-6`}>
+        {/* 4. Executive Summary & Signals (Owner only) */}
+        {hasCurrentUserPermission('analytics.view') && analyticsData && (
+          <div>
+            <ExecutiveSummaryCards
+              data={analyticsData}
+              onNavigateTab={setActiveTab}
+              loading={loading}
+            />
+          </div>
+        )}
 
         {/* 5. Pending Customer Follow-ups */}
         <div>
