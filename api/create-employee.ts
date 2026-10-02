@@ -89,7 +89,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const ownerWorkspaceId = callerProfile.workspace_id;
-    const { name, email, phone, department, designation } = req.body || {};
+    const { name, email, phone, department, designation, employee_id, employeeId, p_employee_id } = req.body || {};
 
     if (!name || !name.trim()) {
       return res.status(400).json({ success: false, error: 'Employee name is required.' });
@@ -101,32 +101,61 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ success: false, error: 'A valid email address is required.' });
     }
 
-    // Check duplicate
+    // Check duplicate email
     const { data: dupProf } = await supabaseAdmin.from('profiles').select('id').eq('email', cleanEmail).maybeSingle();
     if (dupProf) {
       return res.status(409).json({ success: false, error: 'An account with this email address already exists.' });
     }
 
-    // Generate sequential Employee ID
+    // Resolve Employee ID (Custom or Auto-generated)
     let nextEmployeeId: string;
-    const { data: rpcEmpId } = await supabaseAdmin.rpc('generate_next_employee_id', { p_workspace_id: ownerWorkspaceId });
-    if (rpcEmpId && typeof rpcEmpId === 'string' && /^VST-EMP-\d+$/i.test(rpcEmpId)) {
-      nextEmployeeId = rpcEmpId;
+    const rawProvidedId = String(employee_id || employeeId || p_employee_id || '');
+    if (rawProvidedId.trim()) {
+      if (rawProvidedId.startsWith(' ') || rawProvidedId.endsWith(' ') || rawProvidedId.startsWith('\t') || rawProvidedId.endsWith('\t')) {
+        return res.status(400).json({ success: false, error: 'Employee ID cannot have leading or trailing whitespace.' });
+      }
+      const trimmed = rawProvidedId.trim();
+      if (trimmed.length < 3 || trimmed.length > 30) {
+        return res.status(400).json({ success: false, error: 'Employee ID must be between 3 and 30 characters.' });
+      }
+      if (!/^[A-Za-z0-9_-]+$/.test(trimmed)) {
+        return res.status(400).json({ success: false, error: 'Only letters, numbers, hyphens (-), and underscores (_) are allowed.' });
+      }
+      if (/^[-_]+$/.test(trimmed)) {
+        return res.status(400).json({ success: false, error: 'Employee ID cannot consist only of hyphens or underscores.' });
+      }
+      const customId = trimmed.toUpperCase();
+      const { data: dupEmp } = await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .eq('workspace_id', ownerWorkspaceId)
+        .ilike('employee_id', customId)
+        .maybeSingle();
+      if (dupEmp) {
+        return res.status(409).json({ success: false, error: `Employee ID ${customId} already exists in this business. Please choose another ID.` });
+      }
+      nextEmployeeId = customId;
     } else {
-      const { data: profs } = await supabaseAdmin.from('profiles').select('employee_id').eq('workspace_id', ownerWorkspaceId);
-      let maxNum = 0;
-      (profs || []).forEach((p: { employee_id?: string }) => {
-        const mEmp = (p.employee_id || '').match(/^VST-EMP-(\d+)$/i);
-        const mVst = (p.employee_id || '').match(/^VST-(\d+)$/i);
-        if (mEmp) {
-          const n = parseInt(mEmp[1], 10);
-          if (n > maxNum) maxNum = n;
-        } else if (mVst) {
-          const n = parseInt(mVst[1], 10);
-          if (n > maxNum) maxNum = n;
-        }
-      });
-      nextEmployeeId = `VST-EMP-${String(maxNum + 1).padStart(3, '0')}`;
+      // Generate sequential Employee ID
+      const { data: rpcEmpId } = await supabaseAdmin.rpc('generate_next_employee_id', { p_workspace_id: ownerWorkspaceId });
+      if (rpcEmpId && typeof rpcEmpId === 'string' && /^VST-EMP-\d+$/i.test(rpcEmpId)) {
+        nextEmployeeId = rpcEmpId;
+      } else {
+        const { data: profs } = await supabaseAdmin.from('profiles').select('employee_id').eq('workspace_id', ownerWorkspaceId);
+        let maxNum = 0;
+        (profs || []).forEach((p: { employee_id?: string }) => {
+          const mEmp = (p.employee_id || '').match(/^VST-EMP-(\d+)$/i);
+          const mVst = (p.employee_id || '').match(/^VST-(\d+)$/i);
+          if (mEmp) {
+            const n = parseInt(mEmp[1], 10);
+            if (n > maxNum) maxNum = n;
+          } else if (mVst) {
+            const n = parseInt(mVst[1], 10);
+            if (n > maxNum) maxNum = n;
+          }
+        });
+        nextEmployeeId = `VST-EMP-${String(maxNum + 1).padStart(3, '0')}`;
+      }
     }
 
     const temporaryPassword = generateSecureTempPass();
@@ -199,8 +228,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // 3. Fallback to caller-scoped RPC create_employee_account
   try {
-    const { name, email, phone, department, designation } = req.body || {};
+    const { name, email, phone, department, designation, employee_id, employeeId, p_employee_id } = req.body || {};
     const temporaryPassword = generateSecureTempPass();
+    const rawId = String(employee_id || employeeId || p_employee_id || '').trim();
     const { data: rpcRes, error: rpcErr } = await clientUser.rpc('create_employee_account', {
       p_name: (name || '').trim(),
       p_email: (email || '').trim().toLowerCase(),
@@ -208,6 +238,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       p_department: department || null,
       p_designation: designation || null,
       p_temporary_password: temporaryPassword,
+      p_employee_id: rawId ? rawId.toUpperCase() : null,
     });
 
     if (rpcErr) {

@@ -125,8 +125,11 @@ export function followUpSchedulerPlugin(): Plugin {
                 phone,
                 department,
                 designation,
-                employeeId: searchEmpId,
+                employeeId,
+                employee_id,
+                p_employee_id,
               } = JSON.parse(body || '{}');
+              const searchEmpId = employeeId || employee_id || p_employee_id;
 
               const authHeader = req.headers['authorization'];
               const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -310,10 +313,9 @@ export function followUpSchedulerPlugin(): Plugin {
               if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) cleanPhone = cleanPhone.slice(2);
               if (cleanPhone.length === 11 && cleanPhone.startsWith('0')) cleanPhone = cleanPhone.slice(1);
 
-              // Generate unique sequential employee ID in VST-EMP-XXX format
+              // Resolve Employee ID (Custom or Auto-generated in VST-EMP-XXX format)
               let nextEmployeeId: string;
               if (supabaseAdmin) {
-                // Check duplicate email
                 const { data: dupProf } = await supabaseAdmin
                   .from('profiles')
                   .select('id')
@@ -328,6 +330,45 @@ export function followUpSchedulerPlugin(): Plugin {
                   );
                 }
 
+                const rawProvidedId = String(searchEmpId || '');
+              if (rawProvidedId.trim()) {
+                if (rawProvidedId.startsWith(' ') || rawProvidedId.endsWith(' ') || rawProvidedId.startsWith('\t') || rawProvidedId.endsWith('\t')) {
+                  res.statusCode = 400;
+                  res.setHeader('Content-Type', 'application/json');
+                  return res.end(JSON.stringify({ success: false, error: 'Employee ID cannot have leading or trailing whitespace.' }));
+                }
+                const trimmed = rawProvidedId.trim();
+                if (trimmed.length < 3 || trimmed.length > 30) {
+                  res.statusCode = 400;
+                  res.setHeader('Content-Type', 'application/json');
+                  return res.end(JSON.stringify({ success: false, error: 'Employee ID must be between 3 and 30 characters.' }));
+                }
+                if (!/^[A-Za-z0-9_-]+$/.test(trimmed)) {
+                  res.statusCode = 400;
+                  res.setHeader('Content-Type', 'application/json');
+                  return res.end(JSON.stringify({ success: false, error: 'Only letters, numbers, hyphens (-), and underscores (_) are allowed.' }));
+                }
+                if (/^[-_]+$/.test(trimmed)) {
+                  res.statusCode = 400;
+                  res.setHeader('Content-Type', 'application/json');
+                  return res.end(JSON.stringify({ success: false, error: 'Employee ID cannot consist only of hyphens or underscores.' }));
+                }
+                const customId = trimmed.toUpperCase();
+                if (supabaseAdmin) {
+                  const { data: dupEmp } = await supabaseAdmin
+                    .from('profiles')
+                    .select('id')
+                    .eq('workspace_id', targetWorkspaceId)
+                    .ilike('employee_id', customId)
+                    .maybeSingle();
+                  if (dupEmp) {
+                    res.statusCode = 409;
+                    res.setHeader('Content-Type', 'application/json');
+                    return res.end(JSON.stringify({ success: false, error: `Employee ID ${customId} already exists in this business. Please choose another ID.` }));
+                  }
+                }
+                nextEmployeeId = customId;
+              } else {
                 const { data: rpcEmpId } = await supabaseAdmin.rpc('generate_next_employee_id', {
                   p_workspace_id: targetWorkspaceId,
                 });
@@ -354,8 +395,9 @@ export function followUpSchedulerPlugin(): Plugin {
                   });
                   nextEmployeeId = `VST-EMP-${String(maxNum + 1).padStart(3, '0')}`;
                 }
+              }
 
-                const tempPassword = generateSecureTempPass();
+              const tempPassword = generateSecureTempPass();
 
                 // Create Supabase Auth user via Admin API
                 const { data: authCreated, error: authErr } = await supabaseAdmin.auth.admin.createUser({

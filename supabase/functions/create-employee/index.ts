@@ -18,7 +18,8 @@ interface CreateEmployeeRequest {
   phone?: string;
   department?: string;
   designation?: string;
-  employeeId?: string; // only used during repair
+  employeeId?: string; // used for custom ID or repair
+  employee_id?: string;
 }
 
 /**
@@ -329,33 +330,78 @@ serve(async (req: Request) => {
       );
     }
 
-    // Generate unique sequential Employee ID for this workspace (VST-EMP-001 format)
+    // Resolve Employee ID (Custom or Auto-generated in VST-EMP-XXX format)
     let nextEmployeeId: string;
-    const { data: rpcEmpId, error: rpcErr } = await supabaseAdmin
-      .rpc('generate_next_employee_id', { p_workspace_id: ownerWorkspaceId });
-
-    if (!rpcErr && rpcEmpId && typeof rpcEmpId === 'string' && /^VST-EMP-\d+$/i.test(rpcEmpId)) {
-      nextEmployeeId = rpcEmpId;
-    } else {
-      // Deterministic query across both VST-EMP-XXX and VST-XXXXX patterns
-      const { data: profilesList } = await supabaseAdmin
+    const rawProvidedId = String(body.employeeId || body.employee_id || '');
+    if (rawProvidedId.trim()) {
+      if (rawProvidedId.startsWith(' ') || rawProvidedId.endsWith(' ') || rawProvidedId.startsWith('\t') || rawProvidedId.endsWith('\t')) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'Employee ID cannot have leading or trailing whitespace.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      const trimmed = rawProvidedId.trim();
+      if (trimmed.length < 3 || trimmed.length > 30) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'Employee ID must be between 3 and 30 characters.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      if (!/^[A-Za-z0-9_-]+$/.test(trimmed)) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'Only letters, numbers, hyphens (-), and underscores (_) are allowed.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      if (/^[-_]+$/.test(trimmed)) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'Employee ID cannot consist only of hyphens or underscores.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      const customId = trimmed.toUpperCase();
+      const { data: dupEmp } = await supabaseAdmin
         .from('profiles')
-        .select('employee_id')
-        .eq('workspace_id', ownerWorkspaceId);
+        .select('id')
+        .eq('workspace_id', ownerWorkspaceId)
+        .ilike('employee_id', customId)
+        .maybeSingle();
 
-      let maxNum = 0;
-      (profilesList || []).forEach((p: { employee_id?: string }) => {
-        const mEmp = (p.employee_id || '').match(/^VST-EMP-(\d+)$/i);
-        const mVst = (p.employee_id || '').match(/^VST-(\d+)$/i);
-        if (mEmp) {
-          const n = parseInt(mEmp[1], 10);
-          if (n > maxNum) maxNum = n;
-        } else if (mVst) {
-          const n = parseInt(mVst[1], 10);
-          if (n > maxNum) maxNum = n;
-        }
-      });
-      nextEmployeeId = `VST-EMP-${String(maxNum + 1).padStart(3, '0')}`;
+      if (dupEmp) {
+        return new Response(
+          JSON.stringify({ success: false, error: `Employee ID ${customId} already exists in this business. Please choose another ID.` }),
+          { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      nextEmployeeId = customId;
+    } else {
+      // Generate unique sequential Employee ID for this workspace (VST-EMP-001 format)
+      const { data: rpcEmpId, error: rpcErr } = await supabaseAdmin
+        .rpc('generate_next_employee_id', { p_workspace_id: ownerWorkspaceId });
+
+      if (!rpcErr && rpcEmpId && typeof rpcEmpId === 'string' && /^VST-EMP-\d+$/i.test(rpcEmpId)) {
+        nextEmployeeId = rpcEmpId;
+      } else {
+        // Deterministic query across both VST-EMP-XXX and VST-XXXXX patterns
+        const { data: profilesList } = await supabaseAdmin
+          .from('profiles')
+          .select('employee_id')
+          .eq('workspace_id', ownerWorkspaceId);
+
+        let maxNum = 0;
+        (profilesList || []).forEach((p: { employee_id?: string }) => {
+          const mEmp = (p.employee_id || '').match(/^VST-EMP-(\d+)$/i);
+          const mVst = (p.employee_id || '').match(/^VST-(\d+)$/i);
+          if (mEmp) {
+            const n = parseInt(mEmp[1], 10);
+            if (n > maxNum) maxNum = n;
+          } else if (mVst) {
+            const n = parseInt(mVst[1], 10);
+            if (n > maxNum) maxNum = n;
+          }
+        });
+        nextEmployeeId = `VST-EMP-${String(maxNum + 1).padStart(3, '0')}`;
+      }
     }
 
     // Generate cryptographically secure temporary password (never hardcoded)

@@ -216,29 +216,33 @@ async function runTestSuite() {
   assert(serviceAdjustBlocked, 'Test 7', 'Direct service/API stock adjustment attempt by employee is DENIED');
 
   // Test 8: Employee creates legitimate invoice -> Stock automatically decreases
-  const canCreateInvoice = hasCurrentUserPermission('sales.create_invoice');
-  // Add product to store for transaction verification
-  const testProd = store.addProduct({
+  const testProdId = 'test-prod-headphone-001';
+  store.getState().products = store.getState().products.filter(p => p.id !== testProdId);
+  store.getState().products.push({
+    id: testProdId,
     name: 'Noise Cancelling Headphone',
     partNumber: 'HP-001',
     buyPrice: 2000,
     sellingPrice: 3500,
     initialStock: 50,
+    currentStock: 50,
     unit: 'Piece',
     category: 'Electronics',
     minimumStock: 5,
-  });
-  const testProdId = testProd.id;
+  } as any);
+  (auth as any).currentProfile = employeeProfile;
+  const canCreateInvoice = hasCurrentUserPermission('sales.create_invoice');
   // Execute legitimate invoice sales deduction
   store.adjustStock(testProdId, 'Sale', -5, 'Legitimate Invoice INV-00042', 'INV-00042');
   const postInvoiceStock = store.getState().products.find(p => p.id === testProdId)?.currentStock;
-  assert(canCreateInvoice && postInvoiceStock === 45, 'Test 8', 'Legitimate invoice automatically deducts stock (50 -> 45)');
+  assert(canCreateInvoice && postInvoiceStock === 45, 'Test 8', 'Legitimate invoice automatically deducts stock (50 -> 45)', `canCreateInvoice=${canCreateInvoice}, postStock=${postInvoiceStock}`);
 
   // Test 9: Employee performs counter sale -> Stock automatically decreases
+  (auth as any).currentProfile = employeeProfile;
   const canCounterSale = hasCurrentUserPermission('sales.create_counter_sale');
   store.adjustStock(testProdId, 'Sale', -3, 'Counter Sale CS-00010', 'CS-00010');
   const postCounterSaleStock = store.getState().products.find(p => p.id === testProdId)?.currentStock;
-  assert(canCounterSale && postCounterSaleStock === 42, 'Test 9', 'Legitimate counter sale automatically deducts stock (45 -> 42)');
+  assert(canCounterSale && postCounterSaleStock === 42, 'Test 9', 'Legitimate counter sale automatically deducts stock (45 -> 42)', `canCounterSale=${canCounterSale}, postStock=${postCounterSaleStock}`);
 
   // Test 10: Client tampering / arbitrary stock manipulation -> Server/service denies
   let tamperedBlocked = false;

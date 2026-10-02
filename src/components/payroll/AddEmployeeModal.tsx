@@ -20,6 +20,7 @@ import { supabaseAuthService } from '../../services/supabaseAuth';
 import { UserAccount, EmployeeStatus, EmploymentType } from '../../types';
 import { showToast } from '../Toast';
 import { formatInr } from '../../services/payrollExportService';
+import { validateEmployeeId } from '../../lib/employeeIdValidation';
 
 interface AddEmployeeModalProps {
   isOpen: boolean;
@@ -186,17 +187,21 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
     }
 
     // 2. Employee ID Check
-    const cleanId = employeeId.trim();
-    if (!cleanId) {
-      setValidationError('Employee ID is required.');
-      return;
-    }
-    const dupId = existingEmployees.some(
-      (emp) => (emp.employeeId || '').toUpperCase() === cleanId.toUpperCase()
-    );
-    if (dupId) {
-      setValidationError(`An employee with Employee ID "${cleanId}" already exists.`);
-      return;
+    let customEmpIdPayload: string | undefined = undefined;
+    if (isCustomId) {
+      const val = validateEmployeeId(employeeId);
+      if (!val.isValid) {
+        setValidationError(val.error || 'Invalid Employee ID.');
+        return;
+      }
+      const dupId = existingEmployees.some(
+        (emp) => (emp.employeeId || '').toUpperCase() === val.normalized
+      );
+      if (dupId) {
+        setValidationError(`Employee ID "${val.normalized}" already exists in this business. Please choose another ID.`);
+        return;
+      }
+      customEmpIdPayload = val.normalized;
     }
 
     // 3. Phone Validation
@@ -257,7 +262,7 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
     try {
       const res = await supabaseAuthService.createEmployee({
         name: name.trim(),
-        employeeId: cleanId,
+        employeeId: customEmpIdPayload,
         phone: cleanPhone,
         email: cleanEmail,
         department: resolvedDept,
@@ -273,7 +278,7 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
 
       if (res.success && res.empId) {
         const newEmpObj: UserAccount = {
-          id: res.userId || cleanId,
+          id: res.userId || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'local_emp_' + Date.now()),
           companyId: supabaseAuthService.getCurrentCompanyId() || 'default_ws',
           employeeId: res.empId,
           name: name.trim(),
@@ -440,21 +445,64 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
-                    Employee ID *
+                    Employee ID
                   </label>
                   <span className="text-[10px] text-slate-400">Workspace unique</span>
                 </div>
-                <input
-                  type="text"
-                  value={employeeId}
-                  onChange={(e) => {
-                    setEmployeeId(e.target.value);
-                    setIsCustomId(true);
-                  }}
-                  placeholder="VST-EMP-001"
-                  className="w-full px-3 py-2 text-xs font-mono font-bold rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                />
+                <div className="space-y-2 p-2.5 bg-slate-100/70 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/60">
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="payrollEmpIdMode"
+                        checked={!isCustomId}
+                        onChange={() => {
+                          setIsCustomId(false);
+                          supabaseAuthService.generateNextEmployeeId().then(setEmployeeId);
+                        }}
+                        className="w-3.5 h-3.5 text-blue-600"
+                      />
+                      <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                        Auto-generate
+                      </span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="payrollEmpIdMode"
+                        checked={isCustomId}
+                        onChange={() => {
+                          setIsCustomId(true);
+                          setEmployeeId('');
+                        }}
+                        className="w-3.5 h-3.5 text-blue-600"
+                      />
+                      <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                        Custom ID
+                      </span>
+                    </label>
+                  </div>
+
+                  {!isCustomId ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-500">Suggested:</span>
+                      <span className="px-2 py-0.5 font-mono text-[11px] font-bold bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 rounded border border-blue-200 dark:border-blue-800">
+                        {employeeId || 'VST-EMP-001'}
+                      </span>
+                    </div>
+                  ) : (
+                    <input
+                      type="text"
+                      value={employeeId}
+                      onChange={(e) => setEmployeeId(e.target.value)}
+                      placeholder="e.g. SALES-001, STORE_01"
+                      maxLength={30}
+                      className="w-full px-3 py-1.5 text-xs font-mono font-bold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white uppercase outline-none focus:ring-2 focus:ring-blue-500"
+                      required
+                    />
+                  )}
+                </div>
               </div>
             </div>
           </div>

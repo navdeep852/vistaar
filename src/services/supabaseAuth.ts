@@ -2,11 +2,14 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { UserProfile, UserRole, UserAccount } from '../types';
 import { validatePassword, validateEmailFormat, generateSecureTemporaryPassword } from '../lib/passwordPolicy';
+import { validateEmployeeId, normalizeEmployeeId } from '../lib/employeeIdValidation';
 import { validateIndianPhoneNumber } from '../lib/phoneUtils';
 import { store } from './store';
 import { isValidUuid } from '../lib/supabaseError';
 import { registerCurrentUserResolver, hasPermission } from '../lib/permissions';
 import { auditLogService } from './supabase/auditLogService';
+
+export { validateEmployeeId, normalizeEmployeeId };
 
 const SESSION_STORAGE_KEY = 'vistaar_user_session';
 const REGISTERED_USERS_KEY = 'vistaar_local_users_db';
@@ -738,7 +741,10 @@ export class SupabaseAuthService {
    * 4. RPC fallback
    * 5. Local legacy database fallback
    */
-  public async resolveEmailFromIdentifier(identifier: string): Promise<string | null> {
+  public async resolveEmailFromIdentifier(
+    identifier: string,
+    workspaceId?: string | null
+  ): Promise<string | null> {
     const cleanId = identifier.trim();
 
     if (!cleanId) {
@@ -753,58 +759,71 @@ export class SupabaseAuthService {
     }
 
     const normalizedId = cleanId.toUpperCase();
+    const targetWs = workspaceId || this.getCurrentCompanyId();
 
     // ------------------------------------------------------------
-    // 2. Legacy/demo mappings
+    // 2. Check active in-memory employees first (preserves test/session contexts & status)
+    // ------------------------------------------------------------
+    const memMatch = this.employees.find(
+      (e) => (e.employeeId || '').toUpperCase() === normalizedId && (!targetWs || !e.companyId || e.companyId === targetWs)
+    );
+    if (memMatch) {
+      if (memMatch.status && memMatch.status !== 'Active') {
+        return null;
+      }
+      if (memMatch.email) {
+        return memMatch.email.trim().toLowerCase();
+      }
+    }
+
+    // ------------------------------------------------------------
+    // 3. Static Demo / Legacy mappings
     // ------------------------------------------------------------
     if (normalizedId === 'VST-00001') return 'admin@vistaar.com';
     if (normalizedId === 'VST-00002') return 'priya@vistaar.com';
 
     // ------------------------------------------------------------
-    // 3. AUTHORITATIVE SERVER-SIDE EMPLOYEE ID RESOLUTION
+    // 4. AUTHORITATIVE SERVER-SIDE EMPLOYEE ID RESOLUTION
     // ------------------------------------------------------------
-    if (isSupabaseConfigured()) {
+    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+    if (isSupabaseConfigured() && origin) {
       try {
-        const response = await fetch('/api/resolve-employee-id', {
+        const response = await fetch(`${origin}/api/resolve-employee-id`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
             employeeId: cleanId,
+            workspaceId: targetWs || null,
           }),
         });
 
         if (response.ok) {
-          const result = await response.json();
-
-          if (result?.found && result?.email) {
-            console.log(
-              '[EMPLOYEE_ID_RESOLUTION] Resolved employee ID:',
-              cleanId,
-              '->',
-              result.email
-            );
-
-            return String(result.email).trim().toLowerCase();
+          const contentType = response.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const result = await response.json();
+            if (result?.found && result?.email) {
+              if (result.status && result.status !== 'Active') {
+                return null;
+              }
+              console.log(
+                '[EMPLOYEE_ID_RESOLUTION] Resolved employee ID:',
+                cleanId,
+                '->',
+                result.email
+              );
+              return String(result.email).trim().toLowerCase();
+            }
           }
         }
-
-        console.warn(
-          '[EMPLOYEE_ID_RESOLUTION] API did not resolve employee ID:',
-          cleanId,
-          response.status
-        );
       } catch (error) {
-        console.warn(
-          '[EMPLOYEE_ID_RESOLUTION] Server API lookup failed:',
-          error
-        );
+        console.warn('[EMPLOYEE_ID_RESOLUTION] Server API lookup failed:', error);
       }
     }
 
     // ------------------------------------------------------------
-    // 4. Direct SECURITY DEFINER RPC fallback
+    // 5. Direct SECURITY DEFINER RPC fallback
     // ------------------------------------------------------------
     if (isSupabaseConfigured()) {
       try {
@@ -812,7 +831,7 @@ export class SupabaseAuthService {
           'get_email_by_employee_id',
           {
             p_employee_id: cleanId,
-            p_workspace_id: null,
+            p_workspace_id: targetWs || null,
           }
         );
 
@@ -823,47 +842,45 @@ export class SupabaseAuthService {
             '->',
             rpcEmail
           );
-
           return String(rpcEmail).trim().toLowerCase();
         }
-
-        if (rpcError) {
-          console.warn(
-            '[EMPLOYEE_ID_RESOLUTION] RPC lookup failed:',
-            rpcError
-          );
-        }
       } catch (error) {
-        console.warn(
-          '[EMPLOYEE_ID_RESOLUTION] RPC exception:',
-          error
-        );
+        console.warn('[EMPLOYEE_ID_RESOLUTION] RPC exception:', error);
       }
     }
 
     // ------------------------------------------------------------
-    // 5. Legacy localStorage fallback
+    // 6. Local database fallback
     // ------------------------------------------------------------
     try {
-      const localDbStr = safeStorageGet(REGISTERED_USERS_KEY);
+      if (this.currentProfile && (this.currentProfile.employeeId || '').toUpperCase() === normalizedId && this.currentProfile.email) {
+        if (this.currentProfile.status && this.currentProfile.status !== 'Active') {
+          return null;
+        }
+        return this.currentProfile.email.trim().toLowerCase();
+      }
 
-      if (localDbStr) {
-        const localDb: any[] = JSON.parse(localDbStr);
-
-        const match = localDb.find(
-          (u) =>
-            u.employeeId?.toUpperCase() === normalizedId
-        );
-
-        if (match?.email) {
-          return match.email.trim().toLowerCase();
+      if (targetWs) {
+        const localDbStr =
+          safeStorageGet(`vistaar_local_employees_db_${targetWs}`) ||
+          safeStorageGet(`vistaar_company_employees_${targetWs}`);
+        if (localDbStr) {
+          const localDb: any[] = JSON.parse(localDbStr);
+          const match = localDb.find(
+            (u) => (u.employeeId || '').toUpperCase() === normalizedId
+          );
+          if (match) {
+            if (match.status && match.status !== 'Active') {
+              return null;
+            }
+            if (match.email) {
+              return match.email.trim().toLowerCase();
+            }
+          }
         }
       }
     } catch (error) {
-      console.warn(
-        '[EMPLOYEE_ID_RESOLUTION] Local fallback failed:',
-        error
-      );
+      console.warn('[EMPLOYEE_ID_RESOLUTION] Local fallback failed:', error);
     }
 
     return null;
@@ -2113,14 +2130,37 @@ export class SupabaseAuthService {
       workspaceId = 'default_ws';
     }
 
-    // 5. Employee ID resolution & uniqueness check
-    let assignedEmpId = (empData.employeeId || '').trim();
-    if (assignedEmpId) {
+    // 5. Employee ID resolution & uniqueness check (Custom or Auto)
+    let assignedEmpId = '';
+    const rawProvidedId = (empData.employeeId || empData.customEmployeeId || '').trim();
+    if (rawProvidedId) {
+      const valRes = validateEmployeeId(empData.employeeId || empData.customEmployeeId);
+      if (!valRes.isValid) {
+        return { success: false, error: valRes.error };
+      }
+      assignedEmpId = valRes.normalized;
+
       const duplicateEmpId = this.employees.some(
         (e) => (!workspaceId || e.companyId === workspaceId) && (e.employeeId || '').toUpperCase() === assignedEmpId.toUpperCase()
       );
       if (duplicateEmpId) {
-        return { success: false, error: `An employee with Employee ID "${assignedEmpId}" already exists.` };
+        return { success: false, error: `Employee ID "${assignedEmpId}" already exists in this business. Please choose another ID.` };
+      }
+
+      if (isSupabaseConfigured() && workspaceId) {
+        try {
+          const { data: dupProf } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('workspace_id', workspaceId)
+            .ilike('employee_id', assignedEmpId)
+            .maybeSingle();
+          if (dupProf) {
+            return { success: false, error: `Employee ID "${assignedEmpId}" already exists in this business. Please choose another ID.` };
+          }
+        } catch {
+          // ignore
+        }
       }
     }
 
@@ -2169,6 +2209,7 @@ export class SupabaseAuthService {
           p_department: (empData.department || '').trim() || null,
           p_designation: (empData.designation || '').trim() || null,
           p_temporary_password: initialTempPass,
+          p_employee_id: assignedEmpId || null,
         });
 
         if (!rpcErr && rpcRes && rpcRes.success) {
@@ -2183,6 +2224,15 @@ export class SupabaseAuthService {
             details: rpcErr.details,
             hint: rpcErr.hint,
           });
+          const rawErr = rpcErr.message || '';
+          if (rawErr.includes('already exists') || rawErr.includes('unique') || rawErr.includes('duplicate')) {
+            return {
+              success: false,
+              error: rawErr.includes('already exists')
+                ? rawErr
+                : `Employee ID "${assignedEmpId}" already exists in this business. Please choose another ID.`,
+            };
+          }
           lastServerError = rpcErr.message;
         }
       } catch (rpcEx: any) {
@@ -2199,6 +2249,7 @@ export class SupabaseAuthService {
               phone: cleanPhone,
               department: (empData.department || '').trim(),
               designation: (empData.designation || '').trim(),
+              employeeId: assignedEmpId || undefined,
             },
           });
 
@@ -2231,6 +2282,7 @@ export class SupabaseAuthService {
               phone: cleanPhone,
               department: (empData.department || '').trim(),
               designation: (empData.designation || '').trim(),
+              employee_id: assignedEmpId || undefined,
             }),
           });
 
@@ -2447,14 +2499,43 @@ export class SupabaseAuthService {
       return { success: false, error: 'Employee not found.' };
     }
 
-    // Check Employee ID uniqueness if being modified
+    // Check Employee ID uniqueness and authorization if being modified
     if (updates.employeeId && updates.employeeId !== this.employees[idx].employeeId) {
-      const targetEmpId = updates.employeeId.trim().toUpperCase();
+      if (!this.isOwner()) {
+        return { success: false, error: 'Only the workspace owner can change Employee IDs.' };
+      }
+      const valRes = validateEmployeeId(updates.employeeId);
+      if (!valRes.isValid) {
+        return { success: false, error: valRes.error };
+      }
+      const targetEmpId = valRes.normalized;
+      updates.employeeId = targetEmpId;
+
       const duplicate = this.employees.some(
         (e) => e.id !== empId && (e.employeeId || '').toUpperCase() === targetEmpId
       );
       if (duplicate) {
-        return { success: false, error: `An employee with Employee ID "${updates.employeeId}" already exists.` };
+        return { success: false, error: `Employee ID "${targetEmpId}" already exists in this business. Please choose another ID.` };
+      }
+
+      if (isSupabaseConfigured() && workspaceId) {
+        try {
+          const targetId = this.employees[idx].id;
+          const query = supabase
+            .from('profiles')
+            .select('id')
+            .eq('workspace_id', workspaceId)
+            .ilike('employee_id', targetEmpId);
+          if (isValidUuid(targetId)) {
+            query.neq('id', targetId);
+          }
+          const { data: dupProf } = await query.maybeSingle();
+          if (dupProf) {
+            return { success: false, error: `Employee ID "${targetEmpId}" already exists in this business. Please choose another ID.` };
+          }
+        } catch {
+          // ignore
+        }
       }
     }
 

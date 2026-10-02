@@ -49,6 +49,7 @@ import { PhoneInput } from '../components/PhoneInput';
 import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 import { hasCurrentUserPermission } from '../lib/permissions';
 import { auditLogService } from '../services/supabase/auditLogService';
+import { validateEmployeeId } from '../lib/employeeIdValidation';
 
 const defaultBusinessSettings: BusinessSettings = {
   businessName: '',
@@ -352,12 +353,26 @@ export const SettingsView: React.FC = () => {
   // Employee State
   const [employees, setEmployees] = useState<UserAccount[]>([]);
   const [addEmpModalOpen, setAddEmpModalOpen] = useState(false);
+  const [empIdMode, setEmpIdMode] = useState<'auto' | 'custom'>('auto');
+  const [suggestedEmpId, setSuggestedEmpId] = useState<string>('');
+  const [customEmpId, setCustomEmpId] = useState<string>('');
+  const [empIdValidationError, setEmpIdValidationError] = useState<string | null>(null);
   const [newEmpName, setNewEmpName] = useState('');
   const [newEmpEmail, setNewEmpEmail] = useState('');
   const [newEmpPhone, setNewEmpPhone] = useState('');
   const [newEmpDept, setNewEmpDept] = useState('Sales & Billing');
   const [newEmpDesig, setNewEmpDesig] = useState('Billing Associate');
   const [newEmpRole, setNewEmpRole] = useState<UserRole>('employee');
+
+  // Load suggested auto Employee ID when opening Add Employee Modal
+  useEffect(() => {
+    if (addEmpModalOpen) {
+      setEmpIdMode('auto');
+      setCustomEmpId('');
+      setEmpIdValidationError(null);
+      auth.generateNextEmployeeId().then(setSuggestedEmpId).catch(() => {});
+    }
+  }, [addEmpModalOpen]);
 
   // Created Employee Credentials Dialog State
   const [createdEmpCreds, setCreatedEmpCreds] = useState<{ empId: string; tempPass: string; name: string } | null>(null);
@@ -669,6 +684,27 @@ export const SettingsView: React.FC = () => {
       return;
     }
     const cleanPhone = newEmpPhone ? normalizeIndianPhoneNumber(newEmpPhone) : '';
+
+    let customEmpIdPayload: string | undefined = undefined;
+    if (empIdMode === 'custom') {
+      const val = validateEmployeeId(customEmpId);
+      if (!val.isValid) {
+        setEmpIdValidationError(val.error || 'Invalid Employee ID.');
+        showToast(val.error || 'Invalid Employee ID.', 'error');
+        return;
+      }
+      const isDup = employees.some(
+        (emp) => (emp.employeeId || '').toUpperCase() === val.normalized
+      );
+      if (isDup) {
+        const dupMsg = `Employee ID ${val.normalized} already exists in this business. Please choose another ID.`;
+        setEmpIdValidationError(dupMsg);
+        showToast(dupMsg, 'error');
+        return;
+      }
+      customEmpIdPayload = val.normalized;
+    }
+
     const res = await auth.createEmployee({
       name: newEmpName,
       email: newEmpEmail,
@@ -676,6 +712,7 @@ export const SettingsView: React.FC = () => {
       department: newEmpDept,
       designation: newEmpDesig,
       role: newEmpRole,
+      employeeId: customEmpIdPayload,
     });
 
     if (res.success && res.empId && res.tempPass) {
@@ -693,6 +730,9 @@ export const SettingsView: React.FC = () => {
       setNewEmpName('');
       setNewEmpEmail('');
       setNewEmpPhone('');
+      setCustomEmpId('');
+      setEmpIdValidationError(null);
+      setEmpIdMode('auto');
       showToast(`Employee ${res.empId} created successfully!`, 'success');
     } else {
       showToast(res.error || 'Failed to create employee.', 'error');
@@ -2411,9 +2451,9 @@ export const SettingsView: React.FC = () => {
       >
         <form onSubmit={handleAddEmployeeSubmit} className="space-y-4 text-xs">
           <div className="p-3 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900/60 text-blue-900 dark:text-blue-200 rounded-xl space-y-1">
-            <span className="font-bold block">Automatic Employee ID & Credentials</span>
+            <span className="font-bold block">Employee Credentials & ID</span>
             <p className="text-[11px]">
-              VISTAAR will automatically assign a unique Employee ID (e.g. VST-EMP-004) and generate a secure temporary password. The employee will be forced to set their permanent password on first login.
+              VISTAAR will generate a secure temporary password. You can use the auto-generated sequential Employee ID (default) or specify a custom ID for your business.
             </p>
           </div>
 
@@ -2429,6 +2469,104 @@ export const SettingsView: React.FC = () => {
               placeholder="e.g. Ramesh Patel"
               className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl font-semibold"
             />
+          </div>
+
+          {/* Employee ID Section */}
+          <div className="space-y-2 p-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl">
+            <div className="flex items-center justify-between">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 uppercase text-[11px]">
+                Employee ID
+              </label>
+              <span className="text-[10px] text-slate-400">Workspace unique</span>
+            </div>
+
+            <div className="space-y-2 pt-1">
+              {/* Option 1: Auto-generate */}
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <input
+                  type="radio"
+                  name="empIdMode"
+                  value="auto"
+                  checked={empIdMode === 'auto'}
+                  onChange={() => {
+                    setEmpIdMode('auto');
+                    setEmpIdValidationError(null);
+                  }}
+                  className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                />
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-slate-800 dark:text-slate-200 text-xs">
+                    Auto-generate Employee ID
+                  </span>
+                  {suggestedEmpId && (
+                    <span className="px-2 py-0.5 font-mono text-[11px] font-bold bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 rounded border border-blue-200 dark:border-blue-800">
+                      {suggestedEmpId}
+                    </span>
+                  )}
+                </div>
+              </label>
+
+              {/* Option 2: Custom Employee ID */}
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <input
+                  type="radio"
+                  name="empIdMode"
+                  value="custom"
+                  checked={empIdMode === 'custom'}
+                  onChange={() => setEmpIdMode('custom')}
+                  className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="font-semibold text-slate-800 dark:text-slate-200 text-xs">
+                  Custom Employee ID
+                </span>
+              </label>
+
+              {empIdMode === 'custom' && (
+                <div className="pt-1.5 pl-6 space-y-1">
+                  <input
+                    type="text"
+                    value={customEmpId}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCustomEmpId(val);
+                      if (val.trim()) {
+                        const check = validateEmployeeId(val);
+                        if (!check.isValid) {
+                          setEmpIdValidationError(check.error || 'Invalid ID');
+                        } else {
+                          const isDup = employees.some(
+                            (emp) => (emp.employeeId || '').toUpperCase() === check.normalized
+                          );
+                          if (isDup) {
+                            setEmpIdValidationError(`Employee ID ${check.normalized} already exists in this business.`);
+                          } else {
+                            setEmpIdValidationError(null);
+                          }
+                        }
+                      } else {
+                        setEmpIdValidationError('Employee ID is required.');
+                      }
+                    }}
+                    placeholder="e.g. SALES-001, STORE_01"
+                    maxLength={30}
+                    className={`w-full px-3 py-2 bg-white dark:bg-slate-950 border font-mono font-bold text-xs rounded-xl uppercase ${
+                      empIdValidationError
+                        ? 'border-rose-400 focus:ring-rose-500'
+                        : 'border-slate-300 dark:border-slate-800 focus:ring-blue-500'
+                    }`}
+                  />
+                  {empIdValidationError ? (
+                    <p className="text-[11px] text-rose-600 dark:text-rose-400 font-medium">
+                      {empIdValidationError}
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                      3–30 characters. Letters (A-Z), numbers (0-9), hyphens (-), and underscores (_) allowed.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

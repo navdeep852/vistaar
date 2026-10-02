@@ -505,11 +505,11 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value)}
                     className="block w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold"
-                    placeholder="admin@company.com or VST-EMP-001"
+                    placeholder="admin@company.com or VST-EMP-001 or SALES-001"
                   />
                 </div>
                 <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 block">
-                  Log in using your email address or assigned Employee ID (e.g. VST-EMP-004)
+                  Log in using your email address or assigned Employee ID (e.g. VST-EMP-004 or SALES-001)
                 </span>
               </div>
 
