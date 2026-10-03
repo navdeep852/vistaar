@@ -33,18 +33,18 @@ export const KpiCard: React.FC<KpiCardProps> = ({
   return (
     <div
       onClick={onClick}
-      className={`bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between min-h-[140px] relative overflow-hidden group ${
+      className={`bg-white dark:bg-slate-900 p-3 sm:p-5 rounded-xl sm:rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between min-h-0 sm:min-h-[140px] relative overflow-hidden group ${
         onClick ? 'cursor-pointer hover:border-slate-300 dark:hover:border-slate-700' : ''
       }`}
     >
       {/* Top Header */}
-      <div className="flex items-center justify-between z-10">
-        <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider truncate">
+      <div className="flex items-center justify-between z-10 gap-1">
+        <span className="text-[10px] sm:text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider truncate">
           {title}
         </span>
         {icon && (
           <div
-            className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-transform group-hover:scale-105"
+            className="w-7 h-7 sm:w-9 sm:h-9 rounded-lg sm:rounded-xl flex items-center justify-center shrink-0 transition-transform group-hover:scale-105 [&>svg]:w-3.5 [&>svg]:h-3.5 sm:[&>svg]:w-4 sm:[&>svg]:h-4"
             style={{ backgroundColor: `${color}15`, color: color }}
           >
             {icon}
@@ -53,16 +53,16 @@ export const KpiCard: React.FC<KpiCardProps> = ({
       </div>
 
       {/* Main KPI Value */}
-      <div className="my-2 z-10">
+      <div className="my-1 sm:my-2 z-10">
         {loading ? (
-          <div className="h-8 w-32 bg-slate-200 dark:bg-slate-800 animate-pulse rounded-lg" />
+          <div className="h-6 sm:h-8 w-24 sm:w-32 bg-slate-200 dark:bg-slate-800 animate-pulse rounded-lg" />
         ) : (
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
+          <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
+            <h3 className="text-lg sm:text-2xl lg:text-3xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
               {value}
             </h3>
             {subValue && (
-              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+              <span className="text-[10px] sm:text-xs text-slate-500 dark:text-slate-400 font-medium">
                 {subValue}
               </span>
             )}
@@ -71,22 +71,22 @@ export const KpiCard: React.FC<KpiCardProps> = ({
 
         {/* Delta Badge */}
         {!loading && hasDelta && (
-          <div className="flex items-center gap-1.5 mt-1">
+          <div className="flex items-center gap-1 sm:gap-1.5 mt-0.5 sm:mt-1">
             <span
-              className={`inline-flex items-center gap-0.5 text-[11px] font-bold px-1.5 py-0.5 rounded-md ${
+              className={`inline-flex items-center gap-0.5 text-[9px] sm:text-[11px] font-bold px-1 sm:px-1.5 py-0.5 rounded-md ${
                 isPositive
                   ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
                   : 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
               }`}
             >
               {isPositive ? (
-                <TrendingUp className="w-3 h-3" />
+                <TrendingUp className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
               ) : (
-                <TrendingDown className="w-3 h-3" />
+                <TrendingDown className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
               )}
               <span>{Math.abs(deltaPercent)}%</span>
             </span>
-            <span className="text-[10px] text-slate-400 dark:text-slate-500">
+            <span className="text-[9px] sm:text-[10px] text-slate-400 dark:text-slate-500 truncate">
               {deltaLabel}
             </span>
           </div>
@@ -95,7 +95,7 @@ export const KpiCard: React.FC<KpiCardProps> = ({
 
       {/* Optional Card Footer */}
       {footer && (
-        <div className="pt-2.5 mt-auto border-t border-slate-100 dark:border-slate-800/80 text-xs text-slate-500 dark:text-slate-400 z-10">
+        <div className="pt-1.5 sm:pt-2.5 mt-1 sm:mt-auto border-t border-slate-100 dark:border-slate-800/80 text-[10px] sm:text-xs text-slate-500 dark:text-slate-400 z-10">
           {footer}
         </div>
       )}

@@ -536,9 +536,19 @@ export function fromDbDaybookTransaction(row: DbDaybookTransaction): DaybookTran
 }
 
 export function fromDbInvoice(row: any): Invoice {
+  let rawPaid = row.paid_amount ?? row.paidAmount;
+  const rawBalance = row.balance_amount ?? row.balanceAmount;
+  const rawTotal = row.grand_total ?? row.grandTotal ?? 0;
+
+  // Self-healing: if an invoice is marked as 'Paid' or balance is 0, paidAmount must equal grandTotal
+  if ((row.status === 'Paid' || rawBalance === 0) && (!rawPaid || Number(rawPaid) === 0) && Number(rawTotal) > 0) {
+    rawPaid = rawTotal;
+  }
+
   const { grandTotal, paidAmount, balanceAmount } = calculateInvoiceFinancials(
-    row.grand_total ?? row.grandTotal,
-    row.paid_amount ?? row.paidAmount
+    rawTotal,
+    rawPaid,
+    row.status
   );
   const items: InvoiceItem[] = (row.invoice_items || row.items || []).map((it: any) => ({
     id: it.id,

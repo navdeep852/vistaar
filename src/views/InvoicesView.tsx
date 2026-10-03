@@ -25,6 +25,7 @@ import { showToast } from '../components/Toast';
 import { toWhatsAppNumber } from '../lib/phoneUtils';
 import { CreateEwayBillModal } from '../components/eway/CreateEwayBillModal';
 import { shareService } from '../platform';
+import { calculateInvoiceFinancials } from '../services/financialCalculationService';
 
 
 interface InvoicesViewProps {
@@ -44,9 +45,9 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   // Workflow State: list | gallery | editor
   const [mode, setMode] = useState<'list' | 'gallery' | 'editor'>(
-    initialOpenCreate ? 'gallery' : 'list'
+    initialOpenCreate ? (typeof window !== 'undefined' && window.innerWidth < 768 ? 'editor' : 'gallery') : 'list'
   );
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('inv-modern-blue');
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(() => store.getLastUsedTemplate('invoice') || 'inv-modern-blue');
   const [editingDraftInvoice, setEditingDraftInvoice] = useState<Invoice | null>(null);
 
   // Preview & Record Payment Modals
@@ -220,6 +221,13 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
           onSuccess={() => {
             setEditingDraftInvoice(null);
             setMode('list');
+            setInvoices(store.getInvoices());
+            invoiceService.getInvoices().then((res) => {
+              if (res.data && res.data.length > 0) {
+                store.syncRemoteInvoices(res.data);
+                setInvoices(store.getInvoices());
+              }
+            }).catch(() => {});
           }}
           onNavigateTab={onNavigateTab}
           activeTab={activeTab || 'invoices'}
@@ -261,7 +269,12 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
         <button
           onClick={() => {
             setEditingDraftInvoice(null);
-            setMode('gallery');
+            if (typeof window !== 'undefined' && window.innerWidth < 768) {
+              setSelectedTemplateId(store.getLastUsedTemplate('invoice') || 'inv-modern-blue');
+              setMode('editor');
+            } else {
+              setMode('gallery');
+            }
           }}
           className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-600/20 transition-colors"
         >
@@ -295,31 +308,33 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                   </td>
                 </tr>
               ) : (
-                filteredInvoices.map((inv) => (
+                filteredInvoices.map((inv) => {
+                  const fin = calculateInvoiceFinancials(inv.grandTotal, inv.paidAmount, inv.status);
+                  return (
                   <tr key={inv.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors">
                     <td className="px-6 py-4 font-bold text-blue-600 dark:text-blue-400">{inv.invoiceNumber}</td>
                     <td className="px-6 py-4 font-medium text-slate-900 dark:text-slate-100">{inv.customerName}</td>
                     <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{inv.date}</td>
                     <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{inv.dueDate}</td>
                     <td className="px-6 py-4 font-bold text-slate-900 dark:text-slate-100">
-                      {settings.currency}{inv.grandTotal.toLocaleString()}
+                      {settings.currency}{fin.grandTotal.toLocaleString()}
                     </td>
                     <td className="px-6 py-4 font-bold text-rose-600 dark:text-rose-400">
-                      {settings.currency}{inv.balanceAmount.toLocaleString()}
+                      {settings.currency}{fin.balanceAmount.toLocaleString()}
                     </td>
                     <td className="px-6 py-4">
                       <span
                         className={`px-2.5 py-1 text-[10px] font-bold rounded-full ${
-                          inv.status === 'Paid'
+                          fin.status === 'Paid'
                             ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
-                            : inv.status === 'Partially Paid'
+                            : fin.status === 'Partially Paid'
                             ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
-                            : inv.status === 'Issued'
+                            : fin.status === 'Issued'
                             ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300'
                             : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
                         }`}
                       >
-                        {inv.status}
+                        {fin.status}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right space-x-1">
@@ -360,7 +375,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                         <Share2 className="w-4 h-4" />
                       </button>
 
-                      {inv.balanceAmount > 0 && (
+                      {fin.balanceAmount > 0 && (
                         <button
                           onClick={() => handleOpenPaymentModal(inv)}
                           className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-emerald-50"
@@ -371,7 +386,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                       )}
                     </td>
                   </tr>
-                ))
+                );})
               )}
             </tbody>
           </table>
@@ -385,9 +400,11 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
             </div>
           ) : (
             filteredInvoices.map((inv) => {
-              const isPaid = inv.status === 'Paid';
-              const isPartial = inv.status === 'Partially Paid';
-              const paid = inv.paidAmount ?? Math.max(0, inv.grandTotal - inv.balanceAmount);
+              const fin = calculateInvoiceFinancials(inv.grandTotal, inv.paidAmount, inv.status);
+              const isPaid = fin.status === 'Paid';
+              const isPartial = fin.status === 'Partially Paid';
+              const paid = fin.paidAmount;
+              const remaining = fin.balanceAmount;
 
               return (
                 <div key={inv.id} className="p-4 space-y-3 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
@@ -407,12 +424,12 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                           ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
                           : isPartial
                           ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
-                          : inv.status === 'Issued'
+                          : fin.status === 'Issued'
                           ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
                       }`}
                     >
-                      {inv.status}
+                      {fin.status}
                     </span>
                   </div>
 
@@ -430,7 +447,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                     <div>
                       <span className="block text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Total</span>
                       <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
-                        {settings.currency}{inv.grandTotal.toLocaleString()}
+                        {settings.currency}{fin.grandTotal.toLocaleString()}
                       </span>
                     </div>
                     <div>
@@ -442,21 +459,21 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                     <div>
                       <span className="block text-[10px] uppercase font-bold text-rose-500 dark:text-rose-400">Remaining</span>
                       <span className="font-bold text-xs text-rose-600 dark:text-rose-400">
-                        {settings.currency}{inv.balanceAmount.toLocaleString()}
+                        {settings.currency}{remaining.toLocaleString()}
                       </span>
                     </div>
                   </div>
 
                   {/* Touch-Friendly Action Buttons */}
                   <div className="pt-1 flex flex-col gap-2">
-                    {inv.balanceAmount > 0 && (
+                    {remaining > 0 && (
                       <button
                         type="button"
                         onClick={() => handleOpenPaymentModal(inv)}
                         className="w-full touch-target min-h-[44px] flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs cursor-pointer transition-colors"
                       >
                         <DollarSign className="w-4 h-4" />
-                        <span>Record Payment ({settings.currency}{inv.balanceAmount.toLocaleString()})</span>
+                        <span>Record Payment ({settings.currency}{remaining.toLocaleString()})</span>
                       </button>
                     )}
 

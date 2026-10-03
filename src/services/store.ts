@@ -960,7 +960,10 @@ class StoreService {
       const grandTotal = Number(inv.grandTotal) || 0;
 
       // When payments are recorded, they are the authoritative source of truth
-      const totalPaid = matchedPayments.length > 0 ? sumPaid : (Number(inv.paidAmount) || 0);
+      let totalPaid = matchedPayments.length > 0 ? sumPaid : (Number(inv.paidAmount) || 0);
+      if (matchedPayments.length === 0 && (inv.status === 'Paid' || inv.balanceAmount === 0) && totalPaid === 0 && grandTotal > 0) {
+        totalPaid = grandTotal;
+      }
       const fin = calculateInvoiceFinancials(grandTotal, totalPaid, inv.status);
 
       if (

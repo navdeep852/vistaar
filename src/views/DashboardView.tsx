@@ -275,7 +275,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* ========================================================================= */}
       {/* 1. KPI SUMMARY (4 Cards without sparklines)                               */}
       {/* ========================================================================= */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 md:gap-5">
         {/* KPI 1: Total Sales */}
         <KpiCard
           title="Total Sales"
@@ -286,11 +286,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           deltaLabel="vs prior period"
           loading={loading}
           footer={
-            <div className="flex justify-between items-center text-[11px]">
-              <span>
+            <div className="flex flex-col sm:flex-row sm:justify-between text-[10px] sm:text-[11px] gap-0.5 sm:gap-1">
+              <span className="truncate">
                 Inv: <strong className="text-slate-800 dark:text-slate-200">{formatInr(dashboardKpis?.invoiceSales ?? salesMetrics.invoiceSales)}</strong>
               </span>
-              <span>
+              <span className="truncate">
                 POS: <strong className="text-slate-800 dark:text-slate-200">{formatInr(dashboardKpis?.counterSales ?? salesMetrics.counterSales)}</strong>
               </span>
             </div>
@@ -307,11 +307,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           deltaLabel="realized inflow"
           loading={loading}
           footer={
-            <div className="flex justify-between items-center text-[11px]">
-              <span>
+            <div className="flex flex-col sm:flex-row sm:justify-between text-[10px] sm:text-[11px] gap-0.5 sm:gap-1">
+              <span className="truncate">
                 Cash: <strong className="text-slate-800 dark:text-slate-200">{formatInr(dashboardKpis?.cashCollections ?? salesMetrics.cashSales ?? 0)}</strong>
               </span>
-              <span>
+              <span className="truncate">
                 UPI: <strong className="text-slate-800 dark:text-slate-200">{formatInr(dashboardKpis?.upiCollections ?? salesMetrics.bankUpiSales ?? 0)}</strong>
               </span>
             </div>
@@ -328,9 +328,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           deltaLabel="gross margin"
           loading={loading}
           footer={
-            <div className="flex justify-between items-center text-[11px]">
-              <span>Sales − COGS Margin</span>
-              <strong className="text-indigo-600 dark:text-indigo-400">
+            <div className="flex justify-between items-center text-[10px] sm:text-[11px]">
+              <span className="truncate mr-1">Margin</span>
+              <strong className="text-indigo-600 dark:text-indigo-400 shrink-0">
                 {dashboardKpis?.profitMarginPercent ?? 0}%
               </strong>
             </div>
@@ -345,16 +345,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           icon={<Scale className="w-4 h-4" />}
           loading={loading}
           footer={
-            <div className="flex justify-between items-center text-[11px]">
-              <span className={(dashboardKpis?.overdueUdhari ?? udhariMetrics.overdue) > 0 ? 'text-rose-600 dark:text-rose-400 font-bold' : ''}>
-                Overdue: {formatInr(dashboardKpis?.overdueUdhari ?? udhariMetrics.overdue)}
+            <div className="flex justify-between items-center text-[10px] sm:text-[11px] gap-1">
+              <span className={`truncate ${(dashboardKpis?.overdueUdhari ?? udhariMetrics.overdue) > 0 ? 'text-rose-600 dark:text-rose-400 font-bold' : ''}`}>
+                OD: {formatInr(dashboardKpis?.overdueUdhari ?? udhariMetrics.overdue)}
               </span>
               <button
                 type="button"
                 onClick={() => setActiveTab('udhari')}
-                className="text-amber-600 dark:text-amber-400 font-bold hover:underline"
+                className="text-amber-600 dark:text-amber-400 font-bold hover:underline shrink-0"
               >
-                Ledgers →
+                Ledger →
               </button>
             </div>
           }

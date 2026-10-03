@@ -524,23 +524,32 @@ export class InvoiceService {
       const finalDiscountTotal = payload.discountTotal !== undefined ? Number(Number(payload.discountTotal).toFixed(2)) : Number(calcDiscountTotal.toFixed(2));
       const finalTaxTotal = payload.taxTotal !== undefined ? Number(Number(payload.taxTotal).toFixed(2)) : Number(calcTaxTotal.toFixed(2));
 
-      let effectivePaid = 0;
-      let effectiveBalance = finalGrandTotal;
-      let effectiveStatus: InvoiceStatus = 'Issued';
-
-      if (payload.paymentStatus === 'Fully Paid') {
-        effectivePaid = finalGrandTotal;
-        effectiveBalance = 0;
-        effectiveStatus = 'Paid';
-      } else if (payload.paymentStatus === 'Partially Paid') {
-        effectivePaid = Math.max(0, Math.min(finalGrandTotal, Number(payload.paidAmount) || 0));
-        effectiveBalance = Math.max(0, Number((finalGrandTotal - effectivePaid).toFixed(2)));
-        effectiveStatus = effectiveBalance <= 0.01 ? 'Paid' : 'Partially Paid';
+      let rawPaid = 0;
+      if (
+        payload.paymentStatus === 'Fully Paid' ||
+        payload.paymentStatus === 'Paid' ||
+        (payload.paidAmount !== undefined && payload.paidAmount >= finalGrandTotal && finalGrandTotal > 0)
+      ) {
+        rawPaid = finalGrandTotal;
+      } else if (
+        payload.paymentStatus === 'Partially Paid' ||
+        (payload.paidAmount !== undefined && payload.paidAmount > 0)
+      ) {
+        rawPaid = Number(payload.paidAmount) || 0;
       } else {
-        effectivePaid = 0;
-        effectiveBalance = finalGrandTotal;
-        effectiveStatus = 'Issued';
+        rawPaid = 0;
       }
+
+      const {
+        grandTotal: normGrandTotal,
+        paidAmount: normPaid,
+        balanceAmount: normBal,
+        status: normStat,
+      } = calculateInvoiceFinancials(finalGrandTotal, rawPaid);
+
+      let effectivePaid = normPaid;
+      let effectiveBalance = normBal;
+      let effectiveStatus: InvoiceStatus = normStat;
 
       // 3. Authoritative Stock Validation (Catalog items check available stock; custom items exempt)
       const requestedByProduct = new Map<string, { name: string; quantity: number }>();
@@ -858,36 +867,34 @@ export class InvoiceService {
         }
       }
 
-      // 8. Authoritative Udhari Receivable Synchronization (STRICT RULE: ONLY when effectiveBalance > 0.01)
-      if (effectiveBalance > 0.01) {
-        try {
-          store.syncInvoiceUdhari({
-            invoiceId: authoritativeInvoiceId,
-            invoiceNumber: inv.invoiceNumber,
-            customerId: payload.customerId,
-            customerName: payload.customerName || 'Customer',
-            customerPhone: payload.customerPhone || '9999999999',
-            grandTotal: finalGrandTotal,
-            paidAmount: effectivePaid,
-            balanceAmount: effectiveBalance,
-            dueDate: inv.dueDate,
-          });
+      // 8. Authoritative Udhari Receivable Synchronization
+      try {
+        store.syncInvoiceUdhari({
+          invoiceId: authoritativeInvoiceId,
+          invoiceNumber: inv.invoiceNumber,
+          customerId: payload.customerId,
+          customerName: payload.customerName || 'Customer',
+          customerPhone: payload.customerPhone || '9999999999',
+          grandTotal: finalGrandTotal,
+          paidAmount: effectivePaid,
+          balanceAmount: effectiveBalance,
+          dueDate: inv.dueDate,
+        });
 
-          const { udhariService } = await import('./udhariService');
-          await udhariService.syncInvoiceUdhari({
-            invoiceId: authoritativeInvoiceId,
-            invoiceNumber: inv.invoiceNumber,
-            customerId: payload.customerId,
-            customerName: payload.customerName || 'Customer',
-            customerPhone: payload.customerPhone || '9999999999',
-            grandTotal: finalGrandTotal,
-            paidAmount: effectivePaid,
-            balanceAmount: effectiveBalance,
-            dueDate: inv.dueDate,
-          });
-        } catch (uErr) {
-          console.warn('[finalizeAuthoritativeInvoice] Udhari sync notice:', uErr);
-        }
+        const { udhariService } = await import('./udhariService');
+        await udhariService.syncInvoiceUdhari({
+          invoiceId: authoritativeInvoiceId,
+          invoiceNumber: inv.invoiceNumber,
+          customerId: payload.customerId,
+          customerName: payload.customerName || 'Customer',
+          customerPhone: payload.customerPhone || '9999999999',
+          grandTotal: finalGrandTotal,
+          paidAmount: effectivePaid,
+          balanceAmount: effectiveBalance,
+          dueDate: inv.dueDate,
+        });
+      } catch (uErr) {
+        console.warn('[finalizeAuthoritativeInvoice] Udhari sync notice:', uErr);
       }
 
       // 9. Invalidate Analytics Caches and Trigger Dashboard Refresh
@@ -942,7 +949,7 @@ export interface AuthoritativeInvoicePayload {
   discountTotal?: number;
   taxTotal?: number;
   grandTotal?: number;
-  paymentStatus?: 'Unpaid' | 'Partially Paid' | 'Fully Paid';
+  paymentStatus?: 'Unpaid' | 'Partially Paid' | 'Fully Paid' | 'Paid';
   paidAmount?: number;
   balanceAmount?: number;
   paymentMode?: string;

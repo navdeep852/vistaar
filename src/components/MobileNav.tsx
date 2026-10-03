@@ -96,7 +96,6 @@ export const MobileNav: React.FC<MobileNavProps> = ({
     { id: 'invoices', label: 'Invoices', icon: Receipt },
     { id: 'products', label: 'Inventory', icon: Package },
     { id: 'udhari', label: 'Udhari', icon: Scale },
-    { id: 'more', label: 'More', icon: MoreHorizontal },
   ];
 
   const rawDrawerItems = [
@@ -136,53 +135,56 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   });
 
   const handleTabClick = (tabId: string) => {
-    if (tabId === 'more') {
-      setDrawerOpen(true);
-    } else {
-      setActiveTab(tabId);
-      setDrawerOpen(false);
-    }
+    setActiveTab(tabId);
+    setDrawerOpen(false);
   };
 
   return (
     <>
       {/* Mobile Top Header */}
-      <header className="lg:hidden h-16 pt-[env(safe-area-inset-top)] bg-white dark:bg-slate-900 text-slate-900 dark:text-white flex items-center justify-between px-3 sm:px-4 fixed top-0 left-0 right-0 z-40 border-b border-slate-200 dark:border-slate-800 no-print transition-colors duration-200">
+      <header className="lg:hidden min-h-[3.75rem] h-[calc(3.75rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] bg-white dark:bg-slate-900 text-slate-900 dark:text-white flex items-center justify-between px-[max(env(safe-area-inset-left),0.875rem)] pr-[max(env(safe-area-inset-right),0.875rem)] fixed top-0 left-0 right-0 z-40 border-b border-slate-200 dark:border-slate-800 no-print transition-colors duration-200 box-border">
         {activeTab === 'dashboard' ? (
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
             <button
               onClick={() => setDrawerOpen(true)}
-              className="touch-target p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              className="touch-target p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
               aria-label="Open Navigation Menu"
             >
               <Menu className="w-5 h-5 sm:w-6 sm:h-6" />
             </button>
 
             <div className="flex items-center gap-2 min-w-0">
-              <img src={logoIcon} alt="VISTAAR" className="h-8 w-8 object-contain shrink-0" />
-              <img src={logoFullName} alt="VISTAAR" className="h-7 w-auto max-w-[130px] sm:max-w-[160px] object-contain shrink-0" />
+              <img src={logoIcon} alt="VISTAAR" className="h-7 w-7 sm:h-8 sm:w-8 object-contain shrink-0" />
+              <div className="flex flex-col justify-center min-w-0">
+                <span className="text-sm sm:text-base font-black tracking-widest text-slate-900 dark:text-white uppercase leading-none font-sans">
+                  VISTAAR
+                </span>
+                <span className="text-[8px] font-bold text-blue-600 dark:text-blue-400 tracking-wider uppercase leading-tight mt-0.5 hidden xs:block">
+                  Run Better. Grow Wider.
+                </span>
+              </div>
             </div>
           </div>
         ) : (
-          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1 mr-2">
             <button
               onClick={() => setActiveTab('dashboard')}
-              className="touch-target p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              className="touch-target p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
               aria-label="Back to Dashboard"
               title="Back to Dashboard"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <h1 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate leading-tight">
                 {TAB_LABELS[activeTab] || activeTab}
               </h1>
-              <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">VISTAAR Business OS</p>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium truncate">VISTAAR Business OS</p>
             </div>
           </div>
         )}
 
-        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
           <ThemeToggle variant="compact" />
           {activeTab !== 'dashboard' && (
             <button
@@ -195,7 +197,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
             </button>
           )}
           {unreadNotifsCount > 0 && activeTab === 'dashboard' && (
-            <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse ml-1 shrink-0" />
           )}
         </div>
       </header>
@@ -269,22 +271,22 @@ export const MobileNav: React.FC<MobileNavProps> = ({
       </div>
 
       {/* Mobile Bottom Navigation Bar */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 pb-[env(safe-area-inset-bottom)] bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 z-40 flex items-center justify-around px-1 shadow-lg no-print transition-colors duration-200">
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 pb-[max(env(safe-area-inset-bottom),6px)] bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 z-40 grid grid-cols-4 px-1 shadow-lg no-print transition-colors duration-200">
         {bottomTabs.map((tab) => {
           const Icon = tab.icon;
-          const isActive = activeTab === tab.id || (tab.id === 'more' && drawerOpen);
+          const isActive = activeTab === tab.id;
           return (
             <button
               key={tab.id}
               onClick={() => handleTabClick(tab.id)}
-              className={`flex flex-col items-center justify-center flex-1 h-full min-h-[44px] py-1 cursor-pointer transition-colors ${
-                isActive ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-slate-500 dark:text-slate-400 font-medium'
+              className={`flex flex-col items-center justify-center w-full h-full min-h-[48px] py-1 cursor-pointer transition-colors ${
+                isActive ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-slate-500 dark:text-slate-400 font-medium hover:text-slate-700 dark:hover:text-slate-200'
               }`}
             >
-              <div className={`p-1 rounded-xl transition-colors ${isActive ? 'bg-blue-50 dark:bg-blue-950/60' : ''}`}>
-                <Icon className={`w-5 h-5 ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+              <div className={`px-3 py-1 rounded-full transition-all duration-200 flex items-center justify-center ${isActive ? 'bg-blue-50 dark:bg-blue-950/80 shadow-xs' : ''}`}>
+                <Icon className={`w-5 h-5 transition-transform ${isActive ? 'text-blue-600 dark:text-blue-400 scale-105' : 'text-slate-400 dark:text-slate-500'}`} />
               </div>
-              <span className="text-[11px] leading-none mt-0.5">{tab.label}</span>
+              <span className={`text-[11px] leading-tight mt-0.5 tracking-tight ${isActive ? 'font-bold' : 'font-medium'}`}>{tab.label}</span>
             </button>
           );
         })}

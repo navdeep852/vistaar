@@ -17,6 +17,8 @@ import {
   Sliders,
   Sparkles,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Layers,
   DollarSign,
   CreditCard,
@@ -98,7 +100,6 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [usesPartNumber, setUsesPartNumber] = useState<boolean>(false);
-  const [mobileTab, setMobileTab] = useState<'editor' | 'preview'>('editor');
   const [editorSection, setEditorSection] = useState<
     'customer' | 'items' | 'payment' | 'branding' | 'appearance' | 'layout' | 'terms'
   >('customer');
@@ -1059,19 +1060,20 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
       onNavigateTab={onNavigateTab}
       activeTab={activeTab || (documentType === 'invoice' ? 'invoices' : 'quotations')}
       headerActions={
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Template Switcher Button */}
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Template Switcher Button (Desktop only - removed from mobile data entry) */}
           <button
+            type="button"
             onClick={() => setGalleryOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-xs font-bold text-white shadow-xs transition-colors cursor-pointer"
+            className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-xs font-bold text-white shadow-xs transition-colors cursor-pointer"
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-300" />
             <span>Template: {currentTemplate.name}</span>
             <ChevronDown className="w-3.5 h-3.5 opacity-80" />
           </button>
 
-          {/* Quick Font Selector Dropdown */}
-          <div className="relative">
+          {/* Quick Font Selector Dropdown (Desktop only - removed from mobile data entry) */}
+          <div className="relative hidden md:block">
             <select
               value={customization.bodyFont}
               onChange={(e) =>
@@ -1096,46 +1098,30 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
             </select>
           </div>
 
-          {/* Mobile Tab Toggle */}
-          <div className="flex lg:hidden bg-slate-800 p-1 rounded-xl">
-            <button
-              onClick={() => setMobileTab('editor')}
-              className={`px-3 py-1 text-xs font-bold rounded-lg transition-colors ${
-                mobileTab === 'editor' ? 'bg-blue-600 text-white' : 'text-slate-400'
-              }`}
-            >
-              Edit
-            </button>
-            <button
-              onClick={() => setMobileTab('preview')}
-              className={`px-3 py-1 text-xs font-bold rounded-lg transition-colors ${
-                mobileTab === 'preview' ? 'bg-blue-600 text-white' : 'text-slate-400'
-              }`}
-            >
-              Preview
-            </button>
-          </div>
-
           <button
             type="button"
             onClick={() => setPreviewModalOpen(true)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-xs font-bold text-white shadow-md shadow-blue-600/30 transition-colors cursor-pointer"
+            className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-xs font-bold text-white shadow-xs transition-colors cursor-pointer shrink-0"
           >
             <Eye className="w-3.5 h-3.5" />
-            <span>Preview {documentType === 'invoice' ? 'Invoice' : 'Quotation'}</span>
+            <span className="hidden sm:inline">Preview {documentType === 'invoice' ? 'Invoice' : 'Quotation'}</span>
+            <span className="sm:hidden">Preview</span>
           </button>
 
           <button
+            type="button"
             onClick={handleSaveDraft}
-            className="flex items-center gap-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-white transition-colors cursor-pointer"
+            className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-white transition-colors cursor-pointer shrink-0"
           >
             <Save className="w-3.5 h-3.5 text-blue-400" />
             <span className="hidden sm:inline">Save Draft</span>
+            <span className="sm:hidden">Draft</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setFinalizeConfirmOpen(true)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-white shadow-md shadow-emerald-600/30 transition-colors cursor-pointer"
+            className="hidden md:flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-white shadow-md shadow-emerald-600/30 transition-colors cursor-pointer shrink-0"
           >
             <CheckCircle className="w-4 h-4" />
             <span>Finalize</span>
@@ -1145,36 +1131,92 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
     >
 
       {/* Main Workspace Editor Container (Substantially expanded desktop workspace) */}
-      <div className="w-full max-w-[95vw] xl:max-w-[94vw] 2xl:max-w-[92vw] mx-auto space-y-6">
-          {/* Section Selector Tabs */}
-          <div className="flex bg-white dark:bg-slate-900 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs justify-between overflow-x-auto scrollbar-none transition-colors">
+      <div className="w-full max-w-[95vw] xl:max-w-[94vw] 2xl:max-w-[92vw] mx-auto space-y-4 sm:space-y-6">
+        {/* MOBILE 3-STEP FLOW NAVIGATION (below md) */}
+        <div className="block md:hidden bg-white dark:bg-slate-900 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs transition-colors">
+          <div className="flex items-center justify-between gap-1">
             {[
-              { id: 'customer', label: 'Customer', icon: User },
-              { id: 'items', label: 'Items', icon: Package },
-              ...(documentType === 'invoice' ? [{ id: 'payment', label: 'Payment', icon: DollarSign }] : []),
-              { id: 'branding', label: 'Branding', icon: Upload },
-              { id: 'appearance', label: 'Style', icon: Palette },
-              { id: 'layout', label: 'Toggles', icon: Sliders },
-              { id: 'terms', label: 'Terms', icon: FileText },
-            ].map((tab) => {
-              const Icon = tab.icon;
-              const isActive = editorSection === tab.id;
+              { id: 'customer', stepNum: '1', label: 'Customer', icon: User },
+              { id: 'items', stepNum: '2', label: 'Items', icon: Package },
+              ...(documentType === 'invoice' ? [{ id: 'payment', stepNum: '3', label: 'Payment', icon: DollarSign }] : []),
+            ].map((step) => {
+              const Icon = step.icon;
+              const isActive = editorSection === step.id;
               return (
                 <button
-                  key={tab.id}
-                  onClick={() => setEditorSection(tab.id as any)}
-                  className={`flex-1 min-w-fit px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 ${
+                  key={step.id}
+                  type="button"
+                  onClick={() => setEditorSection(step.id as any)}
+                  className={`flex-1 py-2 px-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                     isActive
                       ? 'bg-blue-600 text-white shadow-xs'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
                   }`}
                 >
-                  <Icon className="w-3.5 h-3.5" />
-                  <span>{tab.label}</span>
+                  <span className={`w-4 h-4 rounded-full text-[10px] flex items-center justify-center font-black shrink-0 ${
+                    isActive ? 'bg-white/25 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                  }`}>
+                    {step.stepNum}
+                  </span>
+                  <Icon className="w-3.5 h-3.5 shrink-0 hidden sm:inline" />
+                  <span className="truncate">{step.label}</span>
                 </button>
               );
             })}
+
+            {/* Quick access dropdown to other secondary sections */}
+            <div className="relative">
+              <select
+                aria-label="More Section Options"
+                value={['branding', 'appearance', 'layout', 'terms'].includes(editorSection) ? editorSection : ''}
+                onChange={(e) => {
+                  if (e.target.value) setEditorSection(e.target.value as any);
+                }}
+                className={`py-2 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                  ['branding', 'appearance', 'layout', 'terms'].includes(editorSection)
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                <option value="" disabled>More...</option>
+                <option value="terms">Terms & Notes</option>
+                <option value="branding">Branding</option>
+                <option value="appearance">Style</option>
+                <option value="layout">Toggles</option>
+              </select>
+            </div>
           </div>
+        </div>
+
+        {/* DESKTOP SECTION SELECTOR TABS (md and up) */}
+        <div className="hidden md:flex bg-white dark:bg-slate-900 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs justify-between overflow-x-auto scrollbar-none transition-colors">
+          {[
+            { id: 'customer', label: 'Customer', icon: User },
+            { id: 'items', label: 'Items', icon: Package },
+            ...(documentType === 'invoice' ? [{ id: 'payment', label: 'Payment', icon: DollarSign }] : []),
+            { id: 'branding', label: 'Branding', icon: Upload },
+            { id: 'appearance', label: 'Style', icon: Palette },
+            { id: 'layout', label: 'Toggles', icon: Sliders },
+            { id: 'terms', label: 'Terms', icon: FileText },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const isActive = editorSection === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setEditorSection(tab.id as any)}
+                className={`flex-1 min-w-fit px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 ${
+                  isActive
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
 
           {/* SECTION 1: CUSTOMER SELECTION */}
           {editorSection === 'customer' && (
@@ -1388,6 +1430,18 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* Continue to Items Step Action */}
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setEditorSection('items')}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 py-3 px-5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md shadow-blue-600/20 transition-colors cursor-pointer"
+                >
+                  <span>Continue to Line Items</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           )}
 
@@ -1409,12 +1463,33 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
                 fallbackProducts={products}
                 usesPartNumber={usesPartNumber}
               />
+
+              {/* Step Navigation Actions */}
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditorSection('customer')}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  <span>Customer Details</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setEditorSection(documentType === 'invoice' ? 'payment' : 'terms')}
+                  className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 py-3 px-5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md shadow-blue-600/20 transition-colors cursor-pointer"
+                >
+                  <span>{documentType === 'invoice' ? 'Continue to Payment' : 'Review & Finalize'}</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           )}
 
           {/* SECTION: PAYMENT DETAILS & RECEIVABLES (INVOICE ONLY) */}
           {documentType === 'invoice' && (editorSection === 'payment' || editorSection === 'items') && (
-            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card space-y-4 transition-colors">
+            <div className={`${editorSection === 'items' ? 'hidden lg:block' : ''} bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card space-y-4 transition-colors`}>
               <div className="flex items-center justify-between border-b pb-2 border-slate-100 dark:border-slate-800">
                 <div className="flex items-center gap-2">
                   <DollarSign className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
@@ -1574,6 +1649,31 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
                   <span>Balance Due:</span>
                   <span className="text-sm">{settings.currency}{balanceAmount.toFixed(2)}</span>
                 </div>
+              </div>
+
+              {/* Primary Finalize Action Card in Payment Section */}
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                <button
+                  type="button"
+                  disabled={isFinalizing}
+                  onClick={() => setFinalizeConfirmOpen(true)}
+                  className="w-full touch-target min-h-[50px] flex items-center justify-center gap-2 py-3.5 px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] text-white font-extrabold text-sm sm:text-base shadow-lg shadow-emerald-600/30 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {isFinalizing ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Finalizing Invoice...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-5 h-5" />
+                      <span>Finalize & Issue Invoice ({settings.currency}{grandTotal.toFixed(2)})</span>
+                    </>
+                  )}
+                </button>
+                <p className="text-[11px] text-center text-slate-400 dark:text-slate-500 font-medium">
+                  Authoritative snapshot is created, stock is deducted, and accounting ledgers are synchronized.
+                </p>
               </div>
             </div>
           )}
@@ -2007,6 +2107,73 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
               </div>
             </div>
           )}
+        </div>
+
+        {/* MOBILE STICKY BOTTOM ACTION BAR (below md) */}
+        <div className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-3.5 py-2.5 pb-[max(env(safe-area-inset-bottom),0.75rem)] shadow-[0_-4px_20px_rgba(0,0,0,0.12)] flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">
+              {documentType === 'invoice' ? 'Grand Total' : 'Quotation Total'}
+            </span>
+            <div className="flex items-baseline gap-1.5 truncate">
+              <span className="text-base font-black text-slate-900 dark:text-slate-100 tracking-tight">
+                {settings.currency}{grandTotal.toFixed(2)}
+              </span>
+              {documentType === 'invoice' && effectivePaidAmount > 0 && (
+                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 truncate">
+                  (Due: {settings.currency}{balanceAmount.toFixed(0)})
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {editorSection === 'customer' && (
+              <button
+                type="button"
+                onClick={() => setEditorSection('items')}
+                className="touch-target min-h-[44px] px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-blue-600/25 transition-all cursor-pointer"
+              >
+                <span>Items</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
+
+            {editorSection === 'items' && (
+              <button
+                type="button"
+                onClick={() => setEditorSection(documentType === 'invoice' ? 'payment' : 'terms')}
+                className="touch-target min-h-[44px] px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-blue-600/25 transition-all cursor-pointer"
+              >
+                <span>{documentType === 'invoice' ? 'Payment' : 'Review'}</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
+
+            {(editorSection === 'payment' || (documentType === 'quotation' && (editorSection === 'items' || editorSection === 'terms'))) && (
+              <button
+                type="button"
+                disabled={isFinalizing}
+                onClick={() => setFinalizeConfirmOpen(true)}
+                className="touch-target min-h-[44px] px-4 sm:px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/30 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <CheckCircle className="w-4 h-4" />
+                <span>Finalize {documentType === 'invoice' ? 'Invoice' : 'Quotation'}</span>
+              </button>
+            )}
+
+            {editorSection !== 'customer' && editorSection !== 'items' && editorSection !== 'payment' && documentType === 'invoice' && (
+              <button
+                type="button"
+                disabled={isFinalizing}
+                onClick={() => setFinalizeConfirmOpen(true)}
+                className="touch-target min-h-[44px] px-4 sm:px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/30 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <CheckCircle className="w-4 h-4" />
+                <span>Finalize Invoice</span>
+              </button>
+            )}
+          </div>
         </div>
 
       {/* AUTHORITATIVE PREVIEW MODAL */}

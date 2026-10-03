@@ -783,22 +783,22 @@ export const ProductLineItemsTable: React.FC<ProductLineItemsTableProps> = ({
       </div>
 
       {/* Row Action Buttons */}
-      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
           <button
             type="button"
             onClick={handleAddItem}
-            className="px-4 py-2 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/60 rounded-xl text-xs font-extrabold flex items-center gap-2 transition-colors cursor-pointer shadow-sm"
+            className="w-full sm:w-auto min-h-[44px] sm:min-h-0 justify-center px-4 py-2.5 sm:py-2 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/60 rounded-xl text-xs font-extrabold flex items-center gap-2 transition-colors cursor-pointer shadow-sm active:scale-[0.98]"
           >
             <Plus className="w-4 h-4" />
-            <span>+ Add More Product</span>
+            <span>+ Add Line Item</span>
           </button>
 
           {isQuotation && (
             <button
               type="button"
               onClick={() => handleOpenCustomModal()}
-              className="px-4 py-2 bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-900/60 rounded-xl text-xs font-extrabold flex items-center gap-2 transition-colors cursor-pointer shadow-sm"
+              className="w-full sm:w-auto min-h-[44px] sm:min-h-0 justify-center px-4 py-2.5 sm:py-2 bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-900/60 rounded-xl text-xs font-extrabold flex items-center gap-2 transition-colors cursor-pointer shadow-sm active:scale-[0.98]"
             >
               <Sparkles className="w-4 h-4 text-amber-500" />
               <span>+ Add Custom Product</span>

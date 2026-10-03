@@ -350,7 +350,7 @@ function MainAppContent() {
       )}
 
       {/* Main Content Area — Full viewport width when Workspace Mode is active */}
-      <div className={`flex-1 flex flex-col min-w-0 ${isWorkspaceActive ? 'w-full pl-0 pt-0' : 'lg:pl-64 pt-16 lg:pt-0'}`}>
+      <div className={`flex-1 flex flex-col min-w-0 ${isWorkspaceActive ? 'w-full pl-0 pt-0' : 'lg:pl-64 pt-[calc(3.75rem+env(safe-area-inset-top))] lg:pt-0'}`}>
         {!isWorkspaceActive && (
           <Header
             activeTab={activeTab}
@@ -359,7 +359,7 @@ function MainAppContent() {
           />
         )}
 
-        <main className={`flex-1 ${isWorkspaceActive ? 'p-0 w-full max-w-full' : 'p-3 sm:p-6 lg:p-8 pb-24 lg:pb-8 max-w-7xl w-full mx-auto'}`}>
+        <main className={`flex-1 ${isWorkspaceActive ? 'p-0 w-full max-w-full' : 'p-3 sm:p-6 lg:p-8 pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-8 max-w-7xl w-full mx-auto'}`}>
           <ErrorBoundary
             key={activeTab}
             moduleName={activeTab.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}

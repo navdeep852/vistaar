@@ -131,14 +131,14 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
   return (
     <div className="dedicated-workspace fixed inset-0 z-50 bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans overflow-hidden w-full h-full min-h-screen transition-colors duration-200 no-print">
       {/* DEDICATED WORKSPACE HEADER */}
-      <header className="sticky top-0 z-40 bg-slate-900 text-white border-b border-slate-800 shadow-lg px-4 sm:px-6 py-3 flex items-center justify-between shrink-0 w-full">
+      <header className="sticky top-0 z-40 bg-slate-900 text-white border-b border-slate-800 shadow-lg px-[max(env(safe-area-inset-left),0.875rem)] pr-[max(env(safe-area-inset-right),0.875rem)] sm:px-6 py-2.5 sm:py-3 pt-[max(env(safe-area-inset-top),0.75rem)] min-h-[3.75rem] flex items-center justify-between shrink-0 w-full box-border">
         {/* Left Section: Three-Dot Menu Button & Title */}
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           {/* Three-Dot Navigation Button (⋮) */}
           <button
             type="button"
             onClick={() => setIsNavOpen(!isNavOpen)}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 transition-colors shrink-0 cursor-pointer flex items-center justify-center shadow-xs"
+            className="p-1.5 sm:p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 transition-colors shrink-0 cursor-pointer flex items-center justify-center shadow-xs"
             title="Open Navigation Menu (⋮)"
             aria-label="Open Navigation Menu"
           >
@@ -146,15 +146,15 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
           </button>
 
           {/* Workspace Title & Badge */}
-          <div className="flex items-center gap-2.5 min-w-0">
-            {Icon && <Icon className="w-5 h-5 text-amber-400 shrink-0" />}
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+            {Icon && <Icon className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400 shrink-0" />}
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-base sm:text-xl font-black text-white tracking-tight truncate">
+                <h1 className="text-sm sm:text-xl font-black text-white tracking-tight truncate">
                   {title}
                 </h1>
                 {badgeText && (
-                  <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/40 text-xs font-bold uppercase tracking-wider whitespace-nowrap">
+                  <span className="hidden sm:inline-block px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/40 text-xs font-bold uppercase tracking-wider whitespace-nowrap">
                     {badgeText}
                   </span>
                 )}
@@ -167,13 +167,13 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
         </div>
 
         {/* Right Section: Custom Actions & Close */}
-        <div className="flex items-center gap-2.5 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
           {headerActions}
 
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-rose-600/20 hover:text-rose-400 border border-slate-700 text-slate-300 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+            className="p-1.5 sm:p-2 rounded-xl bg-slate-800 hover:bg-rose-600/20 hover:text-rose-400 border border-slate-700 text-slate-300 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold"
             title="Close Workspace"
           >
             <X className="w-5 h-5" />
@@ -256,7 +256,7 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
       )}
 
       {/* WORKSPACE CONTENT BODY */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 w-full max-w-full mx-auto min-w-0 box-border">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-8 pb-32 sm:pb-8 w-full max-w-full mx-auto min-w-0 box-border">
         {children}
       </div>
     </div>
