@@ -26,6 +26,7 @@ import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { PhoneInput } from '../components/PhoneInput';
 import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
+import { shareService } from '../platform';
 
 type ViewTab = 'udharis' | 'payments' | 'customers';
 type StatusFilter = 'ALL' | 'UNPAID' | 'PARTIALLY PAID' | 'PAID' | 'OVERDUE';
@@ -444,8 +445,7 @@ export const UdhariView: React.FC = () => {
     const cleanPhone = u.phoneSnapshot.replace(/[^0-9]/g, '');
     const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
     const msg = `Hello ${u.customerNameSnapshot},\n\nYour outstanding balance with ${settings.businessName} is ${formatCurrency(u.outstandingAmount)}.\n\nDue Date: ${formatDate(u.dueDate)}.\n\nPlease contact us for any clarification.\n\nThank you!`;
-    const encoded = encodeURIComponent(msg);
-    window.open(`https://wa.me/${formattedPhone}?text=${encoded}`, '_blank');
+    shareService.shareToWhatsApp(formattedPhone, msg);
   };
 
   return (
@@ -830,13 +830,13 @@ export const UdhariView: React.FC = () => {
                       {!isPaid ? (
                         <button
                           onClick={() => handleOpenPayModal(u)}
-                          className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
+                          className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer min-h-[44px]"
                         >
                           <CreditCard className="w-4 h-4" />
                           <span>YES! Customer Paid</span>
                         </button>
                       ) : (
-                        <div className="w-full py-2 px-4 rounded-xl bg-emerald-100/70 dark:bg-emerald-950/70 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs font-bold text-center flex items-center justify-center gap-1.5">
+                        <div className="w-full py-2.5 px-4 rounded-xl bg-emerald-100/70 dark:bg-emerald-950/70 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs font-bold text-center flex items-center justify-center gap-1.5 min-h-[44px]">
                           <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                           <span>PAID ✓ (Fully Settled)</span>
                         </div>
@@ -846,7 +846,7 @@ export const UdhariView: React.FC = () => {
                       <div className="flex items-center justify-between gap-2 pt-1">
                         <button
                           onClick={() => handleOpenHistoryModal(u)}
-                          className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                          className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors min-h-[40px]"
                         >
                           <History className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                           <span>View History</span>
@@ -854,8 +854,9 @@ export const UdhariView: React.FC = () => {
 
                         <button
                           onClick={() => handleWhatsAppShare(u)}
-                          className="flex items-center justify-center p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-900/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 transition-colors"
+                          className="flex items-center justify-center w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-900/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 transition-colors shrink-0 cursor-pointer"
                           title="Share via WhatsApp"
+                          aria-label="Share via WhatsApp"
                         >
                           <MessageSquare className="w-4 h-4" />
                         </button>
@@ -863,8 +864,9 @@ export const UdhariView: React.FC = () => {
                         {!isPaid && u.totalReceived === 0 && (
                           <button
                             onClick={() => handleOpenEditModal(u)}
-                            className="flex items-center justify-center p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
+                            className="flex items-center justify-center w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors shrink-0 cursor-pointer"
                             title="Edit Unpaid Entry"
+                            aria-label="Edit Unpaid Entry"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
@@ -873,8 +875,9 @@ export const UdhariView: React.FC = () => {
                         {u.totalReceived === 0 && (
                           <button
                             onClick={() => handleDelete(u.id)}
-                            className="flex items-center justify-center p-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 hover:bg-rose-100 transition-colors"
+                            className="flex items-center justify-center w-10 h-10 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 hover:bg-rose-100 transition-colors shrink-0 cursor-pointer"
                             title="Delete Unpaid Entry"
+                            aria-label="Delete Unpaid Entry"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>

@@ -116,7 +116,7 @@ export const Header: React.FC<HeaderProps> = ({
   const currentTabInfo = tabTitles[activeTab] || { title: 'Overview', desc: 'VISTAAR — Run Better. Grow Wider.' };
 
   return (
-    <header className="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800/80 px-4 sm:px-8 flex items-center justify-between sticky top-0 z-20 shadow-xs no-print transition-colors duration-200">
+    <header className="hidden lg:flex h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800/80 px-4 sm:px-8 items-center justify-between sticky top-0 z-20 shadow-xs no-print transition-colors duration-200">
       {/* Page Title & Breadcrumb */}
       <div className="flex items-center gap-3">
         <img src={logoIcon} alt="VISTAAR" className="h-8 w-8 object-contain shrink-0" />

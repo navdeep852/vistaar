@@ -33,7 +33,7 @@ export const DaybookView: React.FC = () => {
 
 
   const [transactions, setTransactions] = useState<DaybookTransaction[]>([]);
-  const [mobileViewMode, setMobileViewMode] = useState<'table' | 'cards'>('table');
+  const [mobileViewMode, setMobileViewMode] = useState<'table' | 'cards'>('cards');
   const [metrics, setMetrics] = useState<DaybookSummaryMetrics>({
     totalInflow: 0,
     totalOutflow: 0,
@@ -832,7 +832,8 @@ export const DaybookView: React.FC = () => {
                 return (
                   <div
                     key={tx.id}
-                    className={`p-4 space-y-2.5 ${isVoided ? 'opacity-50 bg-slate-50/50 dark:bg-slate-950/50' : ''}`}
+                    onClick={() => setSelectedTx(tx)}
+                    className={`p-4 space-y-2.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 active:bg-slate-100 dark:active:bg-slate-800 transition-colors ${isVoided ? 'opacity-50 bg-slate-50/50 dark:bg-slate-950/50' : ''}`}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div>
@@ -895,8 +896,9 @@ export const DaybookView: React.FC = () => {
 
       {/* Transaction Details Modal */}
       {selectedTx && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 max-w-lg w-full p-6 shadow-xl space-y-5">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-2xl border border-slate-200 dark:border-slate-800 max-w-lg w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 shadow-xl space-y-5 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pb-6 animate-scale-up">
+            <div className="sm:hidden w-12 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto -mt-1 mb-2" />
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
               <div>
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white">Transaction Audit Details</h3>
@@ -1009,8 +1011,9 @@ export const DaybookView: React.FC = () => {
 
       {/* Record Manual Transaction Modal */}
       {isManualModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 max-w-md w-full p-6 shadow-xl space-y-5">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-2xl border border-slate-200 dark:border-slate-800 max-w-md w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 shadow-xl space-y-5 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pb-6 animate-scale-up">
+            <div className="sm:hidden w-12 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto -mt-1 mb-2" />
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
               <div>
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white">Record Manual Financial Entry</h3>
@@ -1134,8 +1137,9 @@ export const DaybookView: React.FC = () => {
 
       {/* Void Modal */}
       {isVoidModalOpen && txToVoid && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 max-w-sm w-full p-6 shadow-xl space-y-4">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-2xl border border-slate-200 dark:border-slate-800 max-w-sm w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 shadow-xl space-y-4 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pb-6 animate-scale-up">
+            <div className="sm:hidden w-12 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto -mt-1 mb-2" />
             <div className="flex items-center gap-3 text-rose-600">
               <AlertCircle className="w-6 h-6" />
               <h3 className="text-base font-bold text-slate-900 dark:text-white">Void Transaction?</h3>

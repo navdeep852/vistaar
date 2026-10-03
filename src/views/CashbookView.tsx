@@ -266,11 +266,11 @@ export const CashbookView: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
           <button
             onClick={handleReconcile}
             disabled={isReconciling}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600/80 hover:bg-emerald-600 text-white font-bold text-xs border border-emerald-500/30 transition-colors disabled:opacity-50 cursor-pointer"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-emerald-600/80 hover:bg-emerald-600 text-white font-bold text-xs border border-emerald-500/30 transition-colors disabled:opacity-50 cursor-pointer min-h-[44px]"
             title="Scan and reconcile all invoice payments with Cashbook"
           >
             <RefreshCw className={`w-4 h-4 text-white ${isReconciling ? 'animate-spin' : ''}`} />
@@ -279,7 +279,7 @@ export const CashbookView: React.FC = () => {
 
           <button
             onClick={() => setTransferModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs border border-white/10 transition-colors cursor-pointer"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs border border-white/10 transition-colors cursor-pointer min-h-[44px]"
           >
             <ArrowRightLeft className="w-4 h-4 text-amber-400" />
             <span>⇄ Transfer Funds</span>
@@ -287,7 +287,7 @@ export const CashbookView: React.FC = () => {
 
           <button
             onClick={() => setAccountManageModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs border border-white/10 transition-colors cursor-pointer"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs border border-white/10 transition-colors cursor-pointer min-h-[44px]"
           >
             <Settings2 className="w-4 h-4 text-blue-400" />
             <span>Manage Accounts</span>
@@ -477,7 +477,88 @@ export const CashbookView: React.FC = () => {
           </span>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Mobile Transaction Cards View (< md) */}
+        <div className="block md:hidden divide-y divide-slate-100 dark:divide-slate-800">
+          {transactions.length === 0 ? (
+            <div className="p-8 text-center text-slate-400">
+              <AlertCircle className="w-6 h-6 mx-auto mb-2 text-slate-300" />
+              <p className="font-medium">No Cashbook transactions found for active filters.</p>
+            </div>
+          ) : (
+            transactions.map((tx) => {
+              const isReceipt = tx.direction === 'IN';
+              const isTransfer = tx.transactionType === 'TRANSFER';
+              const acc = accounts.find((a) => a.id === tx.financialAccountId);
+
+              return (
+                <div
+                  key={tx.id}
+                  onClick={() => setSelectedTxDetail(tx)}
+                  className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 active:bg-slate-100 dark:active:bg-slate-800/80 cursor-pointer transition-colors space-y-2.5"
+                >
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-slate-500 dark:text-slate-400">{tx.transactionDate}</span>
+                    <span
+                      className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                        isTransfer
+                          ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
+                          : isReceipt
+                          ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
+                          : 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300'
+                      }`}
+                    >
+                      {isTransfer ? (
+                        <ArrowRightLeft className="w-3 h-3" />
+                      ) : isReceipt ? (
+                        <ArrowDownLeft className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpRight className="w-3 h-3" />
+                      )}
+                      <span>{tx.transactionType.replace('_', ' ')}</span>
+                    </span>
+                  </div>
+
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="font-bold text-sm text-slate-900 dark:text-slate-100">{tx.partyName || '—'}</div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-0.5 flex items-center gap-1.5 flex-wrap">
+                        <span>{tx.referenceNumber || tx.transactionCode}</span>
+                        <span className="text-slate-300 dark:text-slate-700">•</span>
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">{tx.paymentMode || (acc ? acc.name : 'Cash')}</span>
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <div
+                        className={`text-base font-extrabold ${
+                          isTransfer
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : isReceipt
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-rose-600 dark:text-rose-400'
+                        }`}
+                      >
+                        {isTransfer
+                          ? `₹${tx.amount.toLocaleString('en-IN')}`
+                          : isReceipt
+                          ? `+₹${tx.amount.toLocaleString('en-IN')}`
+                          : `-₹${tx.amount.toLocaleString('en-IN')}`}
+                      </div>
+                      {tx.gstApplicable && (
+                        <span className="bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[9px] font-bold px-1.5 py-0.2 rounded-full inline-block mt-0.5">
+                          GST Preserved
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Desktop Table View (>= md) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-100 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
@@ -586,14 +667,19 @@ export const CashbookView: React.FC = () => {
 
       {/* INTER-ACCOUNT FUND TRANSFER MODAL */}
       {transferModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-md w-full p-6 space-y-5 animate-scale-up">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 space-y-5 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pb-6 animate-scale-up">
+            <div className="sm:hidden w-12 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto -mt-1 mb-2" />
             <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-extrabold text-base">
                 <ArrowRightLeft className="w-5 h-5 text-amber-500" />
                 <span>Inter-Account Fund Transfer</span>
               </div>
-              <button onClick={() => setTransferModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <button
+                onClick={() => setTransferModalOpen(false)}
+                className="w-10 h-10 -mr-2 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                aria-label="Close"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -683,14 +769,19 @@ export const CashbookView: React.FC = () => {
 
       {/* MANAGE FINANCIAL ACCOUNTS MODAL */}
       {accountManageModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 space-y-5 animate-scale-up">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 space-y-5 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pb-6 animate-scale-up">
+            <div className="sm:hidden w-12 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto -mt-1 mb-2" />
             <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-extrabold text-base">
                 <Building2 className="w-5 h-5 text-blue-600" />
                 <span>Financial Account Management</span>
               </div>
-              <button onClick={() => setAccountManageModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <button
+                onClick={() => setAccountManageModalOpen(false)}
+                className="w-10 h-10 -mr-2 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                aria-label="Close"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -782,14 +873,19 @@ export const CashbookView: React.FC = () => {
 
       {/* TRANSACTION AUDIT DETAIL MODAL */}
       {selectedTxDetail && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 space-y-5 animate-scale-up">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 space-y-5 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pb-6 animate-scale-up">
+            <div className="sm:hidden w-12 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto -mt-1 mb-2" />
             <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-extrabold text-base">
                 <FileText className="w-5 h-5 text-emerald-600" />
                 <span>Cashbook Transaction Audit</span>
               </div>
-              <button onClick={() => setSelectedTxDetail(null)} className="text-slate-400 hover:text-slate-600">
+              <button
+                onClick={() => setSelectedTxDetail(null)}
+                className="w-10 h-10 -mr-2 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                aria-label="Close"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>

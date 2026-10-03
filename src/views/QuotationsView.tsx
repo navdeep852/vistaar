@@ -13,6 +13,7 @@ import {
   AlertCircle,
   TrendingUp,
   Loader2,
+  Calendar,
 } from 'lucide-react';
 import { store } from '../services/store';
 import { quotationService } from '../services/supabase/quotationService';
@@ -25,6 +26,7 @@ import { printDocument } from '../services/printService';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { showToast } from '../components/Toast';
 import { toWhatsAppNumber } from '../lib/phoneUtils';
+import { shareService } from '../platform';
 
 interface QuotationsViewProps {
   initialOpenCreate?: boolean;
@@ -202,8 +204,7 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
       showToast('Customer phone number is invalid for WhatsApp.', 'error');
       return;
     }
-    const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`;
-    window.open(url, '_blank');
+    shareService.shareToWhatsApp(cleanPhone, text);
     showToast(`Opening WhatsApp for ${qt.customerName}...`, 'info');
   };
 
@@ -317,9 +318,10 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
         </button>
       </div>
 
-      {/* Quotations Table */}
+      {/* Quotations List / Table Container */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card overflow-hidden transition-colors">
-        <div className="overflow-x-auto">
+        {/* DESKTOP TABLE VIEW (md and up) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
@@ -420,6 +422,117 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* MOBILE CARD LIST VIEW (below md) */}
+        <div className="block md:hidden divide-y divide-slate-100 dark:divide-slate-800">
+          {filteredQuotations.length === 0 ? (
+            <div className="p-8 text-center text-slate-400 dark:text-slate-500 text-xs">
+              No quotations found. Tap <strong>+ Add New Quotation</strong> to get started!
+            </div>
+          ) : (
+            filteredQuotations.map((qt) => {
+              const isAccepted = qt.status === 'Accepted';
+              const isConverted = qt.status === 'Converted';
+
+              return (
+                <div key={qt.id} className="p-4 space-y-3 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                  {/* Top Bar: Quotation # & Status */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="font-mono font-bold text-sm text-blue-600 dark:text-blue-400">
+                        {qt.quotationNumber}
+                      </span>
+                      <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate mt-0.5">
+                        {qt.customerName}
+                      </h4>
+                    </div>
+                    <select
+                      value={qt.status}
+                      onChange={(e) => {
+                        const newStatus = e.target.value as QuotationStatus;
+                        if (newStatus === 'Converted') {
+                          openConvertModal(qt);
+                        } else {
+                          store.updateQuotationStatus(qt.id, newStatus);
+                        }
+                      }}
+                      className={`px-2.5 py-1 text-[10px] font-bold rounded-full border-0 shrink-0 ${
+                        isAccepted
+                          ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
+                          : isConverted
+                          ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300'
+                          : qt.status === 'Sent'
+                          ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                      }`}
+                    >
+                      <option value="Draft">Draft</option>
+                      <option value="Sent">Sent</option>
+                      <option value="Accepted">Accepted</option>
+                      <option value="Rejected">Rejected</option>
+                      <option value="Expired">Expired</option>
+                      <option value="Converted">Converted</option>
+                    </select>
+                  </div>
+
+                  {/* Dates & Grand Total */}
+                  <div className="bg-slate-50/80 dark:bg-slate-950/60 rounded-xl p-2.5 flex items-center justify-between border border-slate-100 dark:border-slate-800">
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                      <span className="flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Date: {qt.date}</span>
+                      </span>
+                      <span className="text-[10px] text-slate-400">Valid: {qt.validUntil || '-'}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="block text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500">Estimate Total</span>
+                      <span className="font-extrabold text-sm text-slate-900 dark:text-slate-100">
+                        {settings.currency}{qt.grandTotal.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Touch-Friendly Action Buttons */}
+                  <div className="pt-1 flex flex-col gap-2">
+                    {qt.status !== 'Converted' && (
+                      <button
+                        type="button"
+                        onClick={() => openConvertModal(qt)}
+                        className="w-full touch-target min-h-[44px] flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-xs cursor-pointer transition-colors"
+                      >
+                        <ArrowRightLeft className="w-4 h-4" />
+                        <span>Convert to Official Invoice</span>
+                      </button>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedQuotation(qt);
+                          setPreviewModalOpen(true);
+                        }}
+                        className="touch-target min-h-[44px] flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs transition-colors cursor-pointer"
+                      >
+                        <Eye className="w-4 h-4 text-blue-500" />
+                        <span>Preview PDF</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleSendWhatsApp(qt)}
+                        className="touch-target min-h-[44px] flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 font-semibold text-xs border border-emerald-200 dark:border-emerald-800 transition-colors cursor-pointer"
+                      >
+                        <Share2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                        <span>WhatsApp</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
 

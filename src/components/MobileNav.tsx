@@ -25,7 +25,35 @@ import {
   ShoppingCart,
   BarChart3,
   Banknote,
+  ArrowLeft,
 } from 'lucide-react';
+
+const TAB_LABELS: Record<string, string> = {
+  dashboard: 'Dashboard',
+  analytics: 'Analytics',
+  quotations: 'Quotations',
+  invoices: 'Invoices',
+  eway: 'E-Way Bills',
+  customers: 'Customers',
+  udhari: 'Udhari Ledger',
+  payments: 'Payments',
+  'purchase-orders': 'Purchase Orders',
+  'supplier-catalogue': 'Supplier Catalogue',
+  suppliers: 'Suppliers',
+  products: 'Inventory',
+  stock: 'Stock Movement',
+  'counter-sale': 'Counter Sale',
+  'profit-loss': 'Financial Statements',
+  'financial-statements': 'Financial Statements',
+  'salary-payroll': 'Salary & Payroll',
+  expenses: 'Expenses',
+  daybook: 'Daybook Journal',
+  cashbook: 'Cashbook',
+  'follow-ups': 'Follow-ups',
+  feedback: 'Customer Feedback',
+  offers: 'Offers',
+  settings: 'Settings',
+};
 
 
 
@@ -65,9 +93,9 @@ export const MobileNav: React.FC<MobileNavProps> = ({
 
   const bottomTabs = [
     { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
-    { id: 'quotations', label: 'Sales', icon: FileText },
-    { id: 'customers', label: 'Customers', icon: Users },
-    { id: 'products', label: 'Products', icon: Package },
+    { id: 'invoices', label: 'Invoices', icon: Receipt },
+    { id: 'products', label: 'Inventory', icon: Package },
+    { id: 'udhari', label: 'Udhari', icon: Scale },
     { id: 'more', label: 'More', icon: MoreHorizontal },
   ];
 
@@ -119,24 +147,54 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   return (
     <>
       {/* Mobile Top Header */}
-      <header className="lg:hidden h-16 bg-white dark:bg-slate-900 text-slate-900 dark:text-white flex items-center justify-between px-4 fixed top-0 left-0 right-0 z-40 border-b border-slate-200 dark:border-slate-800 no-print transition-colors duration-200">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setDrawerOpen(true)}
-            className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-          >
-            <Menu className="w-6 h-6" />
-          </button>
+      <header className="lg:hidden h-16 pt-[env(safe-area-inset-top)] bg-white dark:bg-slate-900 text-slate-900 dark:text-white flex items-center justify-between px-3 sm:px-4 fixed top-0 left-0 right-0 z-40 border-b border-slate-200 dark:border-slate-800 no-print transition-colors duration-200">
+        {activeTab === 'dashboard' ? (
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <button
+              onClick={() => setDrawerOpen(true)}
+              className="touch-target p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              aria-label="Open Navigation Menu"
+            >
+              <Menu className="w-5 h-5 sm:w-6 sm:h-6" />
+            </button>
 
-          <div className="flex items-center gap-2.5">
-            <img src={logoIcon} alt="VISTAAR" className="h-9 w-9 object-contain" />
-            <img src={logoFullName} alt="VISTAAR" className="h-8 w-auto max-w-[160px] object-contain" />
+            <div className="flex items-center gap-2 min-w-0">
+              <img src={logoIcon} alt="VISTAAR" className="h-8 w-8 object-contain shrink-0" />
+              <img src={logoFullName} alt="VISTAAR" className="h-7 w-auto max-w-[130px] sm:max-w-[160px] object-contain shrink-0" />
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+            <button
+              onClick={() => setActiveTab('dashboard')}
+              className="touch-target p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              aria-label="Back to Dashboard"
+              title="Back to Dashboard"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div className="min-w-0">
+              <h1 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate leading-tight">
+                {TAB_LABELS[activeTab] || activeTab}
+              </h1>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">VISTAAR Business OS</p>
+            </div>
+          </div>
+        )}
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
           <ThemeToggle variant="compact" />
-          {unreadNotifsCount > 0 && (
+          {activeTab !== 'dashboard' && (
+            <button
+              onClick={() => setDrawerOpen(true)}
+              className="touch-target p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              aria-label="All Modules"
+              title="All Modules"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+          )}
+          {unreadNotifsCount > 0 && activeTab === 'dashboard' && (
             <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
           )}
         </div>
@@ -152,7 +210,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
 
       {/* Slide-out Drawer */}
       <div
-        className={`lg:hidden fixed inset-y-0 left-0 w-72 bg-white dark:bg-slate-900 text-slate-900 dark:text-white z-50 transform transition-transform duration-300 ease-in-out flex flex-col no-print border-r border-slate-200 dark:border-slate-800 ${
+        className={`lg:hidden fixed inset-y-0 left-0 w-72 max-w-[85vw] bg-white dark:bg-slate-900 text-slate-900 dark:text-white z-50 transform transition-transform duration-300 ease-in-out flex flex-col no-print border-r border-slate-200 dark:border-slate-800 ${
           drawerOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -170,13 +228,14 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           </div>
           <button
             onClick={() => setDrawerOpen(false)}
-            className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            className="touch-target p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            aria-label="Close menu"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto p-4 space-y-1">
+        <nav className="flex-1 overflow-y-auto p-3 space-y-1">
           {allDrawerItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id || (item.id === 'profit-loss' && activeTab === 'financial-statements');
@@ -184,14 +243,14 @@ export const MobileNav: React.FC<MobileNavProps> = ({
               <button
                 key={item.id}
                 onClick={() => handleTabClick(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
+                className={`w-full min-h-[44px] flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
                   isActive
-                    ? 'bg-blue-600 text-white font-semibold'
+                    ? 'bg-blue-600 text-white font-semibold shadow-xs shadow-blue-600/30'
                     : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
               >
-                <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-500 dark:text-slate-400'}`} />
-                <span>{item.label}</span>
+                <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-500 dark:text-slate-400'}`} />
+                <span className="truncate">{item.label}</span>
               </button>
             );
           })}
@@ -201,7 +260,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           <ThemeToggle variant="button" />
           <button
             onClick={() => supabaseAuthService.logout()}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-100 dark:hover:bg-rose-500/20 transition-colors cursor-pointer"
+            className="w-full min-h-[44px] flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-100 dark:hover:bg-rose-500/20 transition-colors cursor-pointer"
           >
             <LogOut className="w-4 h-4" />
             <span>Sign Out</span>
@@ -210,7 +269,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
       </div>
 
       {/* Mobile Bottom Navigation Bar */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 z-40 flex items-center justify-around px-2 shadow-lg no-print transition-colors duration-200">
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 pb-[env(safe-area-inset-bottom)] bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 z-40 flex items-center justify-around px-1 shadow-lg no-print transition-colors duration-200">
         {bottomTabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id || (tab.id === 'more' && drawerOpen);
@@ -218,12 +277,14 @@ export const MobileNav: React.FC<MobileNavProps> = ({
             <button
               key={tab.id}
               onClick={() => handleTabClick(tab.id)}
-              className={`flex flex-col items-center justify-center flex-1 h-full py-1 cursor-pointer ${
+              className={`flex flex-col items-center justify-center flex-1 h-full min-h-[44px] py-1 cursor-pointer transition-colors ${
                 isActive ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-slate-500 dark:text-slate-400 font-medium'
               }`}
             >
-              <Icon className={`w-5 h-5 ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-              <span className="text-[11px] mt-0.5">{tab.label}</span>
+              <div className={`p-1 rounded-xl transition-colors ${isActive ? 'bg-blue-50 dark:bg-blue-950/60' : ''}`}>
+                <Icon className={`w-5 h-5 ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+              </div>
+              <span className="text-[11px] leading-none mt-0.5">{tab.label}</span>
             </button>
           );
         })}

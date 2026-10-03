@@ -50,6 +50,7 @@ import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPho
 import { hasCurrentUserPermission } from '../lib/permissions';
 import { auditLogService } from '../services/supabase/auditLogService';
 import { validateEmployeeId } from '../lib/employeeIdValidation';
+import { clipboardService } from '../platform';
 
 const defaultBusinessSettings: BusinessSettings = {
   businessName: '',
@@ -2684,8 +2685,8 @@ export const SettingsView: React.FC = () => {
                   <span>{createdEmpCreds.tempPass}</span>
                   <button
                     type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(`Employee ID: ${createdEmpCreds.empId}\nTemporary Password: ${createdEmpCreds.tempPass}`);
+                    onClick={async () => {
+                      await clipboardService.writeText(`Employee ID: ${createdEmpCreds.empId}\nTemporary Password: ${createdEmpCreds.tempPass}`);
                       showToast('Credentials copied to clipboard!', 'success');
                     }}
                     className="p-1 hover:bg-amber-100 dark:hover:bg-amber-900/80 rounded transition-colors text-amber-700 dark:text-amber-300"

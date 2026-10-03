@@ -1198,7 +1198,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
           </div>
 
           {/* PROMINENT SEARCH EXPERIENCE (SECTION 15, 56) */}
-          <div className="relative min-w-[280px] flex-1 max-w-lg">
+          <div className="relative min-w-0 w-full sm:min-w-[280px] flex-1 max-w-lg">
             <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400 dark:text-slate-500" />
             <input
               type="text"
@@ -1523,26 +1523,26 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                       <div className="flex items-center gap-2 pt-1">
                         <button
                           onClick={() => handleViewDetails(p.id)}
-                          className="flex-1 py-2 px-3 rounded-xl bg-blue-600 text-white font-bold text-xs hover:bg-blue-500 text-center cursor-pointer"
+                          className="flex-1 py-2.5 px-3 rounded-xl bg-blue-600 text-white font-bold text-xs hover:bg-blue-500 text-center cursor-pointer min-h-[44px] flex items-center justify-center"
                         >
                           View Details
                         </button>
                         <button
                           onClick={() => handleOpenEditProduct(p)}
-                          className="py-2 px-3 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 font-bold text-xs hover:bg-amber-100 cursor-pointer"
+                          className="py-2.5 px-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 font-bold text-xs hover:bg-amber-100 cursor-pointer min-h-[44px] flex items-center justify-center"
                         >
                           Edit
                         </button>
                         <button
                           onClick={() => handleOpenReceiveStock(p.id)}
-                          className="py-2 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                          className="py-2.5 px-3.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer min-h-[44px] flex items-center justify-center"
                         >
                           + Receive
                         </button>
                         {isOwner && (
                           <button
                             onClick={() => handleOpenDeleteConfirm(p)}
-                            className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 font-bold text-xs hover:bg-rose-100 dark:hover:bg-rose-900/60 cursor-pointer"
+                            className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 font-bold text-xs hover:bg-rose-100 dark:hover:bg-rose-900/60 cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center"
                             title="Delete Product (Owner Only)"
                           >
                             <Trash2 className="w-4 h-4" />

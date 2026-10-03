@@ -69,6 +69,32 @@ function MainAppContent() {
     return unsubscribeAuth;
   }, []);
 
+  // Native Android hardware/gesture back button handling
+  useEffect(() => {
+    const win = typeof window !== 'undefined' ? (window as any) : null;
+    let removeListener: (() => void) | null = null;
+
+    if (win?.Capacitor?.isNativePlatform()) {
+      import('@capacitor/app').then(({ App: CapApp }) => {
+        CapApp.addListener('backButton', () => {
+          if (modalToOpen) {
+            setModalToOpen(null);
+          } else if (activeTab !== 'dashboard') {
+            setActiveTab('dashboard');
+          } else {
+            CapApp.minimizeApp();
+          }
+        }).then((handle) => {
+          removeListener = () => handle.remove();
+        });
+      }).catch(() => {});
+    }
+
+    return () => {
+      if (removeListener) removeListener();
+    };
+  }, [modalToOpen, activeTab]);
+
   useEffect(() => {
     const fetchMetrics = async () => {
       if (authStatus !== 'ready' || !supabaseAuthService.isAuthenticated()) return;
@@ -324,7 +350,7 @@ function MainAppContent() {
       )}
 
       {/* Main Content Area — Full viewport width when Workspace Mode is active */}
-      <div className={`flex-1 flex flex-col min-w-0 ${isWorkspaceActive ? 'w-full pl-0 pt-0' : 'lg:pl-64 pt-14 lg:pt-0'}`}>
+      <div className={`flex-1 flex flex-col min-w-0 ${isWorkspaceActive ? 'w-full pl-0 pt-0' : 'lg:pl-64 pt-16 lg:pt-0'}`}>
         {!isWorkspaceActive && (
           <Header
             activeTab={activeTab}
@@ -333,7 +359,7 @@ function MainAppContent() {
           />
         )}
 
-        <main className={`flex-1 ${isWorkspaceActive ? 'p-0 w-full max-w-full' : 'p-4 sm:p-8 max-w-7xl w-full mx-auto'}`}>
+        <main className={`flex-1 ${isWorkspaceActive ? 'p-0 w-full max-w-full' : 'p-3 sm:p-6 lg:p-8 pb-24 lg:pb-8 max-w-7xl w-full mx-auto'}`}>
           <ErrorBoundary
             key={activeTab}
             moduleName={activeTab.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}

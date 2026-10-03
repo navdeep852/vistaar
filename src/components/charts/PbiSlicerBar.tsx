@@ -59,8 +59,8 @@ export const PbiSlicerBar: React.FC<PbiSlicerBarProps> = ({
         </div>
 
         {/* Slicer Buttons & Refresh */}
-        <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
-          <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60">
+        <div className="flex items-center gap-2 self-stretch md:self-auto justify-between md:justify-end overflow-hidden max-w-full">
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 max-w-full overflow-x-auto no-scrollbar">
             {presets.map((btn) => {
               const isActive = rangePreset === btn.id;
               return (
@@ -68,7 +68,7 @@ export const PbiSlicerBar: React.FC<PbiSlicerBarProps> = ({
                   key={btn.id}
                   type="button"
                   onClick={() => onPresetChange(btn.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all duration-150 ${
+                  className={`min-h-[36px] px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all duration-150 cursor-pointer ${
                     isActive
                       ? 'bg-blue-600 text-white font-bold shadow-xs shadow-blue-600/30'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200/60 dark:hover:bg-slate-700/60'
@@ -85,8 +85,9 @@ export const PbiSlicerBar: React.FC<PbiSlicerBarProps> = ({
               type="button"
               onClick={onRefresh}
               disabled={loading}
-              className="p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
+              className="touch-target p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 shrink-0 cursor-pointer"
               title="Refresh Visuals"
+              aria-label="Refresh Visuals"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-blue-500' : ''}`} />
             </button>

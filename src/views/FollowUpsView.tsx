@@ -32,6 +32,7 @@ import { customerService } from '../services/supabase/customerService';
 import { showToast } from '../components/Toast';
 import { generateHumanFollowUpMessage, MessageTone } from '../services/messageGenerator';
 import { normalizeIndianPhoneNumber, formatIndianPhoneNumber, toWhatsAppNumber } from '../lib/phoneUtils';
+import { shareService } from '../platform';
 
 const TOPIC_SUGGESTIONS = [
   'Quotation follow-up',
@@ -212,11 +213,7 @@ export const FollowUpsView: React.FC = () => {
     }
 
     const msgText = f.actionConfig?.message || f.notes || f.title;
-    const encodedText = encodeURIComponent(msgText);
-    const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodedText}`;
-
-    // Open WhatsApp Web or Mobile App in new tab/app launcher
-    window.open(whatsappUrl, '_blank');
+    shareService.shareToWhatsApp(cleanPhone, msgText);
 
     // Mark activity in store
     store.markWhatsAppOpened(f.id);

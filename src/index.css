@@ -307,3 +307,60 @@
   width: max-content;
 }
 
+/* ========================================================================= */
+/* MOBILE UI FOUNDATION & RESPONSIVE TOUCH STANDARDS                         */
+/* ========================================================================= */
+
+/* Prevent horizontal page overflow on small phone screens (320px - 430px) */
+html, body {
+  overflow-x: hidden;
+  position: relative;
+  width: 100%;
+}
+
+/* Modern touch tap highlight reset */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Safe-area insets utilities for mobile notches and navigation bars */
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.pl-safe {
+  padding-left: env(safe-area-inset-left, 0px);
+}
+.pr-safe {
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* 44px Minimum Touch Target Standard for Touch-First Usability */
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Prevent unwanted WebView zoom on mobile input focus while retaining styling */
+@media (max-width: 640px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Hide scrollbar utility for horizontal chip bars and slicers */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
