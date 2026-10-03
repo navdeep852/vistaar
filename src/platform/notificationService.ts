@@ -12,6 +12,22 @@ class UniversalNotificationService implements PlatformNotificationService {
     const platform = getPlatformInfo();
     const win = typeof window !== 'undefined' ? (window as any) : null;
 
+    // 1. Desktop Native via Tauri 2 Notification Plugin
+    if (platform.isDesktop && (win?.__TAURI__ || win?.__TAURI_INTERNALS__)) {
+      try {
+        const { isPermissionGranted, requestPermission } = await import('@tauri-apps/plugin-notification');
+        let granted = await isPermissionGranted();
+        if (!granted) {
+          const perm = await requestPermission();
+          granted = perm === 'granted';
+        }
+        return granted;
+      } catch (err) {
+        console.warn('[NotificationService] Tauri notification permission request failed:', err);
+      }
+    }
+
+    // 2. Mobile Native via Capacitor LocalNotifications Plugin
     if (platform.isNativeMobile && win?.Capacitor?.Plugins?.LocalNotifications) {
       try {
         const res = await win.Capacitor.Plugins.LocalNotifications.requestPermissions();
@@ -21,6 +37,7 @@ class UniversalNotificationService implements PlatformNotificationService {
       }
     }
 
+    // 3. Web Notification Permission
     if (typeof window !== 'undefined' && 'Notification' in window) {
       try {
         const permission = await Notification.requestPermission();
@@ -37,7 +54,28 @@ class UniversalNotificationService implements PlatformNotificationService {
     const platform = getPlatformInfo();
     const win = typeof window !== 'undefined' ? (window as any) : null;
 
-    // 1. Mobile Native via Capacitor LocalNotifications Plugin
+    // 1. Desktop Native via Tauri 2 Notification Plugin
+    if (platform.isDesktop && (win?.__TAURI__ || win?.__TAURI_INTERNALS__)) {
+      try {
+        const { isPermissionGranted, requestPermission, sendNotification } = await import('@tauri-apps/plugin-notification');
+        let granted = await isPermissionGranted();
+        if (!granted) {
+          const perm = await requestPermission();
+          granted = perm === 'granted';
+        }
+        if (granted) {
+          sendNotification({
+            title: options.title,
+            body: options.body,
+          });
+          return true;
+        }
+      } catch (err) {
+        console.warn('[NotificationService] Tauri sendNotification failed, falling back:', err);
+      }
+    }
+
+    // 2. Mobile Native via Capacitor LocalNotifications Plugin
     if (platform.isNativeMobile && win?.Capacitor?.Plugins?.LocalNotifications) {
       try {
         const notifId = options.id || Math.floor(Math.random() * 1000000);

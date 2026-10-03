@@ -7,17 +7,29 @@ export interface ToastMessage {
   title: string;
   message?: string;
   duration?: number;
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
 }
 
 let toastListener: ((toast: ToastMessage) => void) | null = null;
 
-export const showToast = (title: string, type: 'success' | 'error' | 'info' = 'success', message?: string) => {
+export const showToast = (
+  title: string,
+  type: 'success' | 'error' | 'info' = 'success',
+  message?: string,
+  action?: { label: string; onClick: () => void },
+  duration?: number
+) => {
   if (toastListener) {
     toastListener({
       id: Math.random().toString(36).substring(2, 9),
       type,
       title,
       message,
+      action,
+      duration,
     });
   }
 };
@@ -69,6 +81,18 @@ export const ToastContainer: React.FC = () => {
           <div className="flex-1 min-w-0 pr-1">
             <h4 className="text-xs font-bold leading-tight text-slate-900 dark:text-slate-100">{toast.title}</h4>
             {toast.message && <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">{toast.message}</p>}
+            {toast.action && (
+              <button
+                type="button"
+                onClick={() => {
+                  toast.action!.onClick();
+                  removeToast(toast.id);
+                }}
+                className="mt-2 px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[10px] font-bold transition-all shadow-sm cursor-pointer inline-flex items-center gap-1 active:scale-95"
+              >
+                {toast.action.label}
+              </button>
+            )}
           </div>
 
           <button

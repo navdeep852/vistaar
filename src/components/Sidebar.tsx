@@ -40,6 +40,7 @@ interface SidebarProps {
   lowStockCount?: number;
   pendingFollowupsCount?: number;
   isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 interface NavItem {
@@ -61,6 +62,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   lowStockCount = 0,
   pendingFollowupsCount = 0,
   isCollapsed = false,
+  onToggleCollapse,
 }) => {
   const [user, setUser] = useState(supabaseAuthService.getUser());
   const { theme } = useTheme();
@@ -149,14 +151,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside className={`${isCollapsed ? 'w-20' : 'w-64'} bg-white dark:bg-slate-950 text-slate-700 dark:text-slate-400 flex flex-col h-screen fixed left-0 top-0 z-30 border-r border-slate-200 dark:border-slate-900 hidden lg:flex no-print transition-colors duration-200`}>
       {/* Brand Header */}
-      <div className="h-20 px-5 flex items-center justify-between border-b border-slate-200/80 dark:border-slate-800/50 bg-slate-50/80 dark:bg-slate-950/80 transition-colors duration-200">
+      <div className="h-16 px-4 flex items-center justify-between border-b border-slate-200/80 dark:border-slate-800/50 bg-slate-50/80 dark:bg-slate-950/80 transition-colors duration-200">
         {isCollapsed ? (
-          <div className="w-full flex items-center justify-center py-2" title="VISTAAR — Run Better. Grow Wider.">
-            <img src={logoIcon} alt="VISTAAR" className="h-10 w-10 object-contain hover:scale-105 transition-transform" />
-          </div>
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="w-full flex items-center justify-center py-2 cursor-pointer hover:opacity-80 transition-opacity"
+            title="Expand VISTAAR Sidebar"
+            aria-label="Expand Sidebar"
+          >
+            <img src={logoIcon} alt="VISTAAR" className="h-9 w-9 object-contain hover:scale-105 transition-transform" />
+          </button>
         ) : (
           <div className="flex flex-col justify-center min-w-0 py-1">
-            <img src={logoFullName} alt="VISTAAR" className="h-11 w-auto max-w-[200px] object-contain drop-shadow-xs" />
+            <img src={logoFullName} alt="VISTAAR" className="h-10 w-auto max-w-[190px] object-contain drop-shadow-xs" />
             <span className="text-[9px] text-blue-600 dark:text-blue-400 font-bold tracking-widest block uppercase pl-0.5 mt-0.5">
               Run Better. Grow Wider.
             </span>
@@ -165,12 +173,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Navigation List */}
-      <nav className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+      <nav className={`flex-1 overflow-y-auto ${isCollapsed ? 'px-2 py-3 space-y-4' : 'px-4 py-4 space-y-6'}`}>
         {navGroups.map((group, idx) => (
           <div key={idx}>
-            <p className="px-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-wider uppercase mb-2">
-              {group.title}
-            </p>
+            {!isCollapsed ? (
+              <p className="px-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-wider uppercase mb-2">
+                {group.title}
+              </p>
+            ) : (
+              <div className="my-2 border-t border-slate-200/60 dark:border-slate-800/60" />
+            )}
             <div className="space-y-1">
               {group.items.map((item) => {
                 const Icon = item.icon;
@@ -179,25 +191,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <button
                     key={item.id}
                     onClick={() => setActiveTab(item.id)}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium transition-all cursor-pointer ${
+                    title={item.label}
+                    className={`w-full flex items-center ${isCollapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2'} rounded-xl text-sm font-medium transition-all cursor-pointer relative group ${
                       isActive
                         ? 'bg-blue-600 text-white font-semibold shadow-md shadow-blue-600/20'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-900/80'
                     }`}
                   >
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'} min-w-0`}>
                       <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-500 dark:text-slate-400'}`} />
-                      <span className="truncate">{item.label}</span>
+                      {!isCollapsed && <span className="truncate">{item.label}</span>}
                     </div>
 
                     {item.badge !== undefined && item.badge > 0 && (
-                      <span
-                        className={`px-2 py-0.5 text-[10px] font-bold rounded-full text-white ${
-                          item.badgeColor || 'bg-blue-500'
-                        }`}
-                      >
-                        {item.badge}
-                      </span>
+                      isCollapsed ? (
+                        <span
+                          className={`absolute top-1 right-1 w-2 h-2 rounded-full ring-2 ring-white dark:ring-slate-950 ${
+                            item.badgeColor || 'bg-blue-500'
+                          }`}
+                          title={`${item.badge} notifications`}
+                        />
+                      ) : (
+                        <span
+                          className={`px-2 py-0.5 text-[10px] font-bold rounded-full text-white ${
+                            item.badgeColor || 'bg-blue-500'
+                          }`}
+                        >
+                          {item.badge}
+                        </span>
+                      )
                     )}
                   </button>
                 );
@@ -208,18 +230,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </nav>
 
       {/* Workspace & Footer */}
-      <div className="p-4 border-t border-slate-200 dark:border-slate-900 bg-slate-50/60 dark:bg-slate-950/40 transition-colors duration-200">
-        <div className="flex items-center gap-3 p-2 rounded-xl bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 shadow-xs">
-          <UserAvatar name={user?.name} avatarUrl={user?.avatarUrl} size="sm" />
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">{user?.businessName || 'Main Workspace'}</p>
-            <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1 font-mono">
-              <span>{user?.employeeId || 'VST-EMP-001'}</span>
-              <span>•</span>
-              <span className="capitalize">{user?.role || 'Owner'}</span>
-            </p>
+      <div className={`${isCollapsed ? 'p-2' : 'p-3.5'} border-t border-slate-200 dark:border-slate-900 bg-slate-50/60 dark:bg-slate-950/40 transition-colors duration-200`}>
+        {isCollapsed ? (
+          <div className="flex justify-center py-1 cursor-pointer" title={`${user?.businessName || 'Main Workspace'} • ${user?.employeeId || 'VST-EMP-001'} (${user?.role || 'Owner'})`}>
+            <UserAvatar name={user?.name} avatarUrl={user?.avatarUrl} size="sm" />
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center gap-3 p-2 rounded-xl bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 shadow-xs">
+            <UserAvatar name={user?.name} avatarUrl={user?.avatarUrl} size="sm" />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">{user?.businessName || 'Main Workspace'}</p>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1 font-mono">
+                <span>{user?.employeeId || 'VST-EMP-001'}</span>
+                <span>•</span>
+                <span className="capitalize">{user?.role || 'Owner'}</span>
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     </aside>
   );

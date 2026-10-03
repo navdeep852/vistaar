@@ -13,6 +13,7 @@ import {
   CheckCheck,
   RefreshCw,
   BarChart3,
+  PanelLeft,
 } from 'lucide-react';
 import { supabaseAuthService } from '../services/supabaseAuth';
 import { notificationService } from '../services/supabase';
@@ -25,22 +26,44 @@ interface HeaderProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   openModal?: (modalType: string) => void;
+  isSidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   activeTab,
   setActiveTab,
   openModal,
+  isSidebarCollapsed = false,
+  onToggleSidebar,
 }) => {
   const [user, setUser] = useState(supabaseAuthService.getUser());
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [notifOpen, setNotifOpen] = useState(false);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const notifRef = useRef<HTMLDivElement>(null);
   const quickRef = useRef<HTMLDivElement>(null);
   const userRef = useRef<HTMLDivElement>(null);
+
+  // Global Desktop Keyboard Shortcuts (Ctrl+K for search, Ctrl+B for sidebar toggle)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b' && onToggleSidebar) {
+        e.preventDefault();
+        onToggleSidebar();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onToggleSidebar]);
 
   useEffect(() => {
     const updateAuth = () => setUser(supabaseAuthService.getUser());
@@ -116,13 +139,71 @@ export const Header: React.FC<HeaderProps> = ({
   const currentTabInfo = tabTitles[activeTab] || { title: 'Overview', desc: 'VISTAAR — Run Better. Grow Wider.' };
 
   return (
-    <header className="hidden lg:flex h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800/80 px-4 sm:px-8 items-center justify-between sticky top-0 z-20 shadow-xs no-print transition-colors duration-200">
-      {/* Page Title & Breadcrumb */}
-      <div className="flex items-center gap-3">
-        <img src={logoIcon} alt="VISTAAR" className="h-8 w-8 object-contain shrink-0" />
-        <div>
-          <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 leading-tight">{currentTabInfo.title}</h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 hidden sm:block">{currentTabInfo.desc}</p>
+    <header className="hidden lg:flex h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800/80 px-4 sm:px-6 lg:px-8 items-center justify-between sticky top-0 z-20 shadow-xs no-print transition-colors duration-200">
+      {/* 1. Left Hierarchy: [Sidebar Toggle] + [VISTAAR Brand when collapsed / Page Title & Breadcrumb] */}
+      <div className="flex items-center gap-3 min-w-0">
+        {onToggleSidebar && (
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            className="p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
+            title={isSidebarCollapsed ? "Expand Sidebar (Ctrl+B)" : "Collapse Sidebar (Ctrl+B)"}
+            aria-label="Toggle Sidebar"
+          >
+            <PanelLeft className="w-5 h-5" />
+          </button>
+        )}
+
+        {isSidebarCollapsed && (
+          <div className="flex items-center gap-2 pr-3 border-r border-slate-200 dark:border-slate-800 shrink-0">
+            <img src={logoIcon} alt="VISTAAR" className="h-6 w-6 object-contain" />
+            <span className="font-extrabold text-sm tracking-wider text-slate-900 dark:text-slate-100 font-sans">
+              VISTAAR
+            </span>
+          </div>
+        )}
+
+        <div className="min-w-0">
+          <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 leading-tight truncate">
+            {currentTabInfo.title}
+          </h2>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden xl:block truncate">
+            {currentTabInfo.desc}
+          </p>
+        </div>
+      </div>
+
+      {/* 2. Middle: Desktop Global Search / Module Quick Jump */}
+      <div className="hidden md:flex items-center flex-1 max-w-xs lg:max-w-sm mx-4">
+        <div className="relative w-full">
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && searchQuery.trim()) {
+                const q = searchQuery.trim().toLowerCase();
+                if (q.includes('inv')) setActiveTab('invoices');
+                else if (q.includes('quo')) setActiveTab('quotations');
+                else if (q.includes('prod') || q.includes('item') || q.includes('stock')) setActiveTab('products');
+                else if (q.includes('udh') || q.includes('due') || q.includes('bal')) setActiveTab('udhari');
+                else if (q.includes('day')) setActiveTab('daybook');
+                else if (q.includes('cash')) setActiveTab('cashbook');
+                else if (q.includes('exp')) setActiveTab('expenses');
+                else if (q.includes('dash')) setActiveTab('dashboard');
+                else if (q.includes('payr') || q.includes('sal')) setActiveTab('salary-payroll');
+                else if (q.includes('sett') || q.includes('profile')) setActiveTab('settings');
+                setSearchQuery('');
+              }
+            }}
+            placeholder="Search modules (Ctrl+K)..."
+            className="w-full pl-8 pr-12 py-1.5 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200/60 dark:hover:bg-slate-800 border border-transparent focus:border-blue-500 rounded-xl text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none transition-all"
+          />
+          <kbd className="hidden sm:inline-block absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] font-mono text-slate-400 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1 py-0.5 rounded shadow-2xs pointer-events-none">
+            Ctrl+K
+          </kbd>
         </div>
       </div>
 

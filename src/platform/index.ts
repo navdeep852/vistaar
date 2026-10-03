@@ -8,3 +8,4 @@ export * from './printService';
 export * from './cameraService';
 export * from './qrScannerService';
 export * from './notificationService';
+export * from './windowService';

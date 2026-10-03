@@ -11,6 +11,9 @@ import {
   Edit,
   Truck,
   Calendar,
+  Copy,
+  Download,
+  Loader2,
 } from 'lucide-react';
 import { store } from '../services/store';
 import { invoiceService, paymentService } from '../services/supabase';
@@ -18,13 +21,18 @@ import { Invoice, InvoiceStatus, PaymentMethod } from '../types';
 import { Modal } from '../components/Modal';
 import { TemplateGalleryModal } from '../components/TemplateGalleryModal';
 import { DocumentEditorView } from './DocumentEditorView';
-import { DocumentRenderer } from '../components/DocumentRenderer';
+import { DocumentRenderer, DocumentRendererProps } from '../components/DocumentRenderer';
 import { printDocument } from '../services/printService';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { showToast } from '../components/Toast';
+import {
+  normalizeInvoiceToDocument,
+  documentDataToRendererProps,
+  saveDocumentPdf,
+} from '../services/document';
 import { toWhatsAppNumber } from '../lib/phoneUtils';
 import { CreateEwayBillModal } from '../components/eway/CreateEwayBillModal';
-import { shareService } from '../platform';
+import { shareService, clipboardService } from '../platform';
 import { calculateInvoiceFinancials } from '../services/financialCalculationService';
 
 
@@ -42,6 +50,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   // Workflow State: list | gallery | editor
   const [mode, setMode] = useState<'list' | 'gallery' | 'editor'>(
@@ -159,43 +168,25 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
     showToast(`Opening WhatsApp for ${inv.customerName}...`, 'info');
   };
 
+  const getInvoiceRendererProps = (inv: Invoice): DocumentRendererProps => {
+    const docData = normalizeInvoiceToDocument(inv, settings);
+    return documentDataToRendererProps(docData);
+  };
+
   const handlePrintInvoice = (inv: Invoice) => {
-    printDocument({
-      templateId: inv.templateId,
-      documentType: 'invoice',
-      documentNumber: inv.invoiceNumber,
-      date: inv.date,
-      dueDateOrValidUntil: inv.dueDate,
-      businessName: inv.snapshot?.businessName || settings.businessName,
-      phone: inv.snapshot?.phone || settings.phone,
-      email: inv.snapshot?.email || settings.email,
-      address: inv.snapshot?.address || settings.address,
-      city: inv.snapshot?.city || settings.city,
-      state: inv.snapshot?.state || settings.state,
-      pincode: inv.snapshot?.pincode || settings.pincode,
-      gstin: inv.snapshot?.gstin || settings.gstin,
-      bankDetails: inv.snapshot?.bankDetails || settings.bankDetails,
-      customerName: inv.customerName,
-      customerPhone: inv.customerPhone,
-      customerWhatsapp: inv.customerWhatsapp,
-      customerEmail: inv.customerEmail,
-      customerAddress: inv.customerAddress,
-      customerGstin: inv.customerGstin,
-      items: inv.items,
-      subtotal: inv.subtotal,
-      discountTotal: inv.discountTotal,
-      taxTotal: inv.taxTotal,
-      grandTotal: inv.grandTotal,
-      paidAmount: inv.paidAmount,
-      balanceAmount: inv.balanceAmount,
-      currency: settings.currency,
-      notes: inv.notes,
-      terms: inv.terms,
-      footerText: inv.footerText,
-      branding: inv.branding,
-      theme: inv.theme,
-      customization: inv.customization,
-    });
+    printDocument(getInvoiceRendererProps(inv));
+  };
+
+  const handleSavePdf = async (inv: Invoice) => {
+    setIsGeneratingPdf(true);
+    try {
+      const props = getInvoiceRendererProps(inv);
+      await saveDocumentPdf(props);
+    } catch (e: any) {
+      showToast('Failed to generate PDF.', 'error');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   const filteredInvoices = invoices.filter((inv) => {
@@ -288,22 +279,23 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
         {/* DESKTOP TABLE VIEW (md and up) */}
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                <th className="px-6 py-3.5">Invoice #</th>
-                <th className="px-6 py-3.5">Customer</th>
-                <th className="px-6 py-3.5">Date</th>
-                <th className="px-6 py-3.5">Due Date</th>
-                <th className="px-6 py-3.5">Grand Total</th>
-                <th className="px-6 py-3.5">Balance</th>
-                <th className="px-6 py-3.5">Status</th>
-                <th className="px-6 py-3.5 text-right">Actions</th>
+            <thead className="sticky top-0 bg-slate-50/95 dark:bg-slate-800/95 backdrop-blur-xs z-10">
+              <tr className="border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                <th className="px-5 py-3.5">Invoice #</th>
+                <th className="px-5 py-3.5">Customer</th>
+                <th className="px-5 py-3.5">Date</th>
+                <th className="px-5 py-3.5">Due Date</th>
+                <th className="px-5 py-3.5">Grand Total</th>
+                <th className="px-5 py-3.5">Paid</th>
+                <th className="px-5 py-3.5">Balance</th>
+                <th className="px-5 py-3.5">Status</th>
+                <th className="px-5 py-3.5 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
               {filteredInvoices.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500">
+                  <td colSpan={9} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500">
                     No invoices found. Click <strong>+ Create Invoice</strong> to choose a template!
                   </td>
                 </tr>
@@ -312,14 +304,31 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                   const fin = calculateInvoiceFinancials(inv.grandTotal, inv.paidAmount, inv.status);
                   return (
                   <tr key={inv.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors">
-                    <td className="px-6 py-4 font-bold text-blue-600 dark:text-blue-400">{inv.invoiceNumber}</td>
-                    <td className="px-6 py-4 font-medium text-slate-900 dark:text-slate-100">{inv.customerName}</td>
-                    <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{inv.date}</td>
-                    <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{inv.dueDate}</td>
-                    <td className="px-6 py-4 font-bold text-slate-900 dark:text-slate-100">
+                    <td className="px-5 py-3.5 font-bold text-blue-600 dark:text-blue-400">
+                      <button
+                        type="button"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          await clipboardService.writeText(inv.invoiceNumber);
+                          showToast(`Copied ${inv.invoiceNumber}`, 'success');
+                        }}
+                        title="Click to copy invoice number"
+                        className="group inline-flex items-center gap-1.5 hover:text-blue-700 dark:hover:text-blue-300 transition-colors cursor-pointer text-left font-bold"
+                      >
+                        <span>{inv.invoiceNumber}</span>
+                        <Copy className="w-3 h-3 opacity-40 group-hover:opacity-100 text-slate-400 dark:text-slate-500 transition-opacity" />
+                      </button>
+                    </td>
+                    <td className="px-5 py-3.5 font-medium text-slate-900 dark:text-slate-100">{inv.customerName}</td>
+                    <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">{inv.date}</td>
+                    <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">{inv.dueDate}</td>
+                    <td className="px-5 py-3.5 font-bold text-slate-900 dark:text-slate-100">
                       {settings.currency}{fin.grandTotal.toLocaleString()}
                     </td>
-                    <td className="px-6 py-4 font-bold text-rose-600 dark:text-rose-400">
+                    <td className="px-5 py-3.5 font-semibold text-emerald-600 dark:text-emerald-400">
+                      {settings.currency}{fin.paidAmount.toLocaleString()}
+                    </td>
+                    <td className="px-5 py-3.5 font-bold text-rose-600 dark:text-rose-400">
                       {settings.currency}{fin.balanceAmount.toLocaleString()}
                     </td>
                     <td className="px-6 py-4">
@@ -615,15 +624,30 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
               <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">Printable A4 Tax Invoice</span>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => handlePrintInvoice(selectedInvoice)}
-                  className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-800 flex items-center gap-1.5"
+                  type="button"
+                  onClick={() => handleSavePdf(selectedInvoice)}
+                  disabled={isGeneratingPdf}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm ${
+                    isGeneratingPdf
+                      ? 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-500 text-white cursor-pointer active:scale-95'
+                  }`}
                 >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>Download / Print PDF</span>
+                  {isGeneratingPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                  <span>{isGeneratingPdf ? 'Generating...' : 'Save PDF'}</span>
                 </button>
                 <button
+                  type="button"
+                  onClick={() => handlePrintInvoice(selectedInvoice)}
+                  className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-800 flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleSendWhatsApp(selectedInvoice)}
-                  className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 flex items-center gap-1.5"
+                  className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
                 >
                   <Share2 className="w-3.5 h-3.5" />
                   <span>WhatsApp</span>

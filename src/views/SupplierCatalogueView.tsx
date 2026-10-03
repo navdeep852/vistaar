@@ -23,6 +23,7 @@ import {
 } from '../types';
 import { supplierCatalogueService, productService } from '../services/supabase';
 import { showToast } from '../components/Toast';
+import { shareService } from '../platform';
 import { UploadCatalogueModal } from '../components/catalogue/UploadCatalogueModal';
 import { SupplierCatalogueDetailModal } from '../components/catalogue/SupplierCatalogueDetailModal';
 
@@ -93,7 +94,7 @@ export const SupplierCatalogueView: React.FC = () => {
       showToast('Could not retrieve download link.', 'error');
       return;
     }
-    window.open(url, '_blank');
+    shareService.openExternalUrl(url);
   };
 
   return (

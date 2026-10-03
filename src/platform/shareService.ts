@@ -6,6 +6,7 @@ import { toWhatsAppNumber } from '../lib/phoneUtils';
 export interface ShareService {
   share(options: ShareOptions): Promise<boolean>;
   shareToWhatsApp(phone: string, message: string): Promise<boolean>;
+  openExternalUrl(url: string): Promise<boolean>;
   canShare(): boolean;
 }
 
@@ -75,6 +76,30 @@ class UniversalShareService implements ShareService {
     return false;
   }
 
+  public async openExternalUrl(url: string): Promise<boolean> {
+    const platform = getPlatformInfo();
+    const win = typeof window !== 'undefined' ? (window as any) : null;
+
+    // 1. Desktop Native via Tauri 2 Opener Plugin
+    if (platform.isDesktop && (win?.__TAURI__ || win?.__TAURI_INTERNALS__)) {
+      try {
+        const { openUrl } = await import('@tauri-apps/plugin-opener');
+        await openUrl(url);
+        return true;
+      } catch (err) {
+        console.warn('[ShareService] Tauri opener plugin failed, falling back:', err);
+      }
+    }
+
+    // 2. Browser / WebView fallback
+    if (typeof window !== 'undefined') {
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return true;
+    }
+
+    return false;
+  }
+
   public async shareToWhatsApp(phone: string, message: string): Promise<boolean> {
     const cleanPhone = toWhatsAppNumber(phone);
     const encodedText = encodeURIComponent(message);
@@ -85,7 +110,18 @@ class UniversalShareService implements ShareService {
       ? `https://wa.me/${cleanPhone}?text=${encodedText}`
       : `https://wa.me/?text=${encodedText}`;
 
-    // On native mobile devices, direct app scheme or Web intent
+    // 1. Desktop Native: open external WhatsApp Web URL via default system browser using @tauri-apps/plugin-opener
+    if (platform.isDesktop && (win?.__TAURI__ || win?.__TAURI_INTERNALS__)) {
+      try {
+        const { openUrl } = await import('@tauri-apps/plugin-opener');
+        await openUrl(webWhatsAppUrl);
+        return true;
+      } catch (err) {
+        console.warn('[ShareService] Tauri opener failed for WhatsApp, falling back:', err);
+      }
+    }
+
+    // 2. Mobile Native devices: direct app scheme or Web intent
     if (platform.isNativeMobile) {
       const nativeScheme = cleanPhone
         ? `whatsapp://send?phone=${cleanPhone}&text=${encodedText}`
@@ -102,7 +138,7 @@ class UniversalShareService implements ShareService {
       }
     }
 
-    // Standard web browser fallback
+    // 3. Standard web browser fallback
     if (typeof window !== 'undefined') {
       window.open(webWhatsAppUrl, '_blank', 'noopener,noreferrer');
       return true;

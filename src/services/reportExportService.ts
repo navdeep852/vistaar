@@ -17,6 +17,7 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
+import { fileService } from '../platform';
 import { DaybookTransaction, DaybookSummaryMetrics, CashbookSummaryMetrics, FinancialAccount } from '../types';
 
 export interface CompanyReportProfile {
@@ -818,7 +819,7 @@ export function exportDaybookToExcel(
   const ws = XLSX.utils.aoa_to_sheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Daybook');
-  XLSX.writeFile(wb, filename);
+  fileService.saveWorkbook(XLSX, wb, filename, 'Daybook Report');
 }
 
 export function exportCashbookToExcel(
@@ -871,7 +872,7 @@ export function exportCashbookToExcel(
   const ws = XLSX.utils.aoa_to_sheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Cashbook');
-  XLSX.writeFile(wb, filename);
+  fileService.saveWorkbook(XLSX, wb, filename, 'Cashbook Report');
 }
 
 // Helper: Build Daybook HTML printable document
@@ -1182,7 +1183,7 @@ export function downloadDaybookReport(
 
   // Default: Direct PDF Download
   const doc = generateDaybookPdf(transactions, metrics, filters, company);
-  doc.save(`${filename}.pdf`);
+  fileService.saveJsPdf(doc, `${filename}.pdf`, 'Daybook Report');
 }
 
 export function downloadCashbookReport(
@@ -1212,5 +1213,5 @@ export function downloadCashbookReport(
 
   // Default: Direct PDF Download
   const doc = generateCashbookPdf(transactions, metrics, accounts, filters, company);
-  doc.save(`${filename}.pdf`);
+  fileService.saveJsPdf(doc, `${filename}.pdf`, 'Cashbook Report');
 }

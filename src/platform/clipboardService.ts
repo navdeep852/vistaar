@@ -8,9 +8,20 @@ export interface ClipboardService {
 class UniversalClipboardService implements ClipboardService {
   public async writeText(text: string): Promise<boolean> {
     const platform = getPlatformInfo();
-
-    // 1. Mobile Native via Capacitor Plugins if present
     const win = typeof window !== 'undefined' ? (window as any) : null;
+
+    // 1. Desktop Native via Tauri 2 Clipboard Manager
+    if (platform.isDesktop && (win?.__TAURI__ || win?.__TAURI_INTERNALS__)) {
+      try {
+        const { writeText } = await import('@tauri-apps/plugin-clipboard-manager');
+        await writeText(text);
+        return true;
+      } catch (err) {
+        console.warn('[ClipboardService] Tauri clipboard write failed, falling back:', err);
+      }
+    }
+
+    // 2. Mobile Native via Capacitor Plugins if present
     if (platform.isNativeMobile && win?.Capacitor?.Plugins?.Clipboard) {
       try {
         await win.Capacitor.Plugins.Clipboard.write({ string: text });
@@ -57,6 +68,17 @@ class UniversalClipboardService implements ClipboardService {
     const platform = getPlatformInfo();
     const win = typeof window !== 'undefined' ? (window as any) : null;
 
+    // 1. Desktop Native via Tauri 2 Clipboard Manager
+    if (platform.isDesktop && (win?.__TAURI__ || win?.__TAURI_INTERNALS__)) {
+      try {
+        const { readText } = await import('@tauri-apps/plugin-clipboard-manager');
+        return await readText();
+      } catch (err) {
+        console.warn('[ClipboardService] Tauri clipboard read failed, falling back:', err);
+      }
+    }
+
+    // 2. Mobile Native via Capacitor Plugins
     if (platform.isNativeMobile && win?.Capacitor?.Plugins?.Clipboard) {
       try {
         const result = await win.Capacitor.Plugins.Clipboard.read();
@@ -66,6 +88,7 @@ class UniversalClipboardService implements ClipboardService {
       }
     }
 
+    // 3. Web Clipboard API
     if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
       try {
         return await navigator.clipboard.readText();

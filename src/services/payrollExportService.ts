@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
+import { fileService } from '../platform';
 import { SalaryPayment } from '../types/payroll';
 
 export function formatInr(val: number): string {
@@ -214,7 +215,7 @@ export function downloadPayslipPdf(payment: SalaryPayment, businessSettings?: an
     { align: 'center' }
   );
 
-  doc.save(`Payslip_${payment.employeeCode}_${payment.salaryPeriodLabel.replace(/\s+/g, '_')}.pdf`);
+  fileService.saveJsPdf(doc, `Payslip_${payment.employeeCode}_${payment.salaryPeriodLabel.replace(/\s+/g, '_')}.pdf`, 'Payslip');
 }
 
 /**
@@ -324,7 +325,7 @@ export function downloadPayrollReportPdf(
     },
   });
 
-  doc.save(`Payroll_Report_${periodLabel.replace(/\s+/g, '_')}.pdf`);
+  fileService.saveJsPdf(doc, `Payroll_Report_${periodLabel.replace(/\s+/g, '_')}.pdf`, 'Payroll Report');
 }
 
 /**
@@ -377,7 +378,7 @@ export function downloadPayrollReportExcel(payments: SalaryPayment[], periodLabe
   const ws = XLSX.utils.json_to_sheet(dataRows);
   XLSX.utils.book_append_sheet(wb, ws, 'Payroll Register');
 
-  XLSX.writeFile(wb, `Payroll_Register_${periodLabel.replace(/\s+/g, '_')}.xlsx`);
+  fileService.saveWorkbook(XLSX, wb, `Payroll_Register_${periodLabel.replace(/\s+/g, '_')}.xlsx`, 'Payroll Register');
 }
 
 /**
@@ -441,7 +442,7 @@ export function downloadEmployeeImportTemplate(): void {
   ];
 
   XLSX.utils.book_append_sheet(wb, ws, 'Employees Template');
-  XLSX.writeFile(wb, 'VISTAAR_Employee_Import_Template.xlsx');
+  fileService.saveWorkbook(XLSX, wb, 'VISTAAR_Employee_Import_Template.xlsx', 'Employee Import Template');
 }
 
 /**
@@ -465,7 +466,7 @@ export function downloadEmployeeErrorReport(
 
   const ws = XLSX.utils.json_to_sheet(dataRows);
   XLSX.utils.book_append_sheet(wb, ws, 'Import Errors');
-  XLSX.writeFile(wb, `Employee_Import_Error_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+  fileService.saveWorkbook(XLSX, wb, `Employee_Import_Error_Report_${new Date().toISOString().split('T')[0]}.xlsx`, 'Import Error Report');
 }
 
 /**
@@ -499,6 +500,6 @@ export function downloadEmployeeDirectoryExcel(
 
   const ws = XLSX.utils.json_to_sheet(dataRows);
   XLSX.utils.book_append_sheet(wb, ws, 'Employee Directory');
-  XLSX.writeFile(wb, `Employee_Directory_${new Date().toISOString().split('T')[0]}.xlsx`);
+  fileService.saveWorkbook(XLSX, wb, `Employee_Directory_${new Date().toISOString().split('T')[0]}.xlsx`, 'Employee Directory');
 }
 

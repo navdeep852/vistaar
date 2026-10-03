@@ -57,6 +57,23 @@ function MainAppContent() {
   const [pendingFollowupsCount, setPendingFollowupsCount] = useState(0);
   const [unreadNotifsCount, setUnreadNotifsCount] = useState(0);
 
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('vistaar_desktop_sidebar_collapsed') === 'true';
+    }
+    return false;
+  });
+
+  const handleToggleSidebar = () => {
+    setIsSidebarCollapsed((prev) => {
+      const next = !prev;
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('vistaar_desktop_sidebar_collapsed', String(next));
+      }
+      return next;
+    });
+  };
+
   const { isWorkspaceActive } = useWorkspace();
 
   useEffect(() => {
@@ -337,6 +354,8 @@ function MainAppContent() {
           setActiveTab={handleSafeSetActiveTab}
           lowStockCount={lowStockCount}
           pendingFollowupsCount={pendingFollowupsCount}
+          isCollapsed={isSidebarCollapsed}
+          onToggleCollapse={handleToggleSidebar}
         />
       )}
 
@@ -350,12 +369,18 @@ function MainAppContent() {
       )}
 
       {/* Main Content Area — Full viewport width when Workspace Mode is active */}
-      <div className={`flex-1 flex flex-col min-w-0 ${isWorkspaceActive ? 'w-full pl-0 pt-0' : 'lg:pl-64 pt-[calc(3.75rem+env(safe-area-inset-top))] lg:pt-0'}`}>
+      <div className={`flex-1 flex flex-col min-w-0 transition-[padding] duration-200 ${
+        isWorkspaceActive
+          ? 'w-full pl-0 pt-0'
+          : `${isSidebarCollapsed ? 'lg:pl-20' : 'lg:pl-64'} pt-[calc(3.75rem+env(safe-area-inset-top))] lg:pt-0`
+      }`}>
         {!isWorkspaceActive && (
           <Header
             activeTab={activeTab}
             setActiveTab={handleSafeSetActiveTab}
             openModal={handleOpenQuickModal}
+            isSidebarCollapsed={isSidebarCollapsed}
+            onToggleSidebar={handleToggleSidebar}
           />
         )}
 

@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
+import { fileService } from '../platform';
 import { ComprehensivePLReport } from './financialStatementService';
 import { CompanyReportProfile, formatIndianCurrency, formatReportDate } from './reportExportService';
 
@@ -293,7 +294,7 @@ export function exportProfitLossPdf(
 
   const companySlug = sanitizeFilename(companyName);
   const dateSlug = `${report.current.range.startDateStr}_to_${report.current.range.endDateStr}`;
-  doc.save(`VISTAAR_${companySlug}_ProfitLoss_${dateSlug}.pdf`);
+  fileService.saveJsPdf(doc, `VISTAAR_${companySlug}_ProfitLoss_${dateSlug}.pdf`, 'Profit & Loss Statement');
 }
 
 /**
@@ -429,5 +430,5 @@ export function exportProfitLossExcel(
 
   const companySlug = sanitizeFilename(companyName);
   const dateSlug = `${report.current.range.startDateStr}_to_${report.current.range.endDateStr}`;
-  XLSX.writeFile(wb, `VISTAAR_${companySlug}_ProfitLoss_${dateSlug}.xlsx`);
+  fileService.saveWorkbook(XLSX, wb, `VISTAAR_${companySlug}_ProfitLoss_${dateSlug}.xlsx`, 'Profit & Loss Report');
 }

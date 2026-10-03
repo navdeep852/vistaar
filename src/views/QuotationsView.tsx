@@ -14,6 +14,8 @@ import {
   TrendingUp,
   Loader2,
   Calendar,
+  Copy,
+  Download,
 } from 'lucide-react';
 import { store } from '../services/store';
 import { quotationService } from '../services/supabase/quotationService';
@@ -21,12 +23,17 @@ import { Quotation, QuotationStatus } from '../types';
 import { Modal } from '../components/Modal';
 import { TemplateGalleryModal } from '../components/TemplateGalleryModal';
 import { DocumentEditorView } from './DocumentEditorView';
-import { DocumentRenderer } from '../components/DocumentRenderer';
+import { DocumentRenderer, DocumentRendererProps } from '../components/DocumentRenderer';
 import { printDocument } from '../services/printService';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { showToast } from '../components/Toast';
+import {
+  normalizeQuotationToDocument,
+  documentDataToRendererProps,
+  saveDocumentPdf,
+} from '../services/document';
 import { toWhatsAppNumber } from '../lib/phoneUtils';
-import { shareService } from '../platform';
+import { shareService, clipboardService } from '../platform';
 
 interface QuotationsViewProps {
   initialOpenCreate?: boolean;
@@ -42,6 +49,7 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   // Workflow State: list | gallery | editor
   const [mode, setMode] = useState<'list' | 'gallery' | 'editor'>(
@@ -208,41 +216,25 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
     showToast(`Opening WhatsApp for ${qt.customerName}...`, 'info');
   };
 
+  const getQuotationRendererProps = (qt: Quotation): DocumentRendererProps => {
+    const docData = normalizeQuotationToDocument(qt, settings);
+    return documentDataToRendererProps(docData);
+  };
+
   const handlePrintQuotation = (qt: Quotation) => {
-    printDocument({
-      templateId: qt.templateId,
-      documentType: 'quotation',
-      documentNumber: qt.quotationNumber,
-      date: qt.date,
-      dueDateOrValidUntil: qt.validUntil,
-      businessName: qt.snapshot?.businessName || settings.businessName,
-      phone: qt.snapshot?.phone || settings.phone,
-      email: qt.snapshot?.email || settings.email,
-      address: qt.snapshot?.address || settings.address,
-      city: qt.snapshot?.city || settings.city,
-      state: qt.snapshot?.state || settings.state,
-      pincode: qt.snapshot?.pincode || settings.pincode,
-      gstin: qt.snapshot?.gstin || settings.gstin,
-      bankDetails: qt.snapshot?.bankDetails || settings.bankDetails,
-      customerName: qt.customerName,
-      customerPhone: qt.customerPhone,
-      customerWhatsapp: qt.customerWhatsapp,
-      customerEmail: qt.customerEmail,
-      customerAddress: qt.customerAddress,
-      customerGstin: qt.customerGstin,
-      items: qt.items,
-      subtotal: qt.subtotal,
-      discountTotal: qt.discountTotal,
-      taxTotal: qt.taxTotal,
-      grandTotal: qt.grandTotal,
-      currency: settings.currency,
-      notes: qt.notes,
-      terms: qt.terms,
-      footerText: qt.footerText,
-      branding: qt.branding,
-      theme: qt.theme,
-      customization: qt.customization,
-    });
+    printDocument(getQuotationRendererProps(qt));
+  };
+
+  const handleSavePdf = async (qt: Quotation) => {
+    setIsGeneratingPdf(true);
+    try {
+      const props = getQuotationRendererProps(qt);
+      await saveDocumentPdf(props);
+    } catch (e: any) {
+      showToast('Failed to generate PDF.', 'error');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   const filteredQuotations = quotations.filter((q) => {
@@ -344,7 +336,21 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
               ) : (
                 filteredQuotations.map((qt) => (
                   <tr key={qt.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors">
-                    <td className="px-6 py-4 font-bold text-blue-600 dark:text-blue-400">{qt.quotationNumber}</td>
+                    <td className="px-6 py-4 font-bold text-blue-600 dark:text-blue-400">
+                      <button
+                        type="button"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          await clipboardService.writeText(qt.quotationNumber);
+                          showToast(`Copied ${qt.quotationNumber}`, 'success');
+                        }}
+                        title="Click to copy quotation number"
+                        className="group inline-flex items-center gap-1.5 hover:text-blue-700 dark:hover:text-blue-300 transition-colors cursor-pointer text-left font-bold"
+                      >
+                        <span>{qt.quotationNumber}</span>
+                        <Copy className="w-3 h-3 opacity-40 group-hover:opacity-100 text-slate-400 dark:text-slate-500 transition-opacity" />
+                      </button>
+                    </td>
                     <td className="px-6 py-4 font-medium text-slate-900 dark:text-slate-100">{qt.customerName}</td>
                     <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{qt.date}</td>
                     <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{qt.validUntil}</td>
@@ -561,15 +567,30 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
               <span className="text-xs font-semibold text-slate-600">Printable A4 Document</span>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => handlePrintQuotation(selectedQuotation)}
-                  className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-800 flex items-center gap-1.5"
+                  type="button"
+                  onClick={() => handleSavePdf(selectedQuotation)}
+                  disabled={isGeneratingPdf}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm ${
+                    isGeneratingPdf
+                      ? 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-500 text-white cursor-pointer active:scale-95'
+                  }`}
                 >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>Download / Print PDF</span>
+                  {isGeneratingPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                  <span>{isGeneratingPdf ? 'Generating...' : 'Save PDF'}</span>
                 </button>
                 <button
+                  type="button"
+                  onClick={() => handlePrintQuotation(selectedQuotation)}
+                  className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-800 flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleSendWhatsApp(selectedQuotation)}
-                  className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 flex items-center gap-1.5"
+                  className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
                 >
                   <Share2 className="w-3.5 h-3.5" />
                   <span>WhatsApp</span>

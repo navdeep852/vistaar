@@ -25,6 +25,7 @@ import {
   AlertCircle,
   Loader2,
   RefreshCw,
+  Download,
 } from 'lucide-react';
 import { store } from '../services/store';
 import { invoiceService } from '../services/supabase/invoiceService';
@@ -50,11 +51,13 @@ import {
 import { Customer, Product, QuotationItem, InvoiceItem, PaymentMethod, InvoiceStatus, Invoice } from '../types';
 import { INVOICE_TEMPLATES } from '../templates/invoiceTemplates';
 import { QUOTATION_TEMPLATES } from '../templates/quotationTemplates';
-import { DocumentRenderer } from '../components/DocumentRenderer';
+import { DocumentRenderer, DocumentRendererProps } from '../components/DocumentRenderer';
 import { printDocument } from '../services/printService';
 import { TemplateGalleryModal } from '../components/TemplateGalleryModal';
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
+import { shareService } from '../platform';
+import { saveDocumentPdf } from '../services/document';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
 import { ProductAutocomplete } from '../components/ProductAutocomplete';
 import { ProductLineItemsTable } from '../components/ProductLineItemsTable';
@@ -1002,52 +1005,68 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
     const docTitle = documentType === 'invoice' ? 'Invoice' : 'Quotation';
     const text = `Hello ${customerName} ji,\n\nPlease find your ${docTitle} for ${settings.currency}${grandTotal.toLocaleString()}.\n\nThank you for your business,\n${settings.businessName}`;
     const cleanPhone = (customerWhatsapp || customerPhone).replace(/[^0-9]/g, '');
-    const url = `https://wa.me/${cleanPhone.length === 10 ? '91' + cleanPhone : cleanPhone}?text=${encodeURIComponent(text)}`;
-    window.open(url, '_blank');
+    shareService.shareToWhatsApp(cleanPhone, text);
     showToast('Opening WhatsApp with pre-filled document summary...', 'info');
+  };
+
+  // Document Renderer Props Builder
+  const getCurrentRendererProps = (): DocumentRendererProps => ({
+    templateId,
+    documentType,
+    documentNumber: documentType === 'invoice' ? (initialDraftData?.invoiceNumber || 'INV-DRAFT') : (initialDraftData?.quotationNumber || 'QT-DRAFT'),
+    date,
+    dueDateOrValidUntil: dueDateOrValid,
+    businessName: settings.businessName,
+    phone: settings.phone,
+    email: settings.email,
+    address: settings.address,
+    city: settings.city,
+    state: settings.state,
+    pincode: settings.pincode,
+    gstin: settings.gstin,
+    bankDetails: settings.bankDetails,
+    customerName: customerName || 'Customer Name',
+    customerPhone,
+    customerWhatsapp,
+    customerEmail,
+    customerAddress,
+    customerGstin,
+    items: calculatedItems,
+    subtotal,
+    discountTotal,
+    taxTotal,
+    grandTotal,
+    currency: settings.currency,
+    notes,
+    terms,
+    footerText,
+    branding,
+    theme: {
+      primaryColor: customization.primaryColor,
+      secondaryColor: customization.secondaryColor,
+      textColor: customization.textColor,
+      fontFamily: customization.bodyFont,
+    },
+    customization,
+  });
+
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  const handleSavePdf = async () => {
+    setIsGeneratingPdf(true);
+    try {
+      const props = getCurrentRendererProps();
+      await saveDocumentPdf(props);
+    } catch (e: any) {
+      showToast('Failed to generate PDF.', 'error');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   // Isolated A4 Document Printing
   const handlePrintDocument = () => {
-    printDocument({
-      templateId,
-      documentType,
-      documentNumber: documentType === 'invoice' ? 'INV-2026-0001' : 'QT-2026-0001',
-      date,
-      dueDateOrValidUntil: dueDateOrValid,
-      businessName: settings.businessName,
-      phone: settings.phone,
-      email: settings.email,
-      address: settings.address,
-      city: settings.city,
-      state: settings.state,
-      pincode: settings.pincode,
-      gstin: settings.gstin,
-      bankDetails: settings.bankDetails,
-      customerName: customerName || 'Customer Name',
-      customerPhone,
-      customerWhatsapp,
-      customerEmail,
-      customerAddress,
-      customerGstin,
-      items: calculatedItems,
-      subtotal,
-      discountTotal,
-      taxTotal,
-      grandTotal,
-      currency: settings.currency,
-      notes,
-      terms,
-      footerText,
-      branding,
-      theme: {
-        primaryColor: customization.primaryColor,
-        secondaryColor: customization.secondaryColor,
-        textColor: customization.textColor,
-        fontFamily: customization.bodyFont,
-      },
-      customization,
-    });
+    printDocument(getCurrentRendererProps());
   };
 
   return (
@@ -2202,11 +2221,22 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
               </button>
               <button
                 type="button"
+                onClick={handleSavePdf}
+                disabled={isGeneratingPdf}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold text-white flex items-center gap-1 transition-all cursor-pointer shadow-sm ${
+                  isGeneratingPdf ? 'bg-slate-700 cursor-not-allowed opacity-60' : 'bg-blue-600 hover:bg-blue-500'
+                }`}
+              >
+                {isGeneratingPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                <span>{isGeneratingPdf ? 'Generating...' : 'Save PDF'}</span>
+              </button>
+              <button
+                type="button"
                 onClick={handlePrintDocument}
                 className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-white flex items-center gap-1 transition-colors cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5" />
-                <span>PDF Print</span>
+                <span>Print</span>
               </button>
               <button
                 type="button"
