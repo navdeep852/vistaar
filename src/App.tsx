@@ -13,35 +13,32 @@ import { auditLogService } from './services/supabase/auditLogService';
 // Views
 import { LoginView } from './views/LoginView';
 import { DashboardView } from './views/DashboardView';
-import { AnalyticsView } from './views/AnalyticsView';
-import { QuotationsView } from './views/QuotationsView';
-import { InvoicesView } from './views/InvoicesView';
-import { CustomersView } from './views/CustomersView';
-import { UdhariView } from './views/UdhariView';
-import { ProductsView } from './views/ProductsView';
-import { StockView } from './views/StockView';
-import { CounterSaleView } from './views/CounterSaleView';
-import { ExpensesView } from './views/ExpensesView';
-import { DaybookView } from './views/DaybookView';
-import { CashbookView } from './views/CashbookView';
-import { EwayBillsView } from './views/EwayBillsView';
-import { PurchaseOrdersView } from './views/PurchaseOrdersView';
-import { SupplierCatalogueView } from './views/SupplierCatalogueView';
 
-
-
-
-
-import { CategoriesView } from './views/CategoriesView';
-import { SuppliersView } from './views/SuppliersView';
-import { FinancialStatementsView } from './views/FinancialStatementsView';
-import { ProfitLossView } from './views/ProfitLossView';
-import { FollowUpsView } from './views/FollowUpsView';
-import { FeedbackView } from './views/FeedbackView';
-import { OffersView } from './views/OffersView';
-import { ReportsView } from './views/ReportsView';
-import { SettingsView } from './views/SettingsView';
-import { SalaryPayrollView } from './views/SalaryPayrollView';
+// Code-split secondary views for fast startup and minimal initial bundle size
+const AnalyticsView = React.lazy(() => import('./views/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
+const QuotationsView = React.lazy(() => import('./views/QuotationsView').then((m) => ({ default: m.QuotationsView })));
+const InvoicesView = React.lazy(() => import('./views/InvoicesView').then((m) => ({ default: m.InvoicesView })));
+const CustomersView = React.lazy(() => import('./views/CustomersView').then((m) => ({ default: m.CustomersView })));
+const UdhariView = React.lazy(() => import('./views/UdhariView').then((m) => ({ default: m.UdhariView })));
+const ProductsView = React.lazy(() => import('./views/ProductsView').then((m) => ({ default: m.ProductsView })));
+const StockView = React.lazy(() => import('./views/StockView').then((m) => ({ default: m.StockView })));
+const CounterSaleView = React.lazy(() => import('./views/CounterSaleView').then((m) => ({ default: m.CounterSaleView })));
+const ExpensesView = React.lazy(() => import('./views/ExpensesView').then((m) => ({ default: m.ExpensesView })));
+const DaybookView = React.lazy(() => import('./views/DaybookView').then((m) => ({ default: m.DaybookView })));
+const CashbookView = React.lazy(() => import('./views/CashbookView').then((m) => ({ default: m.CashbookView })));
+const EwayBillsView = React.lazy(() => import('./views/EwayBillsView').then((m) => ({ default: m.EwayBillsView })));
+const PurchaseOrdersView = React.lazy(() => import('./views/PurchaseOrdersView').then((m) => ({ default: m.PurchaseOrdersView })));
+const SupplierCatalogueView = React.lazy(() => import('./views/SupplierCatalogueView').then((m) => ({ default: m.SupplierCatalogueView })));
+const CategoriesView = React.lazy(() => import('./views/CategoriesView').then((m) => ({ default: m.CategoriesView })));
+const SuppliersView = React.lazy(() => import('./views/SuppliersView').then((m) => ({ default: m.SuppliersView })));
+const FinancialStatementsView = React.lazy(() => import('./views/FinancialStatementsView').then((m) => ({ default: m.FinancialStatementsView })));
+const ProfitLossView = React.lazy(() => import('./views/ProfitLossView').then((m) => ({ default: m.ProfitLossView })));
+const FollowUpsView = React.lazy(() => import('./views/FollowUpsView').then((m) => ({ default: m.FollowUpsView })));
+const FeedbackView = React.lazy(() => import('./views/FeedbackView').then((m) => ({ default: m.FeedbackView })));
+const OffersView = React.lazy(() => import('./views/OffersView').then((m) => ({ default: m.OffersView })));
+const ReportsView = React.lazy(() => import('./views/ReportsView').then((m) => ({ default: m.ReportsView })));
+const SettingsView = React.lazy(() => import('./views/SettingsView').then((m) => ({ default: m.SettingsView })));
+const SalaryPayrollView = React.lazy(() => import('./views/SalaryPayrollView').then((m) => ({ default: m.SalaryPayrollView })));
 
 import { ThemeProvider } from './context/ThemeContext';
 import { WorkspaceProvider, useWorkspace } from './context/WorkspaceContext';
@@ -133,6 +130,25 @@ function MainAppContent() {
     fetchMetrics();
     const interval = setInterval(fetchMetrics, 30000);
     return () => clearInterval(interval);
+  }, [authStatus]);
+
+  useEffect(() => {
+    if (authStatus === 'ready' && supabaseAuthService.isAuthenticated()) {
+      const preloadSecondaryViews = () => {
+        // Pre-warm high frequency views in background during idle periods
+        import('./views/InvoicesView').catch(() => {});
+        import('./views/ProductsView').catch(() => {});
+        import('./views/UdhariView').catch(() => {});
+      };
+
+      if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+        const handle = (window as any).requestIdleCallback(preloadSecondaryViews, { timeout: 3500 });
+        return () => (window as any).cancelIdleCallback(handle);
+      } else {
+        const timer = setTimeout(preloadSecondaryViews, 2000);
+        return () => clearTimeout(timer);
+      }
+    }
   }, [authStatus]);
 
   if (authStatus === 'loading') {
@@ -390,7 +406,16 @@ function MainAppContent() {
             moduleName={activeTab.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
             onReset={() => setActiveTab('dashboard')}
           >
-            {renderActiveView()}
+            <React.Suspense
+              fallback={
+                <div className="flex flex-col items-center justify-center min-h-[360px] w-full text-slate-400 dark:text-slate-500 gap-3">
+                  <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+                  <span className="text-xs font-medium tracking-wide">Loading module...</span>
+                </div>
+              }
+            >
+              {renderActiveView()}
+            </React.Suspense>
           </ErrorBoundary>
         </main>
       </div>

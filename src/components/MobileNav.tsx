@@ -59,9 +59,9 @@ const TAB_LABELS: Record<string, string> = {
 
 
 import { supabaseAuthService } from '../services/supabaseAuth';
-import logoDarkText from '../assets/Vistaar_Logo_With_Name.png';
-import logoLightText from '../assets/Vistaar_Logo_With_Name_Light.png';
-import logoIcon from '../assets/Vistaar_Icon_logo.png';
+const logoDarkText = '/Vistaar_Logo_With_Name.png';
+const logoLightText = '/Vistaar_Logo_With_Name_Light.png';
+const logoIcon = '/Vistaar_Icon_logo.png';
 
 import { ThemeToggle } from './ThemeToggle';
 import { UserAvatar } from './UserAvatar';

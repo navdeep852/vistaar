@@ -44,6 +44,9 @@ export class SalesAnalyticsService {
 
   public invalidateCache(): void {
     this.cache.clear();
+    try {
+      import('./enterpriseAnalyticsService').then((m) => m.enterpriseAnalyticsService.invalidateCache()).catch(() => {});
+    } catch {}
   }
 
   /**

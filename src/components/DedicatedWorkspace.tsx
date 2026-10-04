@@ -24,8 +24,8 @@ import {
 } from 'lucide-react';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useTheme } from '../context/ThemeContext';
-import logoDarkText from '../assets/Vistaar_Logo_With_Name.png';
-import logoLightText from '../assets/Vistaar_Logo_With_Name_Light.png';
+const logoDarkText = '/Vistaar_Logo_With_Name.png';
+const logoLightText = '/Vistaar_Logo_With_Name_Light.png';
 
 export interface DedicatedWorkspaceProps {
   title: string;

@@ -161,6 +161,13 @@ const LOCAL_SALES_KEY = 'vistaar_local_counter_sales_db';
 const LOCAL_PAYMENTS_KEY = 'vistaar_local_payments_db';
 
 export class EnterpriseAnalyticsService {
+  private dashboardKpisCache = new Map<string, { kpis: DashboardKPIs; timestamp: number }>();
+  private CACHE_TTL_MS = 15000; // 15 seconds
+
+  public invalidateCache(): void {
+    this.dashboardKpisCache.clear();
+  }
+
   private async getWorkspaceId(): Promise<string> {
     try {
       const authWsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
@@ -203,6 +210,15 @@ export class EnterpriseAnalyticsService {
     }
 
     const wsId = await this.getWorkspaceId();
+    const cacheKey = `${wsId}:${dateRange.rangeType}:${dateRange.startDateStr}:${dateRange.endDateStr}`;
+    const now = Date.now();
+
+    if (!forceFresh && this.dashboardKpisCache.has(cacheKey)) {
+      const cached = this.dashboardKpisCache.get(cacheKey)!;
+      if (now - cached.timestamp < this.CACHE_TTL_MS) {
+        return cached.kpis;
+      }
+    }
 
     const [salesMetricsRes, udhariMetricsRes, raw] = await Promise.all([
       salesAnalyticsService.getSalesMetrics(dateRange, forceFresh, wsId),
@@ -222,7 +238,7 @@ export class EnterpriseAnalyticsService {
       products: raw.productsList,
     });
 
-    return {
+    const kpisResult: DashboardKPIs = {
       totalSales: salesMetricsRes.totalSales,
       invoiceSales: salesMetricsRes.invoiceSales,
       counterSales: salesMetricsRes.counterSales,
@@ -234,6 +250,9 @@ export class EnterpriseAnalyticsService {
       outstandingUdhari: udhariMetricsRes.outstanding,
       overdueUdhari: udhariMetricsRes.overdue,
     };
+
+    this.dashboardKpisCache.set(cacheKey, { kpis: kpisResult, timestamp: now });
+    return kpisResult;
   }
 
   /**

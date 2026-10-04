@@ -18,7 +18,7 @@ import {
 import { supabaseAuthService } from '../services/supabaseAuth';
 import { notificationService } from '../services/supabase';
 import { AppNotification } from '../types';
-import logoIcon from '../assets/Vistaar_Icon_logo.png';
+const logoIcon = '/Vistaar_Icon_logo.png';
 import { ThemeToggle } from './ThemeToggle';
 import { UserAvatar } from './UserAvatar';
 

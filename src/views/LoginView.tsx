@@ -17,8 +17,8 @@ import {
 } from 'lucide-react';
 import { supabaseAuthService as auth } from '../services/supabaseAuth';
 import { showToast } from '../components/Toast';
-import logoFullNameLight from '../assets/Vistaar_Logo_With_Name_Light.png';
-import logoFullNameDark from '../assets/Vistaar_Logo_With_Name.png';
+const logoFullNameLight = '/Vistaar_Logo_With_Name_Light.png';
+const logoFullNameDark = '/Vistaar_Logo_With_Name.png';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { PhoneInput } from '../components/PhoneInput';
 import { PasswordInput } from '../components/PasswordInput';

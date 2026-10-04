@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { PurchaseOrder } from '../../types';
 import { businessSettingsService } from '../../services/supabase';
-import logoDarkText from '../../assets/Vistaar_Logo_With_Name.png';
+const logoDarkText = '/Vistaar_Logo_With_Name.png';
 
 interface PurchaseOrderPrintDocumentProps {
   ewayBill?: any; // fallback compatibility if embedded
