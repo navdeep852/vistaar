@@ -473,6 +473,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
   const [paymentReference, setPaymentReference] = useState<string>('');
   const [paymentNotes, setPaymentNotes] = useState<string>('');
   const [isFinalizing, setIsFinalizing] = useState<boolean>(false);
+  const [isSavingDraft, setIsSavingDraft] = useState<boolean>(false);
 
   // Derived Payment Calculations
   const effectivePaidAmount =
@@ -549,11 +550,15 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
 
   // Save Draft Action
   const handleSaveDraft = () => {
+    if (isSavingDraft || isFinalizing) return;
+    setIsSavingDraft(true);
+
     // 1. Normalize line items: remove completely empty rows
     const cleanedItems = items.filter((item) => !isEmptyLineItem(item));
 
     if (cleanedItems.length === 0) {
       showToast('Add at least one product/item before continuing.', 'error');
+      setIsSavingDraft(false);
       setEditorSection('items');
       return;
     }
@@ -1129,12 +1134,17 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
 
           <button
             type="button"
+            disabled={isSavingDraft || isFinalizing}
             onClick={handleSaveDraft}
-            className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-white transition-colors cursor-pointer shrink-0"
+            className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-white transition-colors cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <Save className="w-3.5 h-3.5 text-blue-400" />
-            <span className="hidden sm:inline">Save Draft</span>
-            <span className="sm:hidden">Draft</span>
+            {isSavingDraft ? (
+              <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+            ) : (
+              <Save className="w-3.5 h-3.5 text-blue-400" />
+            )}
+            <span className="hidden sm:inline">{isSavingDraft ? 'Saving...' : 'Save Draft'}</span>
+            <span className="sm:hidden">{isSavingDraft ? '...' : 'Draft'}</span>
           </button>
 
           <button

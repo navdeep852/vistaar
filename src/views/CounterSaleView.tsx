@@ -259,6 +259,7 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleConfirmAndCompleteSale = async () => {
+    if (isSubmitting) return;
     setIsSubmitting(true);
     try {
       const res = await counterSaleService.createCounterSale({
