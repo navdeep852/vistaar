@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "VISTAAR",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "identifier": "com.grovyx.vistaar",
   "build": {
     "frontendDist": "../dist",
@@ -29,7 +29,13 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis"
+    ],
+    "publisher": "GROVYX",
+    "copyright": "Copyright © 2026 GROVYX. All rights reserved.",
+    "shortDescription": "VISTAAR Business OS — Run Better. Grow Wider.",
+    "longDescription": "VISTAAR Business OS is a high-performance ERP, Billing, Inventory, Accounting and Enterprise Business Management suite.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -37,6 +43,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser"
+      }
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

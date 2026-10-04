@@ -31,3 +31,4 @@ supabase/.temp/
 # Tauri & Rust
 src-tauri/target/
 target/
+*.exe

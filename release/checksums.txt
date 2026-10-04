@@ -1,0 +1,4 @@
+# VISTAAR Desktop v1.0.0 Release Checksums (SHA-256)
+# Generated: 2026-10-05 00:16:19 UTC
+
+9d9a9ad8f06480134451c839f278130d0369a91540eb39bfb4e91beaca7f5fef *VISTAAR-Setup.exe
