@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  Search,
   Bell,
   Plus,
   User as UserIcon,
@@ -21,6 +20,7 @@ import { AppNotification } from '../types';
 const logoIcon = '/Vistaar_Icon_logo.png';
 import { ThemeToggle } from './ThemeToggle';
 import { UserAvatar } from './UserAvatar';
+import { GlobalSearch } from './GlobalSearch';
 
 interface HeaderProps {
   activeTab: string;
@@ -42,20 +42,14 @@ export const Header: React.FC<HeaderProps> = ({
   const [notifOpen, setNotifOpen] = useState(false);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const notifRef = useRef<HTMLDivElement>(null);
   const quickRef = useRef<HTMLDivElement>(null);
   const userRef = useRef<HTMLDivElement>(null);
 
-  // Global Desktop Keyboard Shortcuts (Ctrl+K for search, Ctrl+B for sidebar toggle)
+  // Global Desktop Keyboard Shortcuts (Ctrl+B for sidebar toggle; Ctrl+K handled in GlobalSearch)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        searchInputRef.current?.focus();
-      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b' && onToggleSidebar) {
         e.preventDefault();
         onToggleSidebar();
@@ -173,38 +167,9 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* 2. Middle: Desktop Global Search / Module Quick Jump */}
-      <div className="hidden md:flex items-center flex-1 max-w-xs lg:max-w-sm mx-4">
-        <div className="relative w-full">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && searchQuery.trim()) {
-                const q = searchQuery.trim().toLowerCase();
-                if (q.includes('inv')) setActiveTab('invoices');
-                else if (q.includes('quo')) setActiveTab('quotations');
-                else if (q.includes('prod') || q.includes('item') || q.includes('stock')) setActiveTab('products');
-                else if (q.includes('udh') || q.includes('due') || q.includes('bal')) setActiveTab('udhari');
-                else if (q.includes('day')) setActiveTab('daybook');
-                else if (q.includes('cash')) setActiveTab('cashbook');
-                else if (q.includes('exp')) setActiveTab('expenses');
-                else if (q.includes('dash')) setActiveTab('dashboard');
-                else if (q.includes('payr') || q.includes('sal')) setActiveTab('salary-payroll');
-                else if (q.includes('sett') || q.includes('profile')) setActiveTab('settings');
-                setSearchQuery('');
-              }
-            }}
-            placeholder="Search modules (Ctrl+K)..."
-            className="w-full pl-8 pr-12 py-1.5 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200/60 dark:hover:bg-slate-800 border border-transparent focus:border-blue-500 rounded-xl text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none transition-all"
-          />
-          <kbd className="hidden sm:inline-block absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] font-mono text-slate-400 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1 py-0.5 rounded shadow-2xs pointer-events-none">
-            Ctrl+K
-          </kbd>
-        </div>
+      {/* 2. Middle: Desktop Global Search / Quick Jump */}
+      <div className="hidden md:flex items-center flex-1 max-w-xs lg:max-w-md xl:max-w-lg mx-4">
+        <GlobalSearch setActiveTab={setActiveTab} />
       </div>
 
       {/* Action Controls */}

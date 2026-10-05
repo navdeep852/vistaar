@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Menu,
   X,
+  Search,
   LayoutDashboard,
   FileText,
   Users,
@@ -27,6 +28,7 @@ import {
   Banknote,
   ArrowLeft,
 } from 'lucide-react';
+import { GlobalSearch } from './GlobalSearch';
 
 const TAB_LABELS: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -80,6 +82,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   unreadNotifsCount = 0,
 }) => {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [user, setUser] = useState(supabaseAuthService.getUser());
   const { theme } = useTheme();
 
@@ -185,6 +188,14 @@ export const MobileNav: React.FC<MobileNavProps> = ({
         )}
 
         <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+          <button
+            onClick={() => setMobileSearchOpen(true)}
+            className="touch-target p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            aria-label="Search VISTAAR"
+            title="Search (Ctrl+K)"
+          >
+            <Search className="w-5 h-5" />
+          </button>
           <ThemeToggle variant="compact" />
           {activeTab !== 'dashboard' && (
             <button
@@ -201,6 +212,31 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           )}
         </div>
       </header>
+
+      {/* Mobile Search Modal Overlay */}
+      {mobileSearchOpen && (
+        <div className="lg:hidden fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex flex-col p-4 pt-[max(env(safe-area-inset-top),1rem)] animate-fade-in no-print">
+          <div className="w-full flex items-center justify-between pb-3">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Global Search</span>
+            <button
+              onClick={() => setMobileSearchOpen(false)}
+              className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              aria-label="Close search"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="w-full">
+            <GlobalSearch
+              setActiveTab={(tab) => {
+                setActiveTab(tab);
+                setMobileSearchOpen(false);
+              }}
+              placeholder="Search products, invoices, customers..."
+            />
+          </div>
+        </div>
+      )}
 
       {/* Slide-out Mobile Drawer Backdrop */}
       {drawerOpen && (
