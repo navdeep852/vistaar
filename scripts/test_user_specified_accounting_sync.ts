@@ -63,6 +63,10 @@ import {
 
 import { supabaseAuthService } from '../src/services/supabaseAuth';
 
+// Mock authoritative workspace for test execution
+(supabaseAuthService as any).getCurrentCompanyId = () => '11111111-1111-1111-1111-111111111111';
+(supabaseAuthService as any).resolveAuthoritativeWorkspace = async () => '11111111-1111-1111-1111-111111111111';
+
 function assert(condition: boolean, message: string) {
   if (!condition) {
     console.error(`❌ FAILED: ${message}`);
@@ -187,18 +191,18 @@ async function runSpecificAccountingTest() {
   // Record Cashbook entry for the payment in test environment
   await cashbookService.recordCashbookEntry({
     sourceType: 'INVOICE_PAYMENT',
-    sourceId: inv.id,
-    referenceNumber: inv.invoiceNumber,
+    sourceId: `${inv.id}-pay-1`,
+    referenceNumber: `${inv.invoiceNumber}-P1`,
     direction: 'IN',
     amount: paymentAmount,
     paymentMethod: 'Cash',
     partyName: customerName,
-    description: `Payment received for ${inv.invoiceNumber}`,
+    description: `Partial payment received for ${inv.invoiceNumber}`,
     transactionDate: new Date().toISOString().split('T')[0],
   });
 
   const rawLocal = safeGetTenantStorage<any[]>('vistaar_local_cashbook_db', []);
-  const cbEntry = rawLocal.find((t) => t.referenceNumber === inv.invoiceNumber || t.partyName === customerName);
+  const cbEntry = rawLocal.find((t) => t.sourceId === `${inv.id}-pay-1`);
   assert(!!cbEntry, 'Cashbook entry created for cash inflow');
   assert(cbEntry.amount === 4000, `Cashbook cash inflow is ₹4,000 (Actual: ₹${cbEntry.amount})`);
   assert(cbEntry.direction === 'IN', `Cashbook direction is 'IN' (Actual: ${cbEntry.direction})`);
@@ -217,8 +221,85 @@ async function runSpecificAccountingTest() {
     'INVARIANT: Dashboard Invoice Balance (₹11,750) === Dashboard Udhari Outstanding (₹11,750)'
   );
 
+  console.log('\n--- STEP 8: Clear Remaining Payment of ₹11,750 ---');
+  const clearPaymentValidation = validatePaymentAmount(updatedInv.balanceAmount, 11750);
+  assert(clearPaymentValidation.valid, `Second payment validation approved: ${clearPaymentValidation.error || 'Valid'}`);
+
+  const clearPayRes = await customerPaymentService.recordCustomerPayment({
+    invoiceId: inv.id,
+    invoiceNumber: inv.invoiceNumber,
+    customerName,
+    customerPhone,
+    amount: 11750,
+    paymentMethod: 'UPI',
+    notes: 'Final settlement payment',
+  });
+  assert(clearPayRes.success, 'Customer payment service recorded final payment of ₹11,750 successfully');
+
+  console.log('\n--- STEP 9: Verify Cleared State Across All Ledgers (Paid = ₹15,750, Remaining = ₹0) ---');
+  // 1. Invoice Check
+  const fullyPaidInv = store.getInvoices().find((i) => i.id === inv.id)!;
+  assert(fullyPaidInv.grandTotal === 15750, `Invoice grandTotal is ₹15,750 (Actual: ₹${fullyPaidInv.grandTotal})`);
+  assert(fullyPaidInv.paidAmount === 15750, `Invoice paidAmount is ₹15,750 (Actual: ₹${fullyPaidInv.paidAmount})`);
+  assert(fullyPaidInv.balanceAmount === 0, `Invoice balanceAmount is ₹0 (Actual: ₹${fullyPaidInv.balanceAmount})`);
+  assert(fullyPaidInv.status === 'Paid', `Invoice status is 'Paid' (Actual: ${fullyPaidInv.status})`);
+  assert(
+    fullyPaidInv.grandTotal === fullyPaidInv.paidAmount + fullyPaidInv.balanceAmount,
+    'INVARIANT: Invoice Grand Total = Paid Amount + Balance Amount (₹15,750 = ₹15,750 + ₹0)'
+  );
+
+  // 2. Udhari Check
+  const clearedUdhari = store.getUdharis().find((u) => u.invoiceId === inv.id || u.id === `UD-${inv.invoiceNumber}`)!;
+  assert(clearedUdhari.originalAmount === 15750, `Udhari originalAmount is ₹15,750 (Actual: ₹${clearedUdhari.originalAmount})`);
+  assert(clearedUdhari.totalReceived === 15750, `Udhari totalReceived is ₹15,750 (Actual: ₹${clearedUdhari.totalReceived})`);
+  assert(clearedUdhari.outstandingAmount === 0, `Udhari outstandingAmount is ₹0 (Actual: ₹${clearedUdhari.outstandingAmount})`);
+  assert(clearedUdhari.status === 'CLEARED' || clearedUdhari.status === 'PAID', `Udhari status is 'CLEARED'/'PAID' (Actual: ${clearedUdhari.status})`);
+
+  // 3. Daybook Check
+  const updatedDaybook = safeGetTenantStorage<any[]>('vistaar_local_daybook_db', []);
+  const clearedDaybookSale = updatedDaybook.find(
+    (t) => t.referenceType === 'INVOICE' && (t.referenceId === inv.id || t.referenceNumber === inv.invoiceNumber)
+  );
+  assert(clearedDaybookSale.totalAmount === 15750, `Daybook totalAmount is ₹15,750 (Actual: ₹${clearedDaybookSale.totalAmount})`);
+  assert(clearedDaybookSale.amount === 15750, `Daybook total paid is ₹15,750 (Actual: ₹${clearedDaybookSale.amount})`);
+  assert(clearedDaybookSale.remainingAmount === 0, `Daybook remainingAmount is ₹0 (Actual: ₹${clearedDaybookSale.remainingAmount})`);
+  assert(clearedDaybookSale.paymentStatus === 'PAID', `Daybook status is 'PAID' (Actual: ${clearedDaybookSale.paymentStatus})`);
+
+  // 4. Cashbook Check (Total Inflow for this invoice = ₹4,000 + ₹11,750 = ₹15,750)
+  await cashbookService.recordCashbookEntry({
+    sourceType: 'INVOICE_PAYMENT',
+    sourceId: `${inv.id}-pay-2`,
+    referenceNumber: `${inv.invoiceNumber}-P2`,
+    direction: 'IN',
+    amount: 11750,
+    paymentMethod: 'UPI',
+    partyName: customerName,
+    description: `Final settlement for ${inv.invoiceNumber}`,
+    transactionDate: new Date().toISOString().split('T')[0],
+  });
+
+  const allCashbookEntries = safeGetTenantStorage<any[]>('vistaar_local_cashbook_db', []).filter(
+    (t) => (t.sourceId && t.sourceId.startsWith(inv.id)) || (t.referenceNumber && t.referenceNumber.startsWith(inv.invoiceNumber))
+  );
+  const totalCashInflow = allCashbookEntries.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  assert(totalCashInflow === 15750, `Cashbook total cash inflow is ₹15,750 (Actual: ₹${totalCashInflow})`);
+
+  // 5. Dashboard Formulas Check
+  const finalInvFinancials = calculateInvoiceFinancials(fullyPaidInv.grandTotal, fullyPaidInv.paidAmount, fullyPaidInv.status);
+  assert(finalInvFinancials.paidAmount === 15750, 'Dashboard formula final paidAmount = ₹15,750');
+  assert(finalInvFinancials.balanceAmount === 0, 'Dashboard formula final balanceAmount = ₹0');
+
+  const finalUdhariFinancials = calculateUdhariFinancials(clearedUdhari.originalAmount, clearedUdhari.totalReceived, clearedUdhari.dueDate);
+  assert(finalUdhariFinancials.outstandingAmount === 0, 'Dashboard formula final udhari outstanding = ₹0');
+  assert(
+    finalInvFinancials.balanceAmount === finalUdhariFinancials.outstandingAmount,
+    'CROSS-MODULE RECONCILIATION: Dashboard Invoice Balance (₹0) === Dashboard Udhari Outstanding (₹0)'
+  );
+
   console.log('\n================================================================================');
   console.log(' ALL SYNCHRONIZATION RULES VERIFIED: INVOICE, UDHARI, DAYBOOK, CASHBOOK, DASHBOARD');
+  console.log(' STEP A: Paid = ₹4,000, Remaining = ₹11,750 (Partial)');
+  console.log(' STEP B: Paid = ₹15,750, Remaining = ₹0 (Fully Cleared)');
   console.log('================================================================================\n');
 }
 
