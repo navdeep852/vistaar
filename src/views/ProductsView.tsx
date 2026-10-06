@@ -1808,6 +1808,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.01"
                   required
                   min="0"
@@ -1825,6 +1826,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.01"
                   required
                   min="0"

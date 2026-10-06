@@ -554,6 +554,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Payment Amount ({settings.currency})</label>
               <input
                 type="number"
+                inputMode="decimal"
                 step="1"
                 min="1"
                 required

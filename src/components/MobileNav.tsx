@@ -215,12 +215,12 @@ export const MobileNav: React.FC<MobileNavProps> = ({
 
       {/* Mobile Search Modal Overlay */}
       {mobileSearchOpen && (
-        <div className="lg:hidden fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex flex-col p-4 pt-[max(env(safe-area-inset-top),1rem)] animate-fade-in no-print">
+        <div className="lg:hidden fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex flex-col p-4 pt-[max(env(safe-area-inset-top),1rem)] pb-[max(env(safe-area-inset-bottom),1rem)] animate-fade-in no-print">
           <div className="w-full flex items-center justify-between pb-3">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Global Search</span>
             <button
               onClick={() => setMobileSearchOpen(false)}
-              className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              className="touch-target p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
               aria-label="Close search"
             >
               <X className="w-5 h-5" />
@@ -252,7 +252,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           drawerOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="p-4 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80">
+        <div className="p-4 pt-[max(env(safe-area-inset-top),1rem)] flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <UserAvatar name={user?.name} avatarUrl={user?.avatarUrl} size="md" />
             <div className="min-w-0">
@@ -281,7 +281,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
               <button
                 key={item.id}
                 onClick={() => handleTabClick(item.id)}
-                className={`w-full min-h-[44px] flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
+                className={`w-full min-h-[44px] flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer touch-manipulation ${
                   isActive
                     ? 'bg-blue-600 text-white font-semibold shadow-xs shadow-blue-600/30'
                     : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -294,11 +294,11 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           })}
         </nav>
 
-        <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80 space-y-2">
+        <div className="p-4 pb-[max(env(safe-area-inset-bottom),1rem)] border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80 space-y-2 shrink-0">
           <ThemeToggle variant="button" />
           <button
             onClick={() => supabaseAuthService.logout()}
-            className="w-full min-h-[44px] flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-100 dark:hover:bg-rose-500/20 transition-colors cursor-pointer"
+            className="w-full min-h-[44px] flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-100 dark:hover:bg-rose-500/20 transition-colors cursor-pointer touch-manipulation"
           >
             <LogOut className="w-4 h-4" />
             <span>Sign Out</span>
@@ -307,7 +307,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
       </div>
 
       {/* Mobile Bottom Navigation Bar */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 pb-[max(env(safe-area-inset-bottom),6px)] bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 z-40 grid grid-cols-4 px-1 shadow-lg no-print transition-colors duration-200">
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-[calc(4rem+env(safe-area-inset-bottom,0px))] pb-[env(safe-area-inset-bottom,0px)] pt-1 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 z-40 grid grid-cols-4 px-1 shadow-lg no-print transition-colors duration-200 box-border">
         {bottomTabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -315,7 +315,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
             <button
               key={tab.id}
               onClick={() => handleTabClick(tab.id)}
-              className={`flex flex-col items-center justify-center w-full h-full min-h-[48px] py-1 cursor-pointer transition-colors ${
+              className={`flex flex-col items-center justify-center w-full h-full min-h-[44px] py-1 cursor-pointer transition-colors select-none touch-manipulation ${
                 isActive ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-slate-500 dark:text-slate-400 font-medium hover:text-slate-700 dark:hover:text-slate-200'
               }`}
             >

@@ -364,3 +364,22 @@ html, body {
   scrollbar-width: none;
 }
 
+/* iOS WebKit momentum scrolling & touch ergonomics */
+.overflow-y-auto,
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* iOS Home Indicator safe height utility */
+.pb-safe-home {
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 1rem);
+}
+
+/* Prevent accidental text selection during touch gestures on nav buttons */
+.touch-target,
+nav button,
+header button {
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}

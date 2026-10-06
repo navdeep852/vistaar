@@ -175,6 +175,7 @@ export const QuickAddProductModal: React.FC<QuickAddProductModalProps> = ({
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Cost Price (₹) *</label>
               <input
                 type="number"
+                inputMode="decimal"
                 step="any"
                 required
                 value={buyPrice}
@@ -188,6 +189,7 @@ export const QuickAddProductModal: React.FC<QuickAddProductModalProps> = ({
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Sell Price (₹)</label>
               <input
                 type="number"
+                inputMode="decimal"
                 step="any"
                 value={sellingPrice}
                 onChange={(e) => setSellingPrice(e.target.value)}

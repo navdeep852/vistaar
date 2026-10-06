@@ -920,6 +920,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.01"
                   required
                   value={amount}

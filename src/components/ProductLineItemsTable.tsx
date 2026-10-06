@@ -512,6 +512,7 @@ export const ProductLineItemsTable: React.FC<ProductLineItemsTableProps> = ({
                       <input
                         ref={(el) => { rateInputRefs.current[idx] = el; }}
                         type="number"
+                        inputMode="decimal"
                         step="0.01"
                         min="0"
                         value={item.sellingPrice || ''}
@@ -729,6 +730,7 @@ export const ProductLineItemsTable: React.FC<ProductLineItemsTableProps> = ({
                   </label>
                   <input
                     type="number"
+                    inputMode="decimal"
                     step="0.01"
                     min="0"
                     value={item.sellingPrice || ''}

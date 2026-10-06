@@ -57,7 +57,7 @@ export const Modal: React.FC<ModalProps> = ({
 
       {/* Modal Dialog */}
       <div
-        className={`relative w-full ${maxWidthClasses} bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 rounded-t-3xl sm:rounded-2xl rounded-b-none sm:rounded-b-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden z-10 animate-fade-in my-0 sm:my-auto max-h-[92vh] sm:max-h-[90vh] flex flex-col transition-colors duration-200`}
+        className={`relative w-full ${maxWidthClasses} bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 rounded-t-3xl sm:rounded-2xl rounded-b-none sm:rounded-b-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden z-10 animate-fade-in my-0 sm:my-auto max-h-[min(92vh,92dvh)] sm:max-h-[90vh] flex flex-col transition-colors duration-200 overscroll-contain`}
       >
         {/* Mobile Drag Indicator */}
         <div className="w-10 h-1 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto my-1.5 sm:hidden shrink-0" />
@@ -78,7 +78,7 @@ export const Modal: React.FC<ModalProps> = ({
         </div>
 
         {/* Content Body */}
-        <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] sm:pb-6">{children}</div>
+        <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0 pb-[max(calc(1.25rem+env(safe-area-inset-bottom,0px)),1.75rem)] sm:pb-6">{children}</div>
       </div>
     </div>
   );

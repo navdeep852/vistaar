@@ -69,12 +69,12 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
           <span>+91</span>
         </div>
 
-        {/* 10-digit Numeric Input */}
+        {/* 10-digit Phone Input */}
         <input
           id={id}
           name={name}
-          type="text"
-          inputMode="numeric"
+          type="tel"
+          inputMode="tel"
           pattern="[0-9]*"
           maxLength={10}
           disabled={disabled}

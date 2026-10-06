@@ -1206,6 +1206,7 @@ export const UdhariView: React.FC = () => {
               </span>
               <input
                 type="number"
+                inputMode="decimal"
                 step="0.01"
                 min="0.01"
                 required
@@ -1324,6 +1325,7 @@ export const UdhariView: React.FC = () => {
               </label>
               <input
                 type="number"
+                inputMode="decimal"
                 step="1"
                 min="1"
                 required

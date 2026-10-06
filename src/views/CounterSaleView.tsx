@@ -635,6 +635,7 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
                   </label>
                   <input
                     type="number"
+                    inputMode="decimal"
                     min="0"
                     step="0.01"
                     value={discountValue}
@@ -685,6 +686,7 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
                     </label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       min="0"
                       max={finalTotal}
                       step="0.01"

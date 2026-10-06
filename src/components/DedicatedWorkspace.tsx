@@ -194,14 +194,14 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
           {/* Slide-Over Drawer */}
           <div className="relative w-80 max-w-[85vw] bg-white dark:bg-slate-900 text-slate-900 dark:text-white h-full shadow-2xl flex flex-col z-10 border-r border-slate-200 dark:border-slate-800">
             {/* Drawer Header */}
-            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950/80">
+            <div className="p-4 pt-[max(env(safe-area-inset-top),1rem)] border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950/80 shrink-0">
               <div className="flex items-center gap-2">
                 <img src={logoFullName} alt="VISTAAR" className="h-8 w-auto object-contain" />
               </div>
               <button
                 type="button"
                 onClick={() => setIsNavOpen(false)}
-                className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                className="touch-target p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -223,7 +223,7 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
                           key={item.id}
                           type="button"
                           onClick={() => handleNavClick(item.id)}
-                          className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          className={`w-full min-h-[44px] flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                             isActive
                               ? 'bg-blue-600 text-white shadow-md'
                               : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
@@ -247,7 +247,7 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
             </div>
 
             {/* Drawer Footer */}
-            <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
+            <div className="p-4 pb-[max(env(safe-area-inset-bottom),1rem)] border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between shrink-0">
               <span>Vistaar ERP</span>
               <span className="text-emerald-600 dark:text-emerald-400 font-bold">Online</span>
             </div>
@@ -256,7 +256,7 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
       )}
 
       {/* WORKSPACE CONTENT BODY */}
-      <div className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-8 pb-32 sm:pb-8 w-full max-w-full mx-auto min-w-0 box-border">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-8 pb-[calc(7rem+env(safe-area-inset-bottom,0px))] sm:pb-8 w-full max-w-full mx-auto min-w-0 box-border">
         {children}
       </div>
     </div>
