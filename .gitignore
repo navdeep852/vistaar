@@ -32,3 +32,18 @@ supabase/.temp/
 src-tauri/target/
 target/
 *.exe
+
+# iOS & Apple Signing Credentials
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+*.p8
+*.key
+ios/App/App.xcodeproj/xcuserdata/
+ios/App/App.xcworkspace/xcuserdata/
+ios/App/build/
+ios/App/DerivedData/
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
