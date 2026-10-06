@@ -83,13 +83,15 @@ function MainAppContent() {
     return unsubscribeAuth;
   }, []);
 
-  // Native Android hardware/gesture back button handling
+  // Native mobile hardware back button & app lifecycle handling (iOS/Android)
   useEffect(() => {
     const win = typeof window !== 'undefined' ? (window as any) : null;
-    let removeListener: (() => void) | null = null;
+    let removeBackListener: (() => void) | null = null;
+    let removeStateListener: (() => void) | null = null;
 
     if (win?.Capacitor?.isNativePlatform()) {
       import('@capacitor/app').then(({ App: CapApp }) => {
+        // Android hardware back button
         CapApp.addListener('backButton', () => {
           if (modalToOpen) {
             setModalToOpen(null);
@@ -99,13 +101,24 @@ function MainAppContent() {
             CapApp.minimizeApp();
           }
         }).then((handle) => {
-          removeListener = () => handle.remove();
+          removeBackListener = () => handle.remove();
+        });
+
+        // iOS & Android lifecycle: foreground / background transitions
+        CapApp.addListener('appStateChange', (state) => {
+          if (state.isActive) {
+            // App brought to foreground from background or lock screen
+            window.dispatchEvent(new CustomEvent('vistaar:app_resumed'));
+          }
+        }).then((handle) => {
+          removeStateListener = () => handle.remove();
         });
       }).catch(() => {});
     }
 
     return () => {
-      if (removeListener) removeListener();
+      if (removeBackListener) removeBackListener();
+      if (removeStateListener) removeStateListener();
     };
   }, [modalToOpen, activeTab]);
 
@@ -128,8 +141,12 @@ function MainAppContent() {
     };
 
     fetchMetrics();
+    window.addEventListener('vistaar:app_resumed', fetchMetrics);
     const interval = setInterval(fetchMetrics, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('vistaar:app_resumed', fetchMetrics);
+    };
   }, [authStatus]);
 
   useEffect(() => {
