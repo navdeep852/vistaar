@@ -14,6 +14,93 @@ export interface CompanyWorkspace {
   updatedAt: string;
 }
 
+export type BranchType = 'Store' | 'Office' | 'Warehouse' | 'Factory' | 'Other';
+export type BranchStatus = 'Active' | 'Inactive';
+
+export interface Branch {
+  id: string;
+  workspaceId: string;
+  branchCode: string;
+  branchName: string;
+  branchType: BranchType;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pincode?: string | null;
+  country?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  gstin?: string | null;
+  stateCode?: string | null;
+  status: BranchStatus;
+  isMainBranch: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserBranchAccess {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  branchId: string;
+  isDefault: boolean;
+  createdAt: string;
+  branch?: Branch;
+}
+
+export interface BranchInventory {
+  id: string;
+  workspaceId: string;
+  branchId: string;
+  productId: string;
+  openingStock: number;
+  currentStock: number;
+  minStock: number;
+  reorderLevel: number;
+  rackLocation?: string;
+  purchasePrice?: number;
+  sellingPrice?: number;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  product?: Product;
+  branch?: Branch;
+}
+
+export type StockTransferStatus = 'Draft' | 'Requested' | 'Approved' | 'In Transit' | 'Completed' | 'Cancelled';
+
+export interface StockTransferItem {
+  id?: string;
+  workspaceId?: string;
+  transferId?: string;
+  productId: string;
+  productName?: string;
+  partNumber?: string;
+  sku?: string;
+  quantity: number;
+  unitCost?: number;
+  notes?: string;
+}
+
+export interface StockTransfer {
+  id: string;
+  workspaceId: string;
+  transferNumber: string;
+  sourceBranchId: string;
+  sourceBranchName?: string;
+  destinationBranchId: string;
+  destinationBranchName?: string;
+  transferDate: string;
+  status: StockTransferStatus;
+  requestedBy?: string;
+  approvedBy?: string;
+  notes?: string;
+  createdAt: string;
+  completedAt?: string;
+  updatedAt?: string;
+  items?: StockTransferItem[];
+}
+
 export interface UserAccount {
   id: string; // e.g. usr-1001
   companyId: string;
@@ -87,6 +174,8 @@ export interface UserProfile {
   avatarUrl?: string;
   businessName: string;
   mustChangePassword?: boolean;
+  defaultBranchId?: string;
+  permittedBranchIds?: string[];
 }
 
 export interface Customer {
@@ -154,10 +243,15 @@ export interface Product {
   createdAt: string;
   updatedAt: string;
   active?: boolean;
+  branchStock?: number;
+  branchRackLocation?: string;
+  branchId?: string;
 }
 
 export interface StockReceipt {
   id: string; // e.g. rec-2026-0001
+  branchId?: string;
+  branchName?: string;
   productId: string;
   receiptNumber: string; // e.g. GRN-0001
   purchaseOrderNumber?: string; // e.g. PO-2026-001 / GRN / Supplier Ref
@@ -179,10 +273,13 @@ export type StockMovementType =
   | 'RETURN'
   | 'DAMAGE'
   | 'LOSS'
-  | 'ADJUSTMENT';
+  | 'ADJUSTMENT'
+  | 'TRANSFER_IN'
+  | 'TRANSFER_OUT';
 
 export interface StockMovement {
   id: string; // e.g. mov-2026-0001
+  branchId?: string;
   productId: string;
   stockReceiptId?: string;
   type: StockMovementType;
@@ -255,6 +352,7 @@ export interface CounterSaleItem {
   id: string;
   counterSaleId: string;
   productId: string;
+  branchId?: string;
   stockReceiptId?: string;
   productNameSnapshot: string;
   partNumberSnapshot: string;
@@ -267,6 +365,8 @@ export interface CounterSaleItem {
 
 export interface CounterSale {
   id: string;
+  branchId?: string;
+  branchName?: string;
   saleNumber: string;
   customerId?: string;
   customerName: string;
@@ -317,6 +417,8 @@ export interface AccountingEntry {
 export interface CashbookEntry {
   id: string;
   workspaceId: string;
+  branchId?: string;
+  branchName?: string;
   entryDate: string;
   entryNumber: string;
   direction: 'IN' | 'OUT';
@@ -368,6 +470,7 @@ export type QuotationStatus =
 
 export interface QuotationItem {
   id: string;
+  branchId?: string;
   itemType?: 'product' | 'custom';
   productId?: string;
   productName: string;
@@ -386,6 +489,8 @@ export interface QuotationItem {
 
 export interface Quotation {
   id: string;
+  branchId?: string;
+  branchName?: string;
   quotationNumber: string; // e.g. QT-2026-0001
   customerId?: string;
   customerName: string;
@@ -429,6 +534,7 @@ export type InvoiceStatus =
 
 export interface InvoiceItem {
   id: string;
+  branchId?: string;
   itemType?: 'product' | 'custom';
   productId?: string;
   productName: string;
@@ -447,6 +553,8 @@ export interface InvoiceItem {
 
 export interface Invoice {
   id: string;
+  branchId?: string;
+  branchName?: string;
   invoiceNumber: string; // e.g. INV-2026-0001
   quotationId?: string;
   customerId?: string;
@@ -492,6 +600,8 @@ export type PaymentMethod =
 
 export interface Payment {
   id: string;
+  branchId?: string;
+  branchName?: string;
   paymentNumber: string;
   customerId: string;
   customerName: string;
@@ -510,6 +620,8 @@ export type UdhariStatus = 'UNPAID' | 'PARTIALLY PAID' | 'PAID' | 'OVERDUE';
 
 export interface UdhariRecord {
   id: string; // e.g. UD-2026-0001
+  branchId?: string;
+  branchName?: string;
   customerId?: string;
   customerNameSnapshot: string;
   phoneSnapshot: string;
@@ -527,6 +639,7 @@ export interface UdhariRecord {
 
 export interface UdhariPaymentRecord {
   id: string; // e.g. PAY-2026-0001
+  branchId?: string;
   udhariId: string;
   customerId?: string;
   amount: number;
@@ -553,6 +666,8 @@ export type ExpenseCategory =
 
 export interface Expense {
   id: string;
+  branchId?: string;
+  branchName?: string;
   category: ExpenseCategory;
   expenseName?: string;
   amount: number;
@@ -561,6 +676,7 @@ export interface Expense {
   paidTo?: string;
   referenceNo?: string;
   notes?: string;
+  isCompanyLevel?: boolean;
   sourceType?: 'MANUAL' | 'SALARY_PAYMENT' | string;
   sourceId?: string;
   createdAt: string;
@@ -600,6 +716,8 @@ export interface FollowUpExecutionLog {
 
 export interface FollowUp {
   id: string;
+  workspaceId?: string;
+  branchId?: string;
   customerId: string;
   customerName: string;
   customerPhone: string;
@@ -757,6 +875,8 @@ export type DaybookDirection = 'IN' | 'OUT' | 'NON_CASH';
 export interface DaybookTransaction {
   id: string;
   workspaceId: string;
+  branchId?: string;
+  branchName?: string;
   transactionCode: string;
   transactionDate: string;
   transactionTime?: string;
@@ -801,6 +921,7 @@ export interface DaybookTransaction {
 }
 
 export interface DaybookFilterOptions {
+  branchId?: string;
   dateRange?: 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
   startDate?: string;
   endDate?: string;
@@ -827,6 +948,7 @@ export type FinancialAccountType = 'CASH' | 'BANK' | 'UPI' | 'CARD' | 'OTHER';
 export interface FinancialAccount {
   id: string;
   workspaceId: string;
+  branchId?: string;
   name: string;
   accountType: FinancialAccountType;
   accountNumber?: string;
@@ -841,6 +963,7 @@ export interface FinancialAccount {
 }
 
 export interface CashbookFilterOptions {
+  branchId?: string;
   financialAccountId?: string; // 'ALL' or account UUID
   accountType?: FinancialAccountType | 'ALL';
   financialYear?: string; // e.g. 'FY_2026_27', 'FY_2025_26', 'ALL', 'CUSTOM'
@@ -1173,6 +1296,7 @@ export interface PurchaseOrderReceiptItem {
 export interface PurchaseOrderReceipt {
   id?: string;
   workspaceId?: string;
+  branchId?: string;
   purchaseOrderId: string;
   receiptNumber: string;
   receiptDate: string;
@@ -1187,6 +1311,8 @@ export interface PurchaseOrderReceipt {
 export interface PurchaseOrder {
   id?: string;
   workspaceId?: string;
+  branchId?: string;
+  branchName?: string;
   supplierId: string;
   supplierName?: string;
   supplierPhone?: string;
@@ -1224,6 +1350,7 @@ export interface PurchaseOrder {
 }
 
 export interface PurchaseOrderFilterOptions {
+  branchId?: string;
   search?: string;
   status?: string;
   supplierId?: string;

@@ -116,6 +116,10 @@ export class PurchaseOrderService {
         .select('*, suppliers(id, name, phone, address), purchase_order_items(*)', { count: 'exact' })
         .eq('workspace_id', wsId);
 
+      if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
+        query = query.eq('branch_id', options.branchId);
+      }
+
       if (options?.status && options.status !== 'ALL') {
         query = query.eq('status', options.status);
       }
@@ -347,6 +351,7 @@ export class PurchaseOrderService {
 
     const poPayload = {
       workspace_id: wsId,
+      branch_id: poData.branchId && isValidUuid(poData.branchId) ? poData.branchId : null,
       supplier_id: poData.supplierId,
       po_number: poNumber,
       po_date: poData.poDate || new Date().toISOString().split('T')[0],
@@ -903,6 +908,7 @@ export class PurchaseOrderService {
     return {
       id: row.id,
       workspaceId: row.workspace_id,
+      branchId: row.branch_id,
       supplierId: row.supplier_id,
       supplierName: supplier.name || 'Unknown Supplier',
       supplierPhone: supplier.phone || '',

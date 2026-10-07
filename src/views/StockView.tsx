@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Boxes, Plus, ArrowUpRight, ArrowDownRight, RefreshCw, AlertTriangle, Lock, ShieldAlert } from 'lucide-react';
+import { Boxes, Plus, ArrowUpRight, ArrowDownRight, ArrowRight, RefreshCw, AlertTriangle, Lock, ShieldAlert, ArrowLeftRight, CheckCircle2 } from 'lucide-react';
 import { store } from '../services/store';
 import { productService } from '../services/supabase';
-import { Product, InventoryTransaction, StockMovementReason } from '../types';
+import { Product, InventoryTransaction, StockMovementReason, StockTransfer } from '../types';
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
@@ -10,6 +10,9 @@ import { QuantityInput } from '../components/QuantityInput';
 import { ScrollableTable } from '../components/ScrollableTable';
 import { hasCurrentUserPermission } from '../lib/permissions';
 import { auditLogService } from '../services/supabase/auditLogService';
+import { useBranch } from '../context/BranchContext';
+import { branchService } from '../services/supabase/branchService';
+import { StockTransferModal } from '../components/StockTransferModal';
 
 interface StockViewProps {
   onNavigateTab?: (tab: string) => void;
@@ -17,9 +20,13 @@ interface StockViewProps {
 }
 
 export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }) => {
+  const { currentBranch } = useBranch();
+  const [activeSubSection, setActiveSubSection] = useState<'movements' | 'transfers'>('movements');
   const [products, setProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
+  const [transfers, setTransfers] = useState<StockTransfer[]>([]);
   const [adjustModalOpen, setAdjustModalOpen] = useState(false);
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [denialModalOpen, setDenialModalOpen] = useState(false);
 
   const [selectedProductId, setSelectedProductId] = useState('');
@@ -28,12 +35,17 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
   const [adjusting, setAdjusting] = useState(false);
 
   const canAdjustStock = hasCurrentUserPermission('inventory.adjust_stock');
+  const canTransferStock = hasCurrentUserPermission('stock_transfers.create') || hasCurrentUserPermission('inventory.adjust_stock');
   const settings = store.getSettings();
 
   const loadData = async () => {
-    const prodRes = await productService.getProducts();
+    const [prodRes, trfRes] = await Promise.all([
+      productService.getProducts({ branchId: currentBranch?.id }),
+      branchService.getStockTransfers(currentBranch?.id),
+    ]);
     const prodList = prodRes.data || [];
     setProducts(prodList);
+    setTransfers(trfRes.data || []);
     setTransactions(store.getState().inventoryTransactions);
     if (prodList.length > 0 && !selectedProductId) {
       setSelectedProductId(prodList[0].id);
@@ -43,8 +55,14 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
 
   useEffect(() => {
     loadData();
-    return store.subscribe(loadData);
-  }, []);
+    const handleBranchChanged = () => loadData();
+    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
+    const unsubscribeStore = store.subscribe(loadData);
+    return () => {
+      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
+      unsubscribeStore();
+    };
+  }, [currentBranch?.id]);
 
   const currentProduct = products.find((p) => p.id === selectedProductId);
 
@@ -110,36 +128,86 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
     <div className="space-y-6 animate-fade-in pb-12">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card transition-colors">
         <div>
-          <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Inventory Stock Transactions</h3>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Every inventory change is tracked with timestamp and reason
+          <div className="flex items-center gap-2">
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Inventory Stock Governance</h3>
+            {currentBranch ? (
+              <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900/60">
+                {currentBranch.branchName} ({currentBranch.branchCode})
+              </span>
+            ) : (
+              <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                All Branches (Consolidated)
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            Real-time branch inventory tracking, immutable movement logs, and cross-location stock transfers.
           </p>
         </div>
 
-        {canAdjustStock ? (
-          <button
-            onClick={() => {
-              if (products.length > 0 && !selectedProductId) {
-                setSelectedProductId(products[0].id);
-                setActualStock(products[0].currentStock || 0);
-              }
-              setAdjustModalOpen(true);
-            }}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-600/20 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>+ Owner Stock Adjustment</span>
-          </button>
-        ) : (
-          <button
-            onClick={handleEmployeeAttemptAdjustment}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-            title="Stock adjustment requires Owner authorization"
-          >
-            <Lock className="w-4 h-4 text-amber-500" />
-            <span>Stock Adjustment (Owner Only)</span>
-          </button>
-        )}
+        <div className="flex items-center gap-2.5 w-full sm:w-auto">
+          {canTransferStock && (
+            <button
+              onClick={() => setTransferModalOpen(true)}
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md shadow-indigo-600/20 cursor-pointer"
+            >
+              <ArrowLeftRight className="w-4 h-4" />
+              <span>+ Stock Transfer</span>
+            </button>
+          )}
+
+          {canAdjustStock ? (
+            <button
+              onClick={() => {
+                if (products.length > 0 && !selectedProductId) {
+                  setSelectedProductId(products[0].id);
+                  setActualStock(products[0].currentStock || 0);
+                }
+                setAdjustModalOpen(true);
+              }}
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-600/20 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Owner Adjustment</span>
+            </button>
+          ) : (
+            <button
+              onClick={handleEmployeeAttemptAdjustment}
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+              title="Stock adjustment requires Owner authorization"
+            >
+              <Lock className="w-4 h-4 text-amber-500" />
+              <span>Stock Adjustment</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Sub-navigation tabs */}
+      <div className="flex gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+        <button
+          type="button"
+          onClick={() => setActiveSubSection('movements')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeSubSection === 'movements'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          Stock Movements & Audit ({transactions.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubSection('transfers')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+            activeSubSection === 'transfers'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <ArrowLeftRight className="w-3.5 h-3.5" />
+          <span>Inter-Branch Transfers ({transfers.length})</span>
+        </button>
       </div>
 
       {/* Denial Informational Modal for Non-Owner Employees */}
@@ -174,58 +242,135 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
         </Modal>
       )}
 
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card overflow-hidden transition-colors">
-        <ScrollableTable minWidth="850px">
-          <table className="w-full min-w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                <th className="px-6 py-3.5 min-w-[150px] whitespace-nowrap">Date & Time</th>
-                <th className="px-6 py-3.5 min-w-[180px]">Product</th>
-                <th className="px-6 py-3.5 min-w-[140px] whitespace-nowrap">Movement Type</th>
-                <th className="px-6 py-3.5 min-w-[120px] whitespace-nowrap">Change</th>
-                <th className="px-6 py-3.5 min-w-[120px] whitespace-nowrap">Updated Stock</th>
-                <th className="px-6 py-3.5 min-w-[160px]">Reference / Notes</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-              {transactions.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500">
-                    No stock transactions recorded yet.
-                  </td>
+      {/* MOVEMENTS TABLE */}
+      {activeSubSection === 'movements' && (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card overflow-hidden transition-colors">
+          <ScrollableTable minWidth="850px">
+            <table className="w-full min-w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 min-w-[150px] whitespace-nowrap">Date & Time</th>
+                  <th className="px-6 py-3.5 min-w-[180px]">Product</th>
+                  <th className="px-6 py-3.5 min-w-[140px] whitespace-nowrap">Movement Type</th>
+                  <th className="px-6 py-3.5 min-w-[120px] whitespace-nowrap">Change</th>
+                  <th className="px-6 py-3.5 min-w-[120px] whitespace-nowrap">Updated Stock</th>
+                  <th className="px-6 py-3.5 min-w-[160px]">Reference / Notes</th>
                 </tr>
-              ) : (
-                transactions.map((t) => {
-                  const prod = products.find((p) => p.id === t.productId);
-                  const isPositive = t.quantityDelta > 0;
-                  return (
-                    <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                        {new Date(t.date).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                {transactions.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500">
+                      No stock transactions recorded yet.
+                    </td>
+                  </tr>
+                ) : (
+                  transactions.map((t) => {
+                    const prod = products.find((p) => p.id === t.productId);
+                    const isPositive = t.quantityDelta > 0;
+                    return (
+                      <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                        <td className="px-6 py-4 text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                          {new Date(t.date).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                        </td>
+                        <td className="px-6 py-4 font-bold text-slate-900 dark:text-slate-100 min-w-[180px]">{prod ? prod.name : 'Product'}</td>
+                        <td className="px-6 py-4 font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap">{t.type}</td>
+                        <td
+                          className={`px-6 py-4 font-extrabold flex items-center gap-1 whitespace-nowrap ${
+                            isPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                          }`}
+                        >
+                          {isPositive ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
+                          <span>
+                            {isPositive ? '+' : ''}
+                            {t.quantityDelta}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">{t.newStock}</td>
+                        <td className="px-6 py-4 text-slate-500 dark:text-slate-400 min-w-[160px]">{t.referenceNo || t.notes || '-'}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </ScrollableTable>
+        </div>
+      )}
+
+      {/* TRANSFERS TABLE */}
+      {activeSubSection === 'transfers' && (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card overflow-hidden transition-colors">
+          <ScrollableTable minWidth="850px">
+            <table className="w-full min-w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 whitespace-nowrap">Transfer #</th>
+                  <th className="px-6 py-3.5 whitespace-nowrap">Date</th>
+                  <th className="px-6 py-3.5">Source → Destination</th>
+                  <th className="px-6 py-3.5">Items Transferred</th>
+                  <th className="px-6 py-3.5">Status</th>
+                  <th className="px-6 py-3.5">Notes</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                {transfers.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500">
+                      No inter-branch transfers recorded yet.
+                    </td>
+                  </tr>
+                ) : (
+                  transfers.map((trf) => (
+                    <tr key={trf.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                      <td className="px-6 py-4 font-mono font-bold text-blue-600 dark:text-blue-400 whitespace-nowrap">
+                        {trf.transferNumber}
                       </td>
-                      <td className="px-6 py-4 font-bold text-slate-900 dark:text-slate-100 min-w-[180px]">{prod ? prod.name : 'Product'}</td>
-                      <td className="px-6 py-4 font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap">{t.type}</td>
-                      <td
-                        className={`px-6 py-4 font-extrabold flex items-center gap-1 whitespace-nowrap ${
-                          isPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
-                        }`}
-                      >
-                        {isPositive ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
-                        <span>
-                          {isPositive ? '+' : ''}
-                          {t.quantityDelta}
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                        {new Date(trf.transferDate).toLocaleDateString()}
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-1.5 font-bold text-slate-900 dark:text-slate-100">
+                          <span>{trf.sourceBranchName || 'Origin'}</span>
+                          <ArrowRight className="w-3.5 h-3.5 text-blue-500" />
+                          <span>{trf.destinationBranchName || 'Destination'}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="font-semibold text-slate-800 dark:text-slate-200 block">
+                          {trf.items?.length || 0} Products
+                        </span>
+                        {trf.items && trf.items.length > 0 && (
+                          <span className="text-[10px] text-slate-400 dark:text-slate-500 block truncate max-w-xs">
+                            {trf.items.map((it) => `${it.productName || 'Item'} (${it.quantity})`).join(', ')}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900/60">
+                          <CheckCircle2 className="w-3 h-3" />
+                          {trf.status}
                         </span>
                       </td>
-                      <td className="px-6 py-4 font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">{t.newStock}</td>
-                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 min-w-[160px]">{t.referenceNo || t.notes || '-'}</td>
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
+                        {trf.notes || '—'}
+                      </td>
                     </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </ScrollableTable>
-      </div>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </ScrollableTable>
+        </div>
+      )}
+
+      {/* Stock Transfer Modal */}
+      <StockTransferModal
+        isOpen={transferModalOpen}
+        onClose={() => setTransferModalOpen(false)}
+        onSuccess={loadData}
+        currentBranch={currentBranch}
+      />
 
       {/* OWNER-AUTHORIZED STOCK ADJUSTMENT WORKSPACE */}
       {adjustModalOpen && (

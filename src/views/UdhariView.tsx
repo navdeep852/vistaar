@@ -27,12 +27,14 @@ import { showToast } from '../components/Toast';
 import { PhoneInput } from '../components/PhoneInput';
 import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 import { shareService } from '../platform';
+import { useBranch } from '../context/BranchContext';
 
 type ViewTab = 'udharis' | 'payments' | 'customers';
 type StatusFilter = 'ALL' | 'UNPAID' | 'PARTIALLY PAID' | 'PAID' | 'OVERDUE';
 type DateFilter = 'ALL' | 'TODAY' | 'WEEK' | 'MONTH' | 'LAST_MONTH';
 
 export const UdhariView: React.FC = () => {
+  const { currentBranch } = useBranch();
   const [udharis, setUdharis] = useState<UdhariRecord[]>([]);
   const [payments, setPayments] = useState<UdhariPaymentRecord[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -96,21 +98,33 @@ export const UdhariView: React.FC = () => {
   const metrics = store.getUdhariMetrics();
 
   const refreshData = () => {
-    setUdharis(store.getUdharis());
+    const all = store.getUdharis();
+    if (currentBranch) {
+      setUdharis(all.filter((u) => !u.branchId || u.branchId === currentBranch.id));
+    } else {
+      setUdharis(all);
+    }
     setPayments(store.getUdhariPayments());
     setCustomers(store.getCustomers());
   };
 
   useEffect(() => {
     refreshData();
-    udhariService.getUdhariRecords().then((res) => {
+    udhariService.getUdhariRecords(currentBranch?.id).then((res) => {
       if (res.data && res.data.length > 0) {
         store.syncRemoteUdharis(res.data);
         refreshData();
       }
     }).catch(() => {});
-    return store.subscribe(refreshData);
-  }, []);
+
+    const handleBranchChanged = () => refreshData();
+    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
+    const unsub = store.subscribe(refreshData);
+    return () => {
+      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
+      unsub();
+    };
+  }, [currentBranch?.id]);
 
   // Format Helpers
   const formatDate = (dateStr: string) => {
@@ -293,6 +307,7 @@ export const UdhariView: React.FC = () => {
         dueDate: addDueDate,
         notes: addNotes,
         customerId: addCustomerId || undefined,
+        branchId: currentBranch?.id || undefined,
       });
 
       showToast(`Udhari entry ${newRec.id} created for ${newRec.customerNameSnapshot}!`, 'success');
@@ -348,6 +363,7 @@ export const UdhariView: React.FC = () => {
         customerPhone: normalizedPhone,
         reference: payReference,
         notes: payNotes,
+        branchId: activeUdhari.branchId || currentBranch?.id || undefined,
       });
 
       if (!payRes.success) {

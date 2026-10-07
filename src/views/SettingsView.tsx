@@ -28,7 +28,9 @@ import {
   QrCode,
   ChevronLeft,
   ChevronRight,
+  MapPin,
 } from 'lucide-react';
+import { BranchSettingsTab } from '../components/BranchSettingsTab';
 import { businessSettingsService } from '../services/supabase';
 import { supabaseAuthService as auth } from '../services/supabaseAuth';
 import { store } from '../services/store';
@@ -123,9 +125,10 @@ export const SETTINGS_TABS = [
   { id: 'bank', label: '4. Bank & Payment', icon: CreditCard },
   { id: 'defaults', label: '5. Theme & Defaults', icon: Sliders },
   { id: 'employees', label: '6. Employees & Team', icon: Users },
-  { id: 'security', label: '7. Security & Password', icon: ShieldCheck },
-  { id: 'terms', label: '8. Default Terms', icon: FileText },
-  { id: 'preview', label: '9. Document Preview', icon: Eye },
+  { id: 'branches', label: '7. Branches & Locations', icon: MapPin },
+  { id: 'security', label: '8. Security & Password', icon: ShieldCheck },
+  { id: 'terms', label: '9. Default Terms', icon: FileText },
+  { id: 'preview', label: '10. Document Preview', icon: Eye },
 ] as const;
 
 export type SettingsSubTabId = typeof SETTINGS_TABS[number]['id'];
@@ -154,6 +157,8 @@ export const SettingsView: React.FC = () => {
         return hasCurrentUserPermission('settings.defaults.edit');
       case 'employees':
         return hasCurrentUserPermission('employees.view');
+      case 'branches':
+        return hasCurrentUserPermission('branches.manage') || hasCurrentUserPermission('branches.view') || currentUser?.role === 'owner';
       case 'security':
         return hasCurrentUserPermission('security.manage');
       case 'terms':
@@ -2431,16 +2436,23 @@ export const SettingsView: React.FC = () => {
           </div>
         )}
 
+        {/* 7. BRANCHES & LOCATIONS TAB */}
+        {activeSubTab === 'branches' && isTabAllowed('branches') && (
+          <BranchSettingsTab employees={employees} />
+        )}
+
         {/* Save Bar */}
-        <div className="flex justify-end pt-4 border-t border-slate-200 dark:border-slate-800">
-          <button
-            type="submit"
-            className="flex items-center gap-2 px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-lg shadow-blue-600/30 transition-colors"
-          >
-            <Save className="w-4 h-4" />
-            <span>Save Business Profile & Branding</span>
-          </button>
-        </div>
+        {activeSubTab !== 'preview' && activeSubTab !== 'branches' && (
+          <div className="flex justify-end pt-4 border-t border-slate-200 dark:border-slate-800">
+            <button
+              type="submit"
+              className="flex items-center gap-2 px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-lg shadow-blue-600/30 transition-colors"
+            >
+              <Save className="w-4 h-4" />
+              <span>Save Business Profile & Branding</span>
+            </button>
+          </div>
+        )}
       </form>
 
       {/* ==================== ADD EMPLOYEE MODAL ==================== */}

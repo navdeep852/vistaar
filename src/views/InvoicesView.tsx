@@ -34,6 +34,7 @@ import { toWhatsAppNumber } from '../lib/phoneUtils';
 import { CreateEwayBillModal } from '../components/eway/CreateEwayBillModal';
 import { shareService, clipboardService } from '../platform';
 import { calculateInvoiceFinancials } from '../services/financialCalculationService';
+import { useBranch } from '../context/BranchContext';
 
 
 interface InvoicesViewProps {
@@ -47,6 +48,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   onNavigateTab,
   activeTab,
 }) => {
+  const { currentBranch } = useBranch();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -73,20 +75,34 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   const settings = store.getSettings();
 
-
   useEffect(() => {
-    const updateData = () => setInvoices(store.getInvoices());
+    const updateData = () => {
+      const all = store.getInvoices();
+      if (currentBranch) {
+        setInvoices(all.filter((i) => !i.branchId || i.branchId === currentBranch.id));
+      } else {
+        setInvoices(all);
+      }
+    };
     updateData();
+
     import('../services/supabase/invoiceService').then(({ invoiceService }) => {
-      invoiceService.getInvoices().then((res) => {
+      invoiceService.getInvoices({ branchId: currentBranch?.id }).then((res) => {
         if (res.data && res.data.length > 0) {
           store.syncRemoteInvoices(res.data);
           updateData();
         }
       }).catch(() => {});
     }).catch(() => {});
-    return store.subscribe(updateData);
-  }, []);
+
+    const handleBranchChanged = () => updateData();
+    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
+    const unsub = store.subscribe(updateData);
+    return () => {
+      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
+      unsub();
+    };
+  }, [currentBranch?.id]);
 
   const handleEditDraft = (inv: Invoice) => {
     setEditingDraftInvoice(inv);
@@ -125,6 +141,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
         customerPhone: selectedInvoice.customerPhone,
         invoiceId: selectedInvoice.id,
         invoiceNumber: selectedInvoice.invoiceNumber,
+        branchId: selectedInvoice.branchId || currentBranch?.id || undefined,
         amount: payAmount,
         paymentDate: new Date().toISOString().split('T')[0],
         paymentMethod: payMethod,

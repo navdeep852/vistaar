@@ -59,17 +59,22 @@ export class QuotationService {
     throw new Error('[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined in quotationService.');
   }
 
-  public async getQuotations(explicitWsId?: string): Promise<{ data: any[]; error?: string }> {
+  public async getQuotations(explicitWsId?: string, options?: { branchId?: string }): Promise<{ data: any[]; error?: string }> {
     const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
     const localStoreQuotations = store.getQuotations() || [];
 
     try {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
-        const { data, error } = await supabase
+        let query = supabase
           .from('quotations')
           .select('*, quotation_items(*)')
-          .eq('workspace_id', wsId)
-          .order('created_at', { ascending: false });
+          .eq('workspace_id', wsId);
+
+        if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
+          query = query.eq('branch_id', options.branchId);
+        }
+
+        const { data, error } = await query.order('created_at', { ascending: false });
 
         if (error) {
           const errStr = handleSupabaseError(error, 'getQuotations');
@@ -176,6 +181,7 @@ export class QuotationService {
             discount_total: qt.discountTotal || 0,
             tax_total: qt.taxTotal || 0,
             grand_total: qt.grandTotal || 0,
+            branch_id: qt.branchId && isValidUuid(qt.branchId) ? qt.branchId : null,
             notes: qt.notes || null,
             terms: qt.terms || null,
             footer_text: qt.footerText || null,
@@ -201,6 +207,7 @@ export class QuotationService {
           const itemRows = validItems.map((item) => ({
             workspace_id: wsId,
             quotation_id: quotationId,
+            branch_id: qt.branchId && isValidUuid(qt.branchId) ? qt.branchId : null,
             item_type: item.itemType || (item.productId ? 'product' : 'custom'),
             product_id: (item.productId && isValidUuid(item.productId)) ? item.productId : null,
             product_name: item.productName,

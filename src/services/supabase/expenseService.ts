@@ -32,15 +32,25 @@ export class ExpenseService {
    * Fetch expenses for the authoritative workspace with multi-tenant isolation
    * and sync with frontend store.
    */
-  public async getExpenses(): Promise<{ data: Expense[]; error?: string }> {
+  public async getExpenses(options?: { branchId?: string; includeCompanyLevel?: boolean }): Promise<{ data: Expense[]; error?: string }> {
     const wsId = await this.getWorkspaceId();
 
     try {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
-        const { data, error } = await supabase
+        let query = supabase
           .from('expenses')
           .select('*')
-          .eq('workspace_id', wsId)
+          .eq('workspace_id', wsId);
+
+        if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
+          if (options.includeCompanyLevel !== false) {
+            query = query.or(`branch_id.eq.${options.branchId},branch_id.is.null`);
+          } else {
+            query = query.eq('branch_id', options.branchId);
+          }
+        }
+
+        const { data, error } = await query
           .order('expense_date', { ascending: false })
           .order('created_at', { ascending: false });
 
@@ -95,10 +105,13 @@ export class ExpenseService {
 
       // 1. Primary: Try Atomic Supabase RPC if database migration is applied
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
+        const expBranchId = exp.isCompanyLevel ? null : (exp.branchId && isValidUuid(exp.branchId) ? exp.branchId : null);
+
         try {
           const { data: rpcRes, error: rpcErr } = await supabase.rpc('record_expense_atomic', {
             p_payload: {
               workspace_id: wsId,
+              branch_id: expBranchId,
               expense_id: expenseId,
               category,
               expense_name: expenseName || null,
@@ -114,6 +127,8 @@ export class ExpenseService {
           if (!rpcErr && rpcRes && rpcRes.success) {
             const createdExp: Expense = {
               id: rpcRes.expense_id || expenseId,
+              branchId: exp.branchId,
+              isCompanyLevel: exp.isCompanyLevel,
               category,
               expenseName,
               amount,

@@ -23,6 +23,7 @@ import { showToast } from '../Toast';
 import { QuickAddProductModal } from './QuickAddProductModal';
 import { QuantityInput } from '../QuantityInput';
 import { GstRateInput } from '../GstRateInput';
+import { useBranch } from '../../context/BranchContext';
 
 interface PurchaseOrderCreateModalProps {
   isOpen: boolean;
@@ -37,6 +38,7 @@ export const PurchaseOrderCreateModal: React.FC<PurchaseOrderCreateModalProps> =
   onSuccess,
   initialPo,
 }) => {
+  const { currentBranch } = useBranch();
   const [loading, setLoading] = useState(false);
   const isSubmittingRef = useRef(false);
 
@@ -473,6 +475,7 @@ export const PurchaseOrderCreateModal: React.FC<PurchaseOrderCreateModalProps> =
         termsConditions,
         internalNotes,
         status: statusToSave,
+        branchId: currentBranch?.id || initialPo?.branchId || undefined,
       };
 
       const result = initialPo?.id

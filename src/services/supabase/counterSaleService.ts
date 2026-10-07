@@ -50,7 +50,7 @@ export class CounterSaleService {
     return '';
   }
 
-  private async deductCounterSaleStock(items: any[], invoiceNumber: string, saleDate: string) {
+  private async deductCounterSaleStock(items: any[], invoiceNumber: string, saleDate: string, branchId?: string) {
     const wsId = await this.getOrFetchWorkspaceId();
 
     for (const item of items) {
@@ -79,6 +79,25 @@ export class CounterSaleService {
               .update({ current_stock: newStock, updated_at: new Date().toISOString() })
               .eq('workspace_id', wsId)
               .eq('id', productId);
+          }
+
+          // 2b. Deduct from branch_inventory
+          if (branchId && isValidUuid(branchId)) {
+            const { data: bProd } = await supabase
+              .from('branch_inventory')
+              .select('current_stock')
+              .eq('branch_id', branchId)
+              .eq('product_id', productId)
+              .maybeSingle();
+
+            if (bProd) {
+              const newBStock = Math.max(0, (Number(bProd.current_stock) || 0) - quantity);
+              await supabase
+                .from('branch_inventory')
+                .update({ current_stock: newBStock, updated_at: new Date().toISOString() })
+                .eq('branch_id', branchId)
+                .eq('product_id', productId);
+            }
           }
 
           // 3. FIFO deduction on active stock receipts
@@ -110,6 +129,7 @@ export class CounterSaleService {
           // 4. Log stock movement
           await supabase.from('stock_movements').insert([{
             workspace_id: wsId,
+            branch_id: branchId && isValidUuid(branchId) ? branchId : null,
             product_id: productId,
             type: 'SALE',
             quantity: -quantity,
@@ -220,15 +240,20 @@ export class CounterSaleService {
     }
   }
 
-  public async getCounterSales(): Promise<{ data: CounterSale[]; error?: string }> {
+  public async getCounterSales(options?: { branchId?: string }): Promise<{ data: CounterSale[]; error?: string }> {
     const wsId = await this.getOrFetchWorkspaceId();
     try {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
-        const { data, error } = await supabase
+        let query = supabase
           .from('counter_sales')
           .select('*, counter_sale_items(*)')
-          .eq('workspace_id', wsId)
-          .order('created_at', { ascending: false });
+          .eq('workspace_id', wsId);
+
+        if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
+          query = query.eq('branch_id', options.branchId);
+        }
+
+        const { data, error } = await query.order('created_at', { ascending: false });
 
         if (error) {
           const errStr = handleSupabaseError(error, 'getCounterSales');
@@ -247,7 +272,7 @@ export class CounterSaleService {
     return { data: (fallback || []).map((row: any) => fromDbCounterSale(row)) };
   }
 
-  public async getCounterSaleMetrics(): Promise<{
+  public async getCounterSaleMetrics(options?: { branchId?: string }): Promise<{
     todayTotal: number;
     todayCount: number;
     monthTotal: number;
@@ -255,7 +280,7 @@ export class CounterSaleService {
     totalTransactions: number;
     totalDiscounts: number;
   }> {
-    const { data } = await this.getCounterSales();
+    const { data } = await this.getCounterSales(options);
     const sales = (data || []).filter((s) => s.status !== 'CANCELLED');
     const todayStr = new Date().toISOString().split('T')[0];
     const currentMonthStr = todayStr.substring(0, 7);
@@ -308,12 +333,14 @@ export class CounterSaleService {
 
     // 1. PRE-FINALIZATION AUTHORITATIVE STOCK VALIDATION FOR ALL ITEMS
     const { productService } = await import('./productService');
+    const saleBranchId = sale.branchId && isValidUuid(sale.branchId) ? sale.branchId : undefined;
+
     for (const item of items) {
       const productId = item.productId || item.product_id;
       const requestedQty = Math.abs(Number(item.quantity) || 0);
 
       if (productId && requestedQty > 0) {
-        const availableStock = await productService.getProductAvailableStock(productId);
+        const availableStock = await productService.getProductAvailableStock(productId, saleBranchId);
         if (requestedQty > availableStock) {
           const prodName = item.productName || item.productNameSnapshot || item.product_name_snapshot || 'Product';
           return {
@@ -326,6 +353,7 @@ export class CounterSaleService {
 
     // 2. BUILD RPC PAYLOAD
     const rpcPayload = {
+      branch_id: saleBranchId || null,
       customer_id: sale.customerId || null,
       sale_number: saleNumber,
       invoice_number: invoiceNumber,
@@ -390,6 +418,7 @@ export class CounterSaleService {
         try {
           const { daybookService } = await import('./daybookService');
           await daybookService.recordFinancialTransaction({
+            branchId: completeSale.branchId,
             referenceType: 'COUNTER_SALE',
             referenceId: completeSale.id,
             referenceNumber: completeSale.invoiceNumber || completeSale.saleNumber,
@@ -417,6 +446,7 @@ export class CounterSaleService {
           try {
             const { cashbookService } = await import('./cashbookService');
             await cashbookService.recordCashbookEntry({
+              branchId: completeSale.branchId,
               sourceType: 'COUNTER_SALE',
               sourceId: completeSale.id,
               referenceNumber: completeSale.invoiceNumber || completeSale.saleNumber,
@@ -455,6 +485,7 @@ export class CounterSaleService {
               .from('counter_sales')
               .insert([{
                 workspace_id: wsId,
+                branch_id: saleBranchId || null,
                 customer_id: (sale.customerId && isValidUuid(sale.customerId)) ? sale.customerId : null,
                 sale_number: saleNumber,
                 invoice_number: invoiceNumber,
@@ -482,6 +513,7 @@ export class CounterSaleService {
               const saleId = insertedSale.id;
               const itemRows = items.map((i: any) => ({
                 workspace_id: wsId,
+                branch_id: saleBranchId || null,
                 counter_sale_id: saleId,
                 product_id: (i.productId && isValidUuid(i.productId)) ? i.productId : ((i.product_id && isValidUuid(i.product_id)) ? i.product_id : null),
                 product_name_snapshot: i.productName || i.productNameSnapshot || i.product_name_snapshot || 'Product',
@@ -495,12 +527,13 @@ export class CounterSaleService {
               await supabase.from('counter_sale_items').insert(itemRows);
 
               // Deduct stock
-              await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate);
+              await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate, saleBranchId);
 
               // 1. Authoritative Daybook Sale Entry
               try {
                 const { daybookService } = await import('./daybookService');
                 await daybookService.recordFinancialTransaction({
+                  branchId: saleBranchId,
                   referenceType: 'COUNTER_SALE',
                   referenceId: saleId,
                   referenceNumber: invoiceNumber,

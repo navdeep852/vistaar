@@ -63,6 +63,7 @@ import { ProductAutocomplete } from '../components/ProductAutocomplete';
 import { ProductLineItemsTable } from '../components/ProductLineItemsTable';
 import { inventoryService } from '../services/supabase/inventoryService';
 import { isEmptyLineItem, filterValidLineItems } from '../lib/productHelpers';
+import { useBranch } from '../context/BranchContext';
 
 
 interface DocumentEditorViewProps {
@@ -84,6 +85,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
   onNavigateTab,
   activeTab,
 }) => {
+  const { currentBranch } = useBranch();
   const settings = store.getSettings();
   const [products, setProducts] = useState<Product[]>(() => store.getProducts());
 
@@ -181,7 +183,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         setUsesPartNumber(res.data.usesPartNumber);
       }
     }).catch(() => {});
-    productService.getProducts().then((res) => {
+    productService.getProducts({ branchId: currentBranch?.id }).then((res) => {
       if (res && res.data && res.data.length > 0) {
         setProducts(res.data);
       }
@@ -193,7 +195,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
       }
     });
     return unsub;
-  }, []);
+  }, [currentBranch?.id]);
 
   // Dates
   const [date, setDate] = useState(
@@ -882,6 +884,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         const finResult = await invoiceService.finalizeAuthoritativeInvoice({
           source: 'MANUAL',
           id: initialDraftData?.id,
+          branchId: currentBranch?.id || initialDraftData?.branchId || undefined,
           date,
           dueDate: dueDateOrValid,
           customerId: selectedCustomerId || undefined,
@@ -958,6 +961,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         const qtGrandTotal = qtSubtotal - qtDiscountTotal + qtTaxTotal;
 
         const qt = store.addQuotation({
+          branchId: currentBranch?.id || initialDraftData?.branchId || undefined,
           customerId: selectedCustomerId || undefined,
           customerName,
           customerPhone,

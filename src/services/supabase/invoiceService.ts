@@ -41,11 +41,16 @@ export class InvoiceService {
     page?: number;
     pageSize?: number;
     workspaceId?: string;
+    branchId?: string;
   }): Promise<{ data: any[]; count: number; error?: string }> {
     const wsId = options?.workspaceId && isValidUuid(options.workspaceId) ? options.workspaceId : await this.getOrFetchWorkspaceId();
     let query = supabase.from('invoices').select('*, invoice_items(*)', { count: 'exact' });
     if (isValidUuid(wsId)) {
       query = query.eq('workspace_id', wsId);
+    }
+
+    if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
+      query = query.eq('branch_id', options.branchId);
     }
 
     if (options?.search) {
@@ -154,6 +159,7 @@ export class InvoiceService {
           grand_total: normGrandTotal,
           paid_amount: normPaidAmount,
           balance_amount: normBalanceAmount,
+          branch_id: invoice.branchId && isValidUuid(invoice.branchId) ? invoice.branchId : null,
         }])
         .select('id')
         .single();
@@ -178,6 +184,7 @@ export class InvoiceService {
         const itemRows = items.map((item) => ({
           workspace_id: wsId,
           invoice_id: invoiceId,
+          branch_id: invoice.branchId && isValidUuid(invoice.branchId) ? invoice.branchId : null,
           product_id: item.productId || null,
           product_name: item.productName || item.name,
           sku: item.sku || '',
@@ -235,6 +242,7 @@ export class InvoiceService {
         try {
           const { daybookService } = await import('./daybookService');
           await daybookService.recordFinancialTransaction({
+            branchId: invoice.branchId,
             referenceType: 'INVOICE',
             referenceId: invoiceId,
             referenceNumber: invNumber,
@@ -259,6 +267,7 @@ export class InvoiceService {
           try {
             const { udhariService } = await import('./udhariService');
             await udhariService.syncInvoiceUdhari({
+              branchId: invoice.branchId,
               invoiceId,
               invoiceNumber: invNumber,
               customerId: invoice.customerId,
@@ -365,8 +374,9 @@ export class InvoiceService {
         }
       }
 
+      const branchId = invoice.branch_id || invoice.branchId;
       for (const [productId, req] of reqMap.entries()) {
-        const currentStock = await productService.getProductAvailableStock(productId);
+        const currentStock = await productService.getProductAvailableStock(productId, branchId);
         if (currentStock < req.qty) {
           return {
             success: false,
@@ -587,6 +597,7 @@ export class InvoiceService {
 
       const invoicePayload = {
         workspaceId: wsId || undefined,
+        branchId: payload.branchId,
         quotationId: payload.quotationId,
         customerId: payload.customerId,
         customerName: payload.customerName || 'Walk-in Customer',
@@ -625,6 +636,7 @@ export class InvoiceService {
           const { data: rpcData, error: rpcErr } = await supabase.rpc('finalize_invoice_transaction', {
             p_payload: {
               workspace_id: wsId,
+              branch_id: payload.branchId || undefined,
               id: isValidUuid(authoritativeInvoiceId) ? authoritativeInvoiceId : undefined,
               invoice_id: isValidUuid(authoritativeInvoiceId) ? authoritativeInvoiceId : undefined,
               invoice_number: authoritativeInvoiceNumber || undefined,
@@ -929,6 +941,7 @@ export class InvoiceService {
 }
 
 export interface AuthoritativeInvoicePayload {
+  branchId?: string;
   source: 'MANUAL' | 'QUOTATION';
   quotationId?: string;
   quotationNumber?: string;

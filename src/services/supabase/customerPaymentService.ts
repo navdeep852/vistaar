@@ -11,6 +11,7 @@ import {
 } from '../financialCalculationService';
 
 export interface CustomerPaymentPayload {
+  branchId?: string;
   invoiceId?: string;
   invoiceNumber?: string;
   udhariId?: string;
@@ -178,6 +179,7 @@ export class CustomerPaymentService {
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
       const rpcPayload = {
         workspace_id: wsId,
+        branch_id: payload.branchId && isValidUuid(payload.branchId) ? payload.branchId : ((targetInvoice as any)?.branch_id || (targetInvoice as any)?.branchId || null),
         invoice_id: resolvedInvoiceId || null,
         invoice_number: invoiceNumber || null,
         udhari_id: resolvedUdhariId || null,

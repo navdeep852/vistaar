@@ -51,9 +51,11 @@ export class ProductService {
     page?: number;
     pageSize?: number;
     workspaceId?: string;
+    branchId?: string;
   }): Promise<{ data: Product[]; count: number; error?: string }> {
     let wsId = options?.workspaceId && isValidUuid(options.workspaceId) ? options.workspaceId : this.getWorkspaceId();
-    const isDefaultFetch = !options?.search && !options?.categoryId && !options?.page;
+    const branchId = options?.branchId && options.branchId !== 'ALL' ? options.branchId : undefined;
+    const isDefaultFetch = !options?.search && !options?.categoryId && !options?.page && !branchId;
 
     // Return from in-memory cache if available and fresh (<30s)
     if (isDefaultFetch && this.productsCache && this.productsCache.wsId === wsId && (Date.now() - this.productsCache.timestamp < this.CACHE_TTL_MS)) {
@@ -167,6 +169,37 @@ export class ProductService {
       }
 
       const products = (data as DbProduct[]).map((row) => fromDbProduct(row));
+
+      if (branchId && isSupabaseConfigured() && isValidUuid(wsId)) {
+        try {
+          const { data: bInv } = await supabase
+            .from('branch_inventory')
+            .select('product_id, current_stock, minimum_stock, reorder_level, rack_location, selling_price')
+            .eq('branch_id', branchId);
+          if (bInv && Array.isArray(bInv)) {
+            const bMap = new Map<string, any>();
+            bInv.forEach((row) => bMap.set(row.product_id, row));
+            products.forEach((p) => {
+              const bRow = bMap.get(p.id);
+              if (bRow) {
+                p.currentStock = Number(bRow.current_stock) || 0;
+                if (bRow.minimum_stock !== null && bRow.minimum_stock !== undefined) {
+                  p.minimumStock = Number(bRow.minimum_stock);
+                }
+                if (bRow.rack_location) p.location = bRow.rack_location;
+                if (bRow.selling_price !== null && bRow.selling_price !== undefined) {
+                  p.sellingPrice = Number(bRow.selling_price);
+                }
+              } else {
+                p.currentStock = 0;
+              }
+              p.branchId = branchId;
+            });
+          }
+        } catch (bErr) {
+          console.warn('[branch_inventory] Warning fetching branch stock:', bErr);
+        }
+      }
 
       if (isDefaultFetch) {
         this.productsCache = {
@@ -595,10 +628,39 @@ export class ProductService {
     return null;
   }
 
-  public async getProductAvailableStock(productId: string): Promise<number> {
+  public async getProductAvailableStock(productId: string, branchId?: string): Promise<number> {
     if (!productId) {
       console.warn('[STOCK AUTHORITY] Missing or empty productId provided to getProductAvailableStock.');
       return 0;
+    }
+
+    // If branchId is specified and not 'ALL', query branch-specific authoritative stock
+    if (branchId && branchId !== 'ALL' && isSupabaseConfigured() && isValidUuid(productId)) {
+      try {
+        const { data: bStock, error: bErr } = await supabase.rpc('get_authoritative_branch_product_stock', {
+          p_branch_id: branchId,
+          p_product_id: productId,
+        });
+        if (!bErr && bStock !== null && bStock !== undefined && !isNaN(Number(bStock))) {
+          return Math.max(0, Number(bStock));
+        }
+      } catch {
+        // Fallback to direct query
+      }
+
+      try {
+        const { data: biRow } = await supabase
+          .from('branch_inventory')
+          .select('current_stock')
+          .eq('branch_id', branchId)
+          .eq('product_id', productId)
+          .maybeSingle();
+        if (biRow) {
+          return Math.max(0, Number(biRow.current_stock) || 0);
+        }
+      } catch {
+        // Fall through
+      }
     }
 
     if (!isSupabaseConfigured() || !isValidUuid(productId)) {

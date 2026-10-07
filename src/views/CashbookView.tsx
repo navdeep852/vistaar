@@ -34,8 +34,10 @@ import { showToast } from '../components/Toast';
 import { DownloadReportDropdown } from '../components/DownloadReportDropdown';
 import { downloadCashbookReport } from '../services/reportExportService';
 import { store } from '../services/store';
+import { useBranch } from '../context/BranchContext';
 
 export const CashbookView: React.FC = () => {
+  const { currentBranch } = useBranch();
   const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
   const [transactions, setTransactions] = useState<DaybookTransaction[]>([]);
   const [metrics, setMetrics] = useState<CashbookSummaryMetrics>({
@@ -100,6 +102,7 @@ export const CashbookView: React.FC = () => {
         startDate: startDate || undefined,
         endDate: endDate || undefined,
         search: searchQuery || undefined,
+        branchId: currentBranch?.id,
       };
 
       const txResult = await cashbookService.getTransactions(options);
@@ -116,7 +119,12 @@ export const CashbookView: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, [selectedAccountId, selectedFY, dateRangePreset, paymentModeFilter, startDate, endDate, searchQuery]);
+    const handleBranchChanged = () => loadData();
+    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
+    return () => {
+      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
+    };
+  }, [selectedAccountId, selectedFY, dateRangePreset, paymentModeFilter, startDate, endDate, searchQuery, currentBranch?.id]);
 
   // Compute Indian Financial Year Label
   const fyInfo = useMemo(() => {

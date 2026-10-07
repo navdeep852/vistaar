@@ -45,6 +45,7 @@ import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
 import { QuantityInput } from '../components/QuantityInput';
 import { GstRateInput, GST_RATE_SLABS } from '../components/GstRateInput';
 import { ScrollableTable } from '../components/ScrollableTable';
+import { useBranch } from '../context/BranchContext';
 
 interface ProductsViewProps {
   initialOpenCreate?: boolean;
@@ -66,6 +67,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
   initialCategoryFilter,
   initialSupplierFilter,
 }) => {
+  const { currentBranch } = useBranch();
 
   // Store Collections
   const [products, setProducts] = useState<Product[]>([]);
@@ -165,7 +167,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
     try {
       const [invSettingsRes, prodRes, catRes] = await Promise.all([
         inventoryService.getInventorySettings(),
-        productService.getProducts(),
+        productService.getProducts({ branchId: currentBranch?.id }),
         productService.getCategories(),
       ]);
 
@@ -198,14 +200,17 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
     if (initialOpenCreate) {
       handleOpenAddProduct();
     }
+    const handleBranchChanged = () => refreshData();
+    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
     // Re-fetch data if auth session profile initializes asynchronously
     const unsubscribeAuth = supabaseAuthService.subscribe(() => {
       refreshData();
     });
     return () => {
+      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
       unsubscribeAuth();
     };
-  }, [initialOpenCreate, initialCategoryFilter]);
+  }, [initialOpenCreate, initialCategoryFilter, currentBranch?.id]);
 
   // Format Helpers
   const formatCurrency = (val: number) => {
@@ -1363,7 +1368,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                         <th className="p-4 min-w-[110px] whitespace-nowrap">HSN/SAC</th>
                         <th className="p-4 min-w-[140px] whitespace-nowrap">Location / Rack No.</th>
                         <th className="p-4 min-w-[130px] whitespace-nowrap">Category</th>
-                        <th className="p-4 min-w-[120px] text-right whitespace-nowrap">Available Stock</th>
+                        <th className="p-4 min-w-[120px] text-right whitespace-nowrap">{currentBranch ? `${currentBranch.branchCode} Stock` : 'Available Stock'}</th>
                         <th className="p-4 min-w-[110px] text-right whitespace-nowrap">Buy Price</th>
                         <th className="p-4 min-w-[110px] text-right whitespace-nowrap">Sell Price</th>
                         <th className="p-4 min-w-[120px] text-right whitespace-nowrap">Stock Value</th>

@@ -198,7 +198,8 @@ export class EnterpriseAnalyticsService {
    */
   public async getDashboardKpis(
     dateRange: ResolvedDateRange,
-    forceFresh = false
+    forceFresh = false,
+    branchId?: string
   ): Promise<DashboardKPIs> {
     if (!hasCurrentUserPermission('dashboard.view')) {
       await auditLogService.logSecurityEvent({
@@ -210,7 +211,7 @@ export class EnterpriseAnalyticsService {
     }
 
     const wsId = await this.getWorkspaceId();
-    const cacheKey = `${wsId}:${dateRange.rangeType}:${dateRange.startDateStr}:${dateRange.endDateStr}`;
+    const cacheKey = `${wsId}:${branchId || 'all'}:${dateRange.rangeType}:${dateRange.startDateStr}:${dateRange.endDateStr}`;
     const now = Date.now();
 
     if (!forceFresh && this.dashboardKpisCache.has(cacheKey)) {
@@ -221,9 +222,9 @@ export class EnterpriseAnalyticsService {
     }
 
     const [salesMetricsRes, udhariMetricsRes, raw] = await Promise.all([
-      salesAnalyticsService.getSalesMetrics(dateRange, forceFresh, wsId),
-      udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId),
-      this.fetchRawTransactionsForPeriod(wsId, dateRange),
+      salesAnalyticsService.getSalesMetrics(dateRange, forceFresh, wsId, branchId),
+      udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId, branchId),
+      this.fetchRawTransactionsForPeriod(wsId, dateRange, branchId),
     ]);
 
     const { totalCollections, cashCollections, upiCollections } = this.computeCollections(
@@ -331,7 +332,8 @@ export class EnterpriseAnalyticsService {
    */
   public async fetchRawTransactionsForPeriod(
     wsId: string,
-    dateRange: ResolvedDateRange
+    dateRange: ResolvedDateRange,
+    branchId?: string
   ): Promise<{
     invoices: any[];
     counterSales: any[];
@@ -347,37 +349,49 @@ export class EnterpriseAnalyticsService {
 
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
       try {
+        let invQ = supabase
+          .from('invoices')
+          .select('*, invoice_items(*)')
+          .eq('workspace_id', wsId)
+          .in('status', ['Issued', 'Partially Paid', 'Paid'])
+          .gte('date', dateRange.startDateStr)
+          .lte('date', dateRange.endDateStr);
+
+        let csQ = supabase
+          .from('counter_sales')
+          .select('*, counter_sale_items(*)')
+          .eq('workspace_id', wsId)
+          .eq('status', 'COMPLETED')
+          .gte('sale_date', dateRange.startDateStr)
+          .lte('sale_date', dateRange.endDateStr);
+
+        let payQ = supabase
+          .from('payments')
+          .select('*')
+          .eq('workspace_id', wsId)
+          .gte('payment_date', dateRange.startDateStr)
+          .lte('payment_date', dateRange.endDateStr);
+
+        let expQ = supabase
+          .from('expenses')
+          .select('*')
+          .eq('workspace_id', wsId)
+          .gte('expense_date', dateRange.startDateStr)
+          .lte('expense_date', dateRange.endDateStr);
+
+        if (branchId && branchId !== 'ALL' && isValidUuid(branchId)) {
+          invQ = invQ.eq('branch_id', branchId);
+          csQ = csQ.eq('branch_id', branchId);
+          payQ = payQ.eq('branch_id', branchId);
+          expQ = expQ.or(`branch_id.eq.${branchId},branch_id.is.null`);
+        }
+
         const [invRes, csRes, payRes, prodRes, expRes] = await Promise.all([
-          supabase
-            .from('invoices')
-            .select('*, invoice_items(*)')
-            .eq('workspace_id', wsId)
-            .in('status', ['Issued', 'Partially Paid', 'Paid'])
-            .gte('date', dateRange.startDateStr)
-            .lte('date', dateRange.endDateStr),
-          supabase
-            .from('counter_sales')
-            .select('*, counter_sale_items(*)')
-            .eq('workspace_id', wsId)
-            .eq('status', 'COMPLETED')
-            .gte('sale_date', dateRange.startDateStr)
-            .lte('sale_date', dateRange.endDateStr),
-          supabase
-            .from('payments')
-            .select('*')
-            .eq('workspace_id', wsId)
-            .gte('payment_date', dateRange.startDateStr)
-            .lte('payment_date', dateRange.endDateStr),
-          supabase
-            .from('products')
-            .select('*')
-            .eq('workspace_id', wsId),
-          supabase
-            .from('expenses')
-            .select('*')
-            .eq('workspace_id', wsId)
-            .gte('expense_date', dateRange.startDateStr)
-            .lte('expense_date', dateRange.endDateStr),
+          invQ,
+          csQ,
+          payQ,
+          supabase.from('products').select('*').eq('workspace_id', wsId),
+          expQ,
         ]);
 
         if (invRes.data) invoices = invRes.data;
@@ -447,7 +461,8 @@ export class EnterpriseAnalyticsService {
 
   public async getAnalyticsOverview(
     dateRange: ResolvedDateRange,
-    forceFresh = false
+    forceFresh = false,
+    branchId?: string
   ): Promise<EnterpriseAnalyticsData> {
     if (!hasCurrentUserPermission('analytics.view')) {
       await auditLogService.logSecurityEvent({
@@ -462,10 +477,10 @@ export class EnterpriseAnalyticsService {
 
     // 1. Fetch Authoritative Dashboard Sales Metrics & Raw Invoices / Counter Sales (Read-Only)
     const [salesMetricsRes, udhariMetricsRes, quotationsRes, raw] = await Promise.all([
-      salesAnalyticsService.getSalesMetrics(dateRange, forceFresh, wsId),
-      udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId),
-      quotationService.getQuotations(),
-      this.fetchRawTransactionsForPeriod(wsId, dateRange),
+      salesAnalyticsService.getSalesMetrics(dateRange, forceFresh, wsId, branchId),
+      udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId, branchId),
+      quotationService.getQuotations(branchId),
+      this.fetchRawTransactionsForPeriod(wsId, dateRange, branchId),
     ]);
 
     const { invoices, counterSales, payments, productsList, expensesList } = raw;

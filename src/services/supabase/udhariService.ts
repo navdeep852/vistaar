@@ -25,15 +25,20 @@ export class UdhariService {
     return '';
   }
 
-  public async getUdhariRecords(explicitWsId?: string): Promise<{ data: any[]; error?: string }> {
+  public async getUdhariRecords(explicitWsId?: string, options?: { branchId?: string }): Promise<{ data: any[]; error?: string }> {
     const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
     try {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
-        const { data, error } = await supabase
+        let query = supabase
           .from('udhari_records')
           .select('*, udhari_payments(*)')
-          .eq('workspace_id', wsId)
-          .order('created_at', { ascending: false });
+          .eq('workspace_id', wsId);
+
+        if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
+          query = query.eq('branch_id', options.branchId);
+        }
+
+        const { data, error } = await query.order('created_at', { ascending: false });
 
         if (error) {
           const errStr = handleSupabaseError(error, 'getUdhariRecords');
@@ -44,6 +49,7 @@ export class UdhariService {
         const mapped = (data || []).map((r: any) => ({
           id: r.udhari_code || r.id,
           dbId: r.id,
+          branchId: r.branch_id,
           customerId: r.customer_id,
           invoiceId: r.invoice_id,
           counterSaleId: r.counter_sale_id,
@@ -87,6 +93,7 @@ export class UdhariService {
     const code = udhari.id || `UD-${Date.now()}`;
     const payload: any = {
       workspace_id: wsId,
+      branch_id: udhari.branchId && isValidUuid(udhari.branchId) ? udhari.branchId : null,
       customer_id: udhari.customerId || null,
       invoice_id: udhari.invoiceId || null,
       udhari_code: code,
@@ -130,6 +137,7 @@ export class UdhariService {
   public async syncInvoiceUdhari(params: {
     invoiceId: string;
     invoiceNumber: string;
+    branchId?: string;
     customerId?: string;
     customerName: string;
     customerPhone: string;
@@ -197,6 +205,7 @@ export class UdhariService {
             id: `UD-${params.invoiceNumber}`,
             customerId: params.customerId,
             invoiceId: params.invoiceId,
+            branchId: params.branchId,
             customerNameSnapshot: params.customerName,
             phoneSnapshot: params.customerPhone || '9999999999',
             originalAmount,
@@ -310,7 +319,7 @@ export class UdhariService {
    * Outstanding Udhari = Opening Outstanding Balance + Credit generated up to To Date - Payments up to To Date.
    * Agrees 100% with the Udhari Ledger.
    */
-  public async getAuthoritativeUdhariMetricsAsOf(asOfDateStr?: string, explicitWsId?: string): Promise<{
+  public async getAuthoritativeUdhariMetricsAsOf(asOfDateStr?: string, explicitWsId?: string, branchId?: string): Promise<{
     outstanding: number;
     totalUdhari: number;
     totalReceived: number;
@@ -322,7 +331,7 @@ export class UdhariService {
     const targetDate = asOfDateStr || today;
     const isHistorical = targetDate < today;
 
-    const res = await this.getUdhariRecords(explicitWsId);
+    const res = await this.getUdhariRecords(explicitWsId, { branchId });
     if (res.error && (!res.data || res.data.length === 0)) {
       return {
         outstanding: 0,

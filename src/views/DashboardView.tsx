@@ -25,6 +25,7 @@ import {
   DashboardKPIs,
 } from '../services/supabase/enterpriseAnalyticsService';
 import { supabaseAuthService } from '../services/supabaseAuth';
+import { useBranch } from '../context/BranchContext';
 import { isValidUuid } from '../lib/supabaseError';
 import { hasCurrentUserPermission } from '../lib/permissions';
 import {
@@ -148,6 +149,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [dashboardKpis, setDashboardKpis] = useState<DashboardKPIs | null>(null);
   const [analyticsData, setAnalyticsData] = useState<EnterpriseAnalyticsData | null>(null);
 
+  const { currentBranch, isAllBranchesSelected } = useBranch();
+
   // Authoritative Data Fetching Pipeline (Guarded against re-entrant fetches)
   const loadDashboardData = useCallback(async (forceFresh = false) => {
     if (isFetchingRef.current) return;
@@ -163,14 +166,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         throw new Error('[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined.');
       }
 
+      const branchId = currentBranch?.id;
+
       // 1. Sales Metrics (Invoices + Counter Sales)
-      const salesPromise = salesAnalyticsService.getSalesMetrics(dateRange, forceFresh, wsId);
+      const salesPromise = salesAnalyticsService.getSalesMetrics(dateRange, forceFresh, wsId, branchId);
 
       // 2. Outstanding Udhari
-      const udhariPromise = udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId);
+      const udhariPromise = udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId, branchId);
 
       // 3. Dedicated Dashboard KPIs (strictly authorized by 'dashboard.view')
-      const kpisPromise = enterpriseAnalyticsService.getDashboardKpis(dateRange, forceFresh);
+      const kpisPromise = enterpriseAnalyticsService.getDashboardKpis(dateRange, forceFresh, branchId);
 
       // 4. Executive Analytics (strictly restricted to Business Owners with 'analytics.view')
       const isOwner = hasCurrentUserPermission('analytics.view');
@@ -208,7 +213,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         setLoading(false);
       }
     }
-  }, [dateRange]);
+  }, [dateRange, currentBranch]);
+
+  // Listen to branch change events to instantly refetch dashboard data
+  useEffect(() => {
+    const handleBranchChange = () => {
+      loadDashboardData(true);
+    };
+    window.addEventListener('vistaar:branch_changed', handleBranchChange);
+    return () => window.removeEventListener('vistaar:branch_changed', handleBranchChange);
+  }, [loadDashboardData]);
 
   // Debounced store subscription to prevent cascade loops
   useEffect(() => {

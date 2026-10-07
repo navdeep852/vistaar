@@ -28,8 +28,10 @@ import { DownloadReportDropdown } from '../components/DownloadReportDropdown';
 import { downloadDaybookReport } from '../services/reportExportService';
 import { store } from '../services/store';
 import { ScrollableTable } from '../components/ScrollableTable';
+import { useBranch } from '../context/BranchContext';
 
 export const DaybookView: React.FC = () => {
+  const { currentBranch } = useBranch();
 
 
   const [transactions, setTransactions] = useState<DaybookTransaction[]>([]);
@@ -82,6 +84,7 @@ export const DaybookView: React.FC = () => {
         paymentMode,
         paymentStatus,
         search,
+        branchId: currentBranch?.id,
       };
 
       const [txRes, metRes] = await Promise.all([
@@ -100,7 +103,12 @@ export const DaybookView: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, [dateRange, startDate, endDate, transactionType, paymentMode, paymentStatus]);
+    const handleBranchChanged = () => loadData();
+    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
+    return () => {
+      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
+    };
+  }, [dateRange, startDate, endDate, transactionType, paymentMode, paymentStatus, currentBranch?.id]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -149,6 +157,7 @@ export const DaybookView: React.FC = () => {
         description: manualDescription.trim(),
         notes: manualNotes.trim() || undefined,
         transactionDate: manualDate,
+        branchId: currentBranch?.id || undefined,
       });
 
       if (res.success) {

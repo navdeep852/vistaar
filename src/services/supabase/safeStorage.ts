@@ -21,25 +21,35 @@ const getActiveCompanyId = (): string => {
 };
 
 /**
- * Tenant-scoped Local & In-Memory Storage Helper
- * Ensures fallback offline storage is strictly partitioned by current Workspace ID (auth.uid()).
+ * Builds a strictly isolated cache key incorporating workspace and branch context.
+ * Format: workspace:{workspaceId}:branch:{branchId}:key
  */
-export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = []): T[] {
+export function buildTenantCacheKey(key: string, branchId?: string): string {
   const currentWorkspaceId = getActiveCompanyId();
-  const tenantKey = `${key}_${currentWorkspaceId}`;
+  const branchPart = branchId && branchId !== 'ALL' ? branchId : 'all';
+  return `workspace:${currentWorkspaceId}:branch:${branchPart}:${key}`;
+}
+
+/**
+ * Tenant & Branch-scoped Local & In-Memory Storage Helper.
+ * Strictly guarantees that cached data does not leak between workspaces or branches.
+ */
+export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = [], branchId?: string): T[] {
+  const tenantKey = buildTenantCacheKey(key, branchId);
+  const legacyKey = `${key}_${getActiveCompanyId()}`;
 
   if (typeof localStorage !== 'undefined') {
     try {
-      const stored = localStorage.getItem(tenantKey);
+      const stored = localStorage.getItem(tenantKey) || (!branchId ? localStorage.getItem(legacyKey) : null);
       if (stored) return JSON.parse(stored);
     } catch (e) {
       console.warn(`Failed to read tenant storage key ${tenantKey}:`, e);
     }
   }
 
-  if (memoryStore[tenantKey]) {
+  if (memoryStore[tenantKey] || (!branchId && memoryStore[legacyKey])) {
     try {
-      return JSON.parse(memoryStore[tenantKey]);
+      return JSON.parse(memoryStore[tenantKey] || memoryStore[legacyKey]);
     } catch (e) {
       console.warn(`Failed to parse memory tenant key ${tenantKey}:`, e);
     }
@@ -48,38 +58,41 @@ export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = []): 
   return fallback;
 }
 
-export function safeSaveTenantStorage<T = any>(key: string, items: T[]): void {
-  const currentWorkspaceId = getActiveCompanyId();
-  const tenantKey = `${key}_${currentWorkspaceId}`;
-
+export function safeSaveTenantStorage<T = any>(key: string, items: T[], branchId?: string): void {
+  const tenantKey = buildTenantCacheKey(key, branchId);
   const jsonStr = JSON.stringify(items);
   memoryStore[tenantKey] = jsonStr;
 
   if (typeof localStorage !== 'undefined') {
     try {
       localStorage.setItem(tenantKey, jsonStr);
+      // Also update legacy key when writing consolidated/global items for backward compatibility
+      if (!branchId || branchId === 'ALL') {
+        const legacyKey = `${key}_${getActiveCompanyId()}`;
+        localStorage.setItem(legacyKey, jsonStr);
+      }
     } catch (e) {
       console.warn(`Failed to save tenant storage key ${tenantKey}:`, e);
     }
   }
 }
 
-export function safeGetTenantItem<T>(key: string, fallback: T): T {
-  const currentWorkspaceId = getActiveCompanyId();
-  const tenantKey = `${key}_${currentWorkspaceId}`;
+export function safeGetTenantItem<T>(key: string, fallback: T, branchId?: string): T {
+  const tenantKey = buildTenantCacheKey(key, branchId);
+  const legacyKey = `${key}_${getActiveCompanyId()}`;
 
   if (typeof localStorage !== 'undefined') {
     try {
-      const stored = localStorage.getItem(tenantKey);
+      const stored = localStorage.getItem(tenantKey) || (!branchId ? localStorage.getItem(legacyKey) : null);
       if (stored) return JSON.parse(stored);
     } catch (e) {
       console.warn(`Failed to read tenant storage key ${tenantKey}:`, e);
     }
   }
 
-  if (memoryStore[tenantKey]) {
+  if (memoryStore[tenantKey] || (!branchId && memoryStore[legacyKey])) {
     try {
-      return JSON.parse(memoryStore[tenantKey]);
+      return JSON.parse(memoryStore[tenantKey] || memoryStore[legacyKey]);
     } catch (e) {
       console.warn(`Failed to parse memory tenant key ${tenantKey}:`, e);
     }
@@ -88,23 +101,47 @@ export function safeGetTenantItem<T>(key: string, fallback: T): T {
   return fallback;
 }
 
-export function safeSaveTenantItem<T>(key: string, item: T): void {
-  const currentWorkspaceId = getActiveCompanyId();
-  const tenantKey = `${key}_${currentWorkspaceId}`;
-
+export function safeSaveTenantItem<T>(key: string, item: T, branchId?: string): void {
+  const tenantKey = buildTenantCacheKey(key, branchId);
   const jsonStr = JSON.stringify(item);
   memoryStore[tenantKey] = jsonStr;
 
   if (typeof localStorage !== 'undefined') {
     try {
       localStorage.setItem(tenantKey, jsonStr);
+      if (!branchId || branchId === 'ALL') {
+        const legacyKey = `${key}_${getActiveCompanyId()}`;
+        localStorage.setItem(legacyKey, jsonStr);
+      }
     } catch (e) {
       console.warn(`Failed to save tenant storage key ${tenantKey}:`, e);
     }
   }
 }
 
-export function clearTenantStorage(): void {
-  // Reset active workspace in-memory cache without purging workspace-partitioned records
-}
+/**
+ * Purges cached entries for a specific branch or workspace to prevent stale data display
+ */
+export function clearTenantStorage(branchId?: string): void {
+  const currentWorkspaceId = getActiveCompanyId();
+  const prefix = branchId
+    ? `workspace:${currentWorkspaceId}:branch:${branchId}:`
+    : `workspace:${currentWorkspaceId}:`;
 
+  Object.keys(memoryStore).forEach((k) => {
+    if (k.startsWith(prefix)) delete memoryStore[k];
+  });
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(prefix)) keysToRemove.push(k);
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+    } catch (e) {
+      console.warn('Failed clearing tenant storage for prefix:', prefix, e);
+    }
+  }
+}

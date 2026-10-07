@@ -34,6 +34,7 @@ import {
 } from '../services/document';
 import { toWhatsAppNumber } from '../lib/phoneUtils';
 import { shareService, clipboardService } from '../platform';
+import { useBranch } from '../context/BranchContext';
 
 interface QuotationsViewProps {
   initialOpenCreate?: boolean;
@@ -46,6 +47,7 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
   onNavigateTab,
   activeTab,
 }) => {
+  const { currentBranch } = useBranch();
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -79,14 +81,36 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
   const settings = store.getSettings();
 
   useEffect(() => {
-    const updateData = () => setQuotations(store.getQuotations());
+    const updateData = () => {
+      const all = store.getQuotations();
+      if (currentBranch) {
+        setQuotations(all.filter((q) => !q.branchId || q.branchId === currentBranch.id));
+      } else {
+        setQuotations(all);
+      }
+    };
     updateData();
+
+    quotationService.getQuotations(undefined, { branchId: currentBranch?.id }).then((res) => {
+      if (res.data && res.data.length > 0) {
+        store.syncRemoteQuotations(res.data);
+        updateData();
+      }
+    }).catch(() => {});
+
     // Also perform non-blocking reconciliation of previous conversions
     quotationService.reconcileConversions().catch((err) => {
       console.warn('Quotation conversion reconciliation background notice:', err);
     });
-    return store.subscribe(updateData);
-  }, []);
+
+    const handleBranchChanged = () => updateData();
+    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
+    const unsub = store.subscribe(updateData);
+    return () => {
+      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
+      unsub();
+    };
+  }, [currentBranch?.id]);
 
   const handleEditDraft = (qt: Quotation) => {
     setEditingDraftQuotation(qt);

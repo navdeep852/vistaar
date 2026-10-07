@@ -21,6 +21,7 @@ import { Expense, ExpenseCategory } from '../types';
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
+import { useBranch } from '../context/BranchContext';
 
 const MONTH_OPTIONS = [
   { value: 'ALL', label: 'All Months' },
@@ -130,6 +131,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
   const [paidTo, setPaidTo] = useState('');
   const [referenceNo, setReferenceNo] = useState('');
   const [notes, setNotes] = useState('');
+  const [isCompanyLevel, setIsCompanyLevel] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // Filter States
@@ -139,23 +141,22 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
   const [filterYear, setFilterYear] = useState('ALL');
   const [filterCategory, setFilterCategory] = useState('ALL');
 
+  const { currentBranch } = useBranch();
   const settings = store.getSettings();
 
   useEffect(() => {
     let isMounted = true;
     const updateData = () => {
-      const fetched = store.getExpenses();
-      if (isMounted) setExpenses(Array.isArray(fetched) ? fetched : []);
+      expenseService.getExpenses({ branchId: currentBranch?.id, includeCompanyLevel: true }).then((res) => {
+        if (isMounted && res.data) {
+          setExpenses(res.data);
+        }
+      });
     };
     updateData();
+    const handleBranchChanged = () => updateData();
+    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
     const unsubscribe = store.subscribe(updateData);
-
-    // Initial load from authoritative expenseService
-    expenseService.getExpenses().then((res) => {
-      if (isMounted && res.data) {
-        setExpenses(res.data);
-      }
-    });
 
     // Auto-reconcile historical expenses with Daybook
     expenseService.reconcileWithDaybook().then((recRes) => {
@@ -167,9 +168,10 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
 
     return () => {
       isMounted = false;
+      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
       unsubscribe();
     };
-  }, []);
+  }, [currentBranch?.id]);
 
   // Compute available years dynamically from existing expense records + current year
   const availableYears = useMemo(() => {
@@ -351,6 +353,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
         paidTo: paidTo.trim() || undefined,
         referenceNo: referenceNo.trim() || undefined,
         notes: notes.trim() || undefined,
+        branchId: isCompanyLevel ? undefined : (currentBranch?.id || undefined),
+        isCompanyLevel,
       };
 
       if (editingExpenseId) {
@@ -1003,6 +1007,26 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
                   placeholder="Add optional expense notes..."
                   className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-medium text-slate-900 dark:text-slate-100 focus:bg-white dark:focus:bg-slate-900 transition-colors"
                 />
+              </div>
+
+              {/* Company Level vs Branch Toggle */}
+              <div className="sm:col-span-2 pt-1 border-t border-slate-100 dark:border-slate-800">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isCompanyLevel}
+                    onChange={(e) => setIsCompanyLevel(e.target.checked)}
+                    className="rounded border-slate-300 text-rose-600 focus:ring-rose-500"
+                  />
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                    Company-Level Expense (Corporate / HQ — not tied to a single branch)
+                  </span>
+                </label>
+                {!isCompanyLevel && currentBranch && (
+                  <span className="text-[10px] text-slate-400 block ml-5 mt-0.5">
+                    Will be recorded under: {currentBranch.branchName} ({currentBranch.branchCode})
+                  </span>
+                )}
               </div>
             </div>
 

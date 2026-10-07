@@ -42,6 +42,7 @@ const SalaryPayrollView = React.lazy(() => import('./views/SalaryPayrollView').t
 
 import { ThemeProvider } from './context/ThemeContext';
 import { WorkspaceProvider, useWorkspace } from './context/WorkspaceContext';
+import { BranchProvider } from './context/BranchContext';
 
 function MainAppContent() {
   const [authStatus, setAuthStatus] = useState<AuthResolutionState>(supabaseAuthService.getAuthResolutionState());
@@ -447,7 +448,9 @@ export function App() {
   return (
     <ThemeProvider>
       <WorkspaceProvider>
-        <MainAppContent />
+        <BranchProvider>
+          <MainAppContent />
+        </BranchProvider>
       </WorkspaceProvider>
     </ThemeProvider>
   );

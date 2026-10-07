@@ -24,8 +24,10 @@ import { PurchaseOrderDetailsModal } from '../components/purchase/PurchaseOrderD
 import { ReceiveStockModal } from '../components/purchase/ReceiveStockModal';
 import { PurchaseOrderPrintModal } from '../components/purchase/PurchaseOrderPrintModal';
 import { showToast } from '../components/Toast';
+import { useBranch } from '../context/BranchContext';
 
 export const PurchaseOrdersView: React.FC = () => {
+  const { currentBranch } = useBranch();
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,6 +56,7 @@ export const PurchaseOrdersView: React.FC = () => {
         status: statusFilter,
         supplierId: supplierFilter === 'ALL' ? undefined : supplierFilter,
         sortBy,
+        branchId: currentBranch?.id,
       });
       setPurchaseOrders(poRes.data || []);
 
@@ -70,7 +73,12 @@ export const PurchaseOrdersView: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, [searchTerm, statusFilter, supplierFilter, sortBy]);
+    const handleBranchChanged = () => loadData();
+    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
+    return () => {
+      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
+    };
+  }, [searchTerm, statusFilter, supplierFilter, sortBy, currentBranch?.id]);
 
   // KPI Calculations
   const totalPos = purchaseOrders.length;

@@ -21,6 +21,7 @@ const logoIcon = '/Vistaar_Icon_logo.png';
 import { ThemeToggle } from './ThemeToggle';
 import { UserAvatar } from './UserAvatar';
 import { GlobalSearch } from './GlobalSearch';
+import { BranchSwitcher } from './BranchSwitcher';
 
 interface HeaderProps {
   activeTab: string;
@@ -174,6 +175,9 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Action Controls */}
       <div className="flex items-center gap-2 sm:gap-3">
+        {/* Branch / Operating Location Switcher */}
+        <BranchSwitcher onManageBranches={() => setActiveTab('settings')} />
+
         {/* Dark/Light Theme Control */}
         <ThemeToggle variant="segmented" className="hidden md:inline-flex" />
         <ThemeToggle variant="compact" className="md:hidden" />

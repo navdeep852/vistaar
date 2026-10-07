@@ -43,6 +43,7 @@ import { QuantityInput } from '../components/QuantityInput';
 import { ProductAutocomplete } from '../components/ProductAutocomplete';
 import { ProductLineItemsTable, LineItemRow, isEmptyLineItem } from '../components/ProductLineItemsTable';
 import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
+import { useBranch } from '../context/BranchContext';
 
 type DateFilterType = 'ALL' | 'TODAY' | 'WEEK' | 'MONTH';
 
@@ -55,6 +56,8 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   onNavigateTab,
   activeTab,
 }) => {
+  const { currentBranch } = useBranch();
+
   // Store Collections
   const [sales, setSales] = useState<CounterSale[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -104,10 +107,10 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
 
   const refreshData = async () => {
     const [saleRes, prodRes, custRes, m, invRes] = await Promise.all([
-      counterSaleService.getCounterSales(),
-      productService.getProducts(),
+      counterSaleService.getCounterSales({ branchId: currentBranch?.id }),
+      productService.getProducts({ branchId: currentBranch?.id }),
       customerService.getCustomers(),
-      counterSaleService.getCounterSaleMetrics(),
+      counterSaleService.getCounterSaleMetrics({ branchId: currentBranch?.id }),
       inventoryService.getInventorySettings(),
     ]);
 
@@ -122,7 +125,12 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
 
   useEffect(() => {
     refreshData();
-  }, []);
+    const handleBranchChanged = () => refreshData();
+    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
+    return () => {
+      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
+    };
+  }, [currentBranch?.id]);
 
   // Format Helpers
   const formatCurrency = (val: number) => {
@@ -265,6 +273,7 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
       const res = await counterSaleService.createCounterSale({
         invoiceNumber,
         estimateRef: estimateRef || undefined,
+        branchId: currentBranch?.id || undefined,
         customerName: custName,
         customerPhone: custPhone ? normalizeIndianPhoneNumber(custPhone) : undefined,
         customerId: selectedCustomerId || undefined,
@@ -414,8 +423,8 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
       {isCreatingSale ? (
         <DedicatedWorkspace
           title="COUNTER SALE"
-          subtitle="Create a new counter sale and update inventory automatically."
-          badgeText="NEW COUNTER SALE"
+          subtitle={currentBranch ? `Fast POS counter checkout for ${currentBranch.branchName} (${currentBranch.branchCode})` : "Create a new counter sale and update inventory automatically."}
+          badgeText={currentBranch ? currentBranch.branchCode : "NEW COUNTER SALE"}
           icon={ShoppingBag}
           onClose={handleCancelWorkspace}
           onNavigateTab={onNavigateTab}

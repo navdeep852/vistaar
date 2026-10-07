@@ -110,10 +110,11 @@ export class InventoryService {
     const wsId = this.getWorkspaceId();
     const qty = Number(receipt.quantityReceived) || 0;
 
-    const payload = {
+    const payload: any = {
       workspace_id: wsId,
       product_id: receipt.productId,
       supplier_id: receipt.supplierId || null,
+      branch_id: receipt.branchId || null,
       receipt_number: receipt.receiptNumber || `GRN-${Date.now()}`,
       purchase_order_number: receipt.purchaseOrderNumber || null,
       received_date: receipt.receivedDate || new Date().toISOString().split('T')[0],
@@ -166,6 +167,26 @@ export class InventoryService {
         if (recs) {
           const sum = recs.reduce((acc: number, r: { quantity_remaining?: number | string | null }) => acc + (Number(r.quantity_remaining) || 0), 0);
           await supabase.from('products').update({ current_stock: sum, updated_at: new Date().toISOString() }).eq('id', data.product_id).eq('workspace_id', wsId);
+        }
+
+        // Branch-specific inventory increment
+        if (receipt.branchId) {
+          const { data: bInv } = await supabase
+            .from('branch_inventory')
+            .select('current_stock')
+            .eq('workspace_id', wsId)
+            .eq('branch_id', receipt.branchId)
+            .eq('product_id', data.product_id)
+            .maybeSingle();
+
+          const prevBranchStock = bInv ? Number(bInv.current_stock) || 0 : 0;
+          await supabase.from('branch_inventory').upsert({
+            workspace_id: wsId,
+            branch_id: receipt.branchId,
+            product_id: data.product_id,
+            current_stock: prevBranchStock + qty,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'branch_id,product_id' });
         }
 
         await auditLogService.logInventoryMutation({

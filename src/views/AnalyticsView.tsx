@@ -23,6 +23,7 @@ import {
   EnterpriseAnalyticsData,
 } from '../services/supabase/enterpriseAnalyticsService';
 import { store } from '../services/store';
+import { useBranch } from '../context/BranchContext';
 import {
   SalesTrendChart,
   SalesChannelChart,
@@ -43,6 +44,8 @@ const STORAGE_KEY_ANALYTICS_START = 'vistaar_analytics_filter_start';
 const STORAGE_KEY_ANALYTICS_END = 'vistaar_analytics_filter_end';
 
 export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateTab }) => {
+  const { currentBranch } = useBranch();
+
   // Global Analytics Date Filter State (reusing centralized Date resolution)
   const [rangePreset, setRangePreset] = useState<DatePresetType>(() => {
     try {
@@ -95,7 +98,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateTab }) =
     setLoading(true);
     setError(null);
     try {
-      const res = await enterpriseAnalyticsService.getAnalyticsOverview(dateRange, forceFresh);
+      const res = await enterpriseAnalyticsService.getAnalyticsOverview(dateRange, forceFresh, currentBranch?.id);
       setData(res);
     } catch (err: any) {
       console.error('[AnalyticsView] Failed to compute enterprise analytics:', err);
@@ -103,10 +106,15 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateTab }) =
     } finally {
       setLoading(false);
     }
-  }, [dateRange.rangeType, dateRange.startDateStr, dateRange.endDateStr]);
+  }, [dateRange.rangeType, dateRange.startDateStr, dateRange.endDateStr, currentBranch?.id]);
 
   useEffect(() => {
     loadAnalytics();
+    const handleBranchChanged = () => loadAnalytics();
+    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
+    return () => {
+      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
+    };
   }, [loadAnalytics]);
 
   // Live reactivity: re-calculate analytics when transactions, quotations, or invoices update

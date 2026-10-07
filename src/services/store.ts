@@ -812,6 +812,17 @@ class StoreService {
     return newQuotation;
   }
 
+  public syncRemoteQuotations(remote: Quotation[]) {
+    if (!Array.isArray(remote)) return;
+    const existingMap = new Map((this.state.quotations || []).map((q) => [q.id, q]));
+    for (const r of remote) {
+      existingMap.set(r.id, { ...(existingMap.get(r.id) || {}), ...r });
+    }
+    this.state.quotations = Array.from(existingMap.values());
+    this.saveToStorage();
+    this.notify();
+  }
+
   public updateQuotationStatus(id: string, status: QuotationStatus) {
     const qt = this.state.quotations.find((q) => q.id === id);
     if (qt) {
@@ -1916,6 +1927,7 @@ class StoreService {
     notes?: string;
     customerId?: string;
     invoiceId?: string;
+    branchId?: string;
   }): UdhariRecord {
     if (!this.state.udharis) this.state.udharis = [];
     if (data.originalAmount <= 0) {
@@ -1931,6 +1943,7 @@ class StoreService {
 
     const newUdhari: UdhariRecord = {
       id,
+      branchId: data.branchId,
       customerId: data.customerId,
       invoiceId: data.invoiceId,
       customerNameSnapshot: data.customerNameSnapshot.trim(),
@@ -1961,6 +1974,7 @@ class StoreService {
     paidAmount: number;
     balanceAmount: number;
     dueDate?: string;
+    branchId?: string;
   }): UdhariRecord | null {
     if (!this.state.udharis) this.state.udharis = [];
     if (!this.state.followUps) this.state.followUps = [];
@@ -1976,6 +1990,7 @@ class StoreService {
     const now = new Date().toISOString();
 
     if (udhari) {
+      if (params.branchId) udhari.branchId = params.branchId;
       udhari.invoiceId = params.invoiceId;
       udhari.originalAmount = udFin.originalAmount;
       udhari.totalReceived = udFin.totalReceived;
@@ -1988,6 +2003,7 @@ class StoreService {
     } else if (!isCleared) {
       udhari = {
         id: `UD-${params.invoiceNumber}`,
+        branchId: params.branchId,
         invoiceId: params.invoiceId,
         customerId: params.customerId,
         customerNameSnapshot: params.customerName.trim(),
@@ -2016,12 +2032,14 @@ class StoreService {
       }
     } else {
       if (followUp) {
+        if (params.branchId) followUp.branchId = params.branchId;
         followUp.status = 'Pending';
         followUp.dueDate = effectiveDueDate;
         followUp.notes = `Outstanding receivable: ₹${params.balanceAmount.toLocaleString('en-IN')}`;
       } else {
-        followUp = {
+        const newFollowUp: FollowUp = {
           id: `fu-${Date.now()}`,
+          branchId: params.branchId,
           customerId: params.customerId || 'manual-cust',
           customerName: params.customerName,
           customerPhone: params.customerPhone || '9999999999',
@@ -2042,7 +2060,7 @@ class StoreService {
           executionLogs: [],
           createdAt: now,
         };
-        this.state.followUps.unshift(followUp);
+        this.state.followUps.unshift(newFollowUp);
       }
     }
 

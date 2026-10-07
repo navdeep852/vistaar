@@ -55,10 +55,10 @@ export class SalesAnalyticsService {
    * Strictly excludes Draft, Cancelled, Voided records.
    * Eliminates any potential double-counting between Invoices & Counter Sales.
    */
-  public async getSalesMetrics(dateRange?: ResolvedDateRange, forceFresh = false, explicitWsId?: string): Promise<SalesMetrics> {
+  public async getSalesMetrics(dateRange?: ResolvedDateRange, forceFresh = false, explicitWsId?: string, branchId?: string): Promise<SalesMetrics> {
     const range = dateRange || resolveDateRange('today');
     const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
-    const cacheKey = `${wsId}:${range.rangeType}:${range.startDateStr}:${range.endDateStr}`;
+    const cacheKey = `${wsId}:${branchId || 'all'}:${range.rangeType}:${range.startDateStr}:${range.endDateStr}`;
 
     const now = Date.now();
     const cached = this.cache.get(cacheKey);
@@ -72,26 +72,38 @@ export class SalesAnalyticsService {
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
       try {
         // 1. Fetch Authoritative Completed Counter Sales bounded by sale_date
-        const { data: csData, error: csErr } = await supabase
+        let csQ = supabase
           .from('counter_sales')
-          .select('id, sale_number, invoice_number, sale_date, final_total, status, payment_method, amount_received, balance_amount, created_at')
+          .select('id, sale_number, invoice_number, sale_date, final_total, status, payment_method, amount_received, balance_amount, created_at, branch_id')
           .eq('workspace_id', wsId)
           .eq('status', 'COMPLETED')
           .gte('sale_date', range.startDateStr)
           .lte('sale_date', range.endDateStr);
+
+        if (branchId && branchId !== 'ALL' && isValidUuid(branchId)) {
+          csQ = csQ.eq('branch_id', branchId);
+        }
+
+        const { data: csData, error: csErr } = await csQ;
 
         if (!csErr && csData) {
           counterSales = csData;
         }
 
         // 2. Fetch Authoritative Valid Invoices bounded by date (Excluding Draft and Cancelled)
-        const { data: invData, error: invErr } = await supabase
+        let invQ = supabase
           .from('invoices')
-          .select('id, invoice_number, date, grand_total, paid_amount, balance_amount, status, created_at')
+          .select('id, invoice_number, date, grand_total, paid_amount, balance_amount, status, created_at, branch_id')
           .eq('workspace_id', wsId)
           .in('status', ['Issued', 'Partially Paid', 'Paid'])
           .gte('date', range.startDateStr)
           .lte('date', range.endDateStr);
+
+        if (branchId && branchId !== 'ALL' && isValidUuid(branchId)) {
+          invQ = invQ.eq('branch_id', branchId);
+        }
+
+        const { data: invData, error: invErr } = await invQ;
 
         if (!invErr && invData) {
           invoices = invData;

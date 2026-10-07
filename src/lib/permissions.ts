@@ -45,7 +45,13 @@ export type Permission =
   | 'payroll.create_login_account'
   // Security
   | 'security.manage'
-  | 'security.change_own_password';
+  | 'security.change_own_password'
+  // Multi-Branch Management
+  | 'branches.view'
+  | 'branches.manage'
+  | 'branches.switch'
+  | 'stock_transfers.view'
+  | 'stock_transfers.create';
 
 export class AuthorizationError extends Error {
   public readonly code = 'FORBIDDEN';
@@ -103,6 +109,11 @@ export const ROLE_PERMISSIONS: Record<UserRole, Set<Permission>> = {
     'payroll.create_login_account',
     'security.manage',
     'security.change_own_password',
+    'branches.view',
+    'branches.manage',
+    'branches.switch',
+    'stock_transfers.view',
+    'stock_transfers.create',
   ]),
 
   // ADMIN: Delegated workspace administration, but CANNOT modify company security or directly adjust stock without audit
@@ -128,6 +139,11 @@ export const ROLE_PERMISSIONS: Record<UserRole, Set<Permission>> = {
     'payroll.view',
     'payroll.manage_records',
     'security.change_own_password',
+    'branches.view',
+    'branches.manage',
+    'branches.switch',
+    'stock_transfers.view',
+    'stock_transfers.create',
   ]),
 
   // MANAGER: Departmental operations, quotations, sales, inventory view/receive
@@ -151,6 +167,10 @@ export const ROLE_PERMISSIONS: Record<UserRole, Set<Permission>> = {
     'payroll.view',
     'payroll.manage_records',
     'security.change_own_password',
+    'branches.view',
+    'branches.switch',
+    'stock_transfers.view',
+    'stock_transfers.create',
   ]),
 
   // EMPLOYEE: Operational day-to-day work strictly restricted from stock manipulation, analytics, financial statements, business info, employee management
@@ -174,6 +194,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Set<Permission>> = {
     'payroll.view',
     'payroll.manage_records',
     'security.change_own_password',
+    'branches.view',
+    'stock_transfers.view',
   ]),
 
   // STAFF: Baseline operational staff (same as employee)
@@ -197,6 +219,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Set<Permission>> = {
     'payroll.view',
     'payroll.manage_records',
     'security.change_own_password',
+    'branches.view',
+    'stock_transfers.view',
   ]),
 };
 

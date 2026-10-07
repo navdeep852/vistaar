@@ -82,6 +82,10 @@ export class DaybookService {
             .select('*', { count: 'exact' })
             .eq('workspace_id', wsId);
 
+          if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
+            dtQuery = dtQuery.eq('branch_id', options.branchId);
+          }
+
           const { start, end } = this.getDateBounds(options?.dateRange, options?.startDate, options?.endDate);
           if (start) dtQuery = dtQuery.gte('transaction_date', start);
           if (end) dtQuery = dtQuery.lte('transaction_date', end);
@@ -707,6 +711,7 @@ export class DaybookService {
    * Writes to public.accounting_entries with full multi-tenant isolation and idempotency.
    */
   public async recordFinancialTransaction(params: {
+    branchId?: string;
     referenceType: 'COUNTER_SALE' | 'PAYMENT' | 'EXPENSE' | 'UDHARI_PAYMENT' | 'INVOICE' | 'SALARY' | 'MANUAL';
     referenceId: string;
     referenceNumber?: string;
@@ -742,6 +747,7 @@ export class DaybookService {
 
         const dtPayload: any = {
           workspace_id: wsId,
+          branch_id: params.branchId && isValidUuid(params.branchId) ? params.branchId : null,
           transaction_code: entryNumber,
           transaction_date: entryDate,
           transaction_type: params.transactionType,
@@ -806,6 +812,7 @@ export class DaybookService {
     const localEntry: DaybookTransaction = {
       id: `db-${Date.now()}`,
       workspaceId: wsId,
+      branchId: params.branchId,
       transactionCode: entryNumber,
       transactionDate: entryDate,
       transactionType: params.transactionType,
@@ -872,6 +879,7 @@ export class DaybookService {
     description: string;
     notes?: string;
     transactionDate?: string;
+    branchId?: string;
   }): Promise<{ success: boolean; id?: string; error?: string }> {
     return this.recordFinancialTransaction({
       referenceType: 'MANUAL',
@@ -886,6 +894,7 @@ export class DaybookService {
       description: payload.description,
       notes: payload.notes,
       transactionDate: payload.transactionDate,
+      branchId: payload.branchId,
     });
   }
 

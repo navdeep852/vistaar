@@ -155,6 +155,7 @@ export class PurchaseOrderReceiptService {
           {
             workspace_id: wsId,
             purchase_order_id: payload.purchaseOrderId,
+            branch_id: po.branchId || null,
             receipt_number: receiptNumber,
             receipt_date: receiptDate,
             received_by: supabaseAuthService.getUser()?.id || null,
@@ -194,7 +195,7 @@ export class PurchaseOrderReceiptService {
           .eq('id', poItem.id);
 
         // 2. THIS IS THE CRITICAL INVENTORY INCREMENT RULE
-        // Create stock_receipt in inventoryService to update products.current_stock
+        // Create stock_receipt in inventoryService to update products.current_stock & branch_inventory
         await inventoryService.createStockReceipt({
           productId: poItem.productId!,
           supplierId: po.supplierId,
@@ -204,6 +205,7 @@ export class PurchaseOrderReceiptService {
           quantityReceived: itemInput.receiveQuantity,
           quantityRemaining: itemInput.receiveQuantity,
           buyPrice: poItem.unitPrice,
+          branchId: po.branchId || undefined,
           notes: `Goods Receipt ${receiptNumber} for PO ${po.poNumber}`,
         });
       }

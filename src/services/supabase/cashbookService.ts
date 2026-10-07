@@ -99,6 +99,7 @@ export class CashbookService {
    * Only recorded when actual money is received or paid (amount > 0 and non-credit).
    */
   public async recordCashbookEntry(params: {
+    branchId?: string;
     sourceType: string;
     sourceId?: string;
     referenceNumber?: string;
@@ -125,6 +126,7 @@ export class CashbookService {
 
     const payload: any = {
       workspace_id: wsId,
+      branch_id: params.branchId && isValidUuid(params.branchId) ? params.branchId : null,
       entry_date: entryDate,
       entry_number: entryNumber,
       direction: params.direction,
@@ -222,6 +224,10 @@ export class CashbookService {
           .select('*')
           .eq('workspace_id', wsId);
 
+        if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
+          cbQuery = cbQuery.eq('branch_id', options.branchId);
+        }
+
         if (start) cbQuery = cbQuery.gte('entry_date', start);
         if (end) cbQuery = cbQuery.lte('entry_date', end);
 
@@ -270,6 +276,10 @@ export class CashbookService {
           .from('payments')
           .select('*')
           .eq('workspace_id', wsId);
+
+        if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
+          payQuery = payQuery.eq('branch_id', options.branchId);
+        }
 
         if (start) payQuery = payQuery.gte('payment_date', start);
         if (end) payQuery = payQuery.lte('payment_date', end);
@@ -324,6 +334,10 @@ export class CashbookService {
           .select('*')
           .eq('workspace_id', wsId)
           .eq('status', 'COMPLETED');
+
+        if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
+          csQuery = csQuery.eq('branch_id', options.branchId);
+        }
 
         if (start) csQuery = csQuery.gte('sale_date', start);
         if (end) csQuery = csQuery.lte('sale_date', end);
