@@ -56,7 +56,7 @@ export interface BranchInventory {
   openingStock: number;
   currentStock: number;
   minStock: number;
-  reorderLevel: number;
+  reorderLevel?: number;
   rackLocation?: string;
   purchasePrice?: number;
   sellingPrice?: number;
@@ -449,6 +449,7 @@ export type StockMovementReason =
 export interface InventoryTransaction {
   id: string;
   productId: string;
+  branchId?: string;
   type: StockMovementReason;
   quantityDelta: number;
   previousStock: number;

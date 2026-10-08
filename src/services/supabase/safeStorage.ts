@@ -8,16 +8,20 @@ const getActiveCompanyId = (): string => {
       const stored = localStorage.getItem('vistaar_user_session');
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (parsed?.companyId && parsed?.id && parsed.companyId !== parsed.id) return parsed.companyId;
+        if (parsed?.companyId) return parsed.companyId;
+        if (parsed?.id) return parsed.id;
       }
+      const direct = localStorage.getItem('vistaar_current_company_id');
+      if (direct) return direct;
     }
   } catch (e) {}
   try {
     if (typeof supabaseAuthService !== 'undefined' && supabaseAuthService?.getCurrentCompanyId) {
-      return supabaseAuthService.getCurrentCompanyId() || 'unauthenticated';
+      const cid = supabaseAuthService.getCurrentCompanyId();
+      if (cid) return cid;
     }
   } catch (e) {}
-  return 'unauthenticated';
+  return 'default';
 };
 
 /**

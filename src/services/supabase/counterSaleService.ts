@@ -5,6 +5,7 @@ import { store } from '../store';
 import { fromDbCounterSale } from './types';
 import { salesAnalyticsService } from './salesAnalyticsService';
 import { CounterSale } from '../../types';
+import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 
 const LOCAL_SALES_KEY = 'vistaar_local_counter_sales_db';
 
@@ -60,7 +61,7 @@ export class CounterSaleService {
       if (!productId || quantity <= 0) continue;
 
       // 1. Always update local store state for instant UI sync
-      store.adjustStock(productId, 'Sale', -quantity, `Counter Sale #${invoiceNumber}`, invoiceNumber);
+      store.adjustStock(productId, 'Sale', -quantity, `Counter Sale #${invoiceNumber}`, invoiceNumber, branchId);
 
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
         try {
@@ -101,12 +102,16 @@ export class CounterSaleService {
           }
 
           // 3. FIFO deduction on active stock receipts
-          const { data: receipts } = await supabase
+          let recQuery = supabase
             .from('stock_receipts')
             .select('id, quantity_remaining')
             .eq('workspace_id', wsId)
             .eq('product_id', productId)
-            .gt('quantity_remaining', 0)
+            .gt('quantity_remaining', 0);
+          if (branchId && isValidUuid(branchId)) {
+            recQuery = recQuery.eq('branch_id', branchId);
+          }
+          const { data: receipts } = await recQuery
             .order('received_date', { ascending: true })
             .order('created_at', { ascending: true });
 
@@ -405,7 +410,7 @@ export class CounterSaleService {
         // Update local store stock for instant UI reactivity
         items.forEach((item: any) => {
           const pId = item.productId || item.product_id;
-          if (pId) store.adjustStock(pId, 'Sale', -Math.abs(item.quantity), `Counter Sale #${invoiceNumber}`, invoiceNumber);
+          if (pId) store.adjustStock(pId, 'Sale', -Math.abs(item.quantity), `Counter Sale #${invoiceNumber}`, invoiceNumber, saleBranchId);
         });
 
         const completeSale = fromDbCounterSale(rpcRes.data);
@@ -624,7 +629,49 @@ export class CounterSaleService {
     local.unshift(offlineSale);
     safeStorageSave(LOCAL_SALES_KEY, local);
 
-    await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate);
+    await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate, saleBranchId);
+
+    // Synchronize Daybook and Cashbook for offline/local mode
+    try {
+      const { daybookService } = await import('./daybookService');
+      await daybookService.recordFinancialTransaction({
+        branchId: saleBranchId,
+        referenceType: 'COUNTER_SALE',
+        referenceId: saleId,
+        referenceNumber: invoiceNumber,
+        transactionType: 'SALE',
+        direction: 'IN',
+        amount: amountReceived,
+        totalAmount: finalTotal,
+        remainingAmount: balanceAmount,
+        paymentStatus: balanceAmount <= 0.01 ? 'PAID' : (amountReceived > 0 ? 'PARTIALLY PAID' : 'UNPAID'),
+        paymentMode: paymentMethod,
+        partyType: 'customer',
+        partyId: sale.customerId || undefined,
+        partyName: sale.customerName || 'Walk-in Customer',
+        description: `Counter Sale #${invoiceNumber}`,
+        transactionDate: sale.saleDate || new Date().toISOString().split('T')[0],
+      });
+    } catch {}
+
+    if (amountReceived > 0 && !['Credit', 'Credit / Udhari', 'Udhari'].includes(paymentMethod)) {
+      try {
+        const { cashbookService } = await import('./cashbookService');
+        await cashbookService.recordCashbookEntry({
+          branchId: saleBranchId,
+          sourceType: 'COUNTER_SALE',
+          sourceId: saleId,
+          referenceNumber: invoiceNumber,
+          direction: 'IN',
+          amount: amountReceived,
+          paymentMethod: paymentMethod,
+          partyName: sale.customerName || 'Walk-in Customer',
+          description: `Counter sale payment #${invoiceNumber}`,
+          transactionDate: sale.saleDate || new Date().toISOString().split('T')[0],
+        });
+      } catch {}
+    }
+
     productService.invalidateCache();
     salesAnalyticsService.invalidateCache();
 

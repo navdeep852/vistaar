@@ -129,6 +129,10 @@ export class DaybookService {
       });
 
       for (const lt of local) {
+        if (options?.branchId && options.branchId !== 'ALL') {
+          const entryBranch = lt.branchId || (lt as any).branch_id;
+          if (entryBranch !== options.branchId) continue;
+        }
         const refKey = `${lt.referenceType}:${lt.referenceId}`;
         if (!seenIds.has(lt.id) && !seenRefKeys.has(refKey)) {
           seenIds.add(lt.id);
@@ -478,8 +482,12 @@ export class DaybookService {
       finalFiltered.push(tx);
     }
 
-    // 8. Apply User Filters (Date bounds, Type, Status, Mode, Search)
+    // 8. Apply User Filters (Date bounds, Type, Status, Mode, Search, Branch)
     const result = finalFiltered.filter((tx) => {
+      if (options?.branchId && options.branchId !== 'ALL') {
+        const txBId = (tx as any).branchId || (tx as any).branch_id;
+        if (txBId && txBId !== options.branchId) return false;
+      }
       const txDate = (tx.transactionDate || '').split('T')[0];
       if (start && txDate < start) return false;
       if (end && txDate > end) return false;
@@ -543,6 +551,9 @@ export class DaybookService {
 
       if (start) csQuery = csQuery.gte('sale_date', start);
       if (end) csQuery = csQuery.lte('sale_date', end);
+      if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
+        csQuery = csQuery.eq('branch_id', options.branchId);
+      }
 
       const { data: csList } = await csQuery;
       if (csList) {
@@ -559,6 +570,7 @@ export class DaybookService {
           list.push({
             id: cs.id,
             workspaceId: cs.workspace_id,
+            branchId: cs.branch_id,
             transactionCode: cs.sale_number || `CS-${cs.id.substring(0, 8)}`,
             transactionDate: cs.sale_date,
             transactionType: 'SALE',
@@ -590,6 +602,9 @@ export class DaybookService {
 
       if (start) invQuery = invQuery.gte('date', start);
       if (end) invQuery = invQuery.lte('date', end);
+      if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
+        invQuery = invQuery.eq('branch_id', options.branchId);
+      }
 
       const { data: invList } = await invQuery;
       if (invList) {
@@ -1138,6 +1153,10 @@ export class DaybookService {
 
     return local.filter((t) => {
       if (t.workspaceId && wsId && t.workspaceId !== wsId) return false;
+      if (options?.branchId && options.branchId !== 'ALL') {
+        const entryBranch = t.branchId || (t as any).branch_id;
+        if (entryBranch !== options.branchId) return false;
+      }
       if (start && t.transactionDate < start) return false;
       if (end && t.transactionDate > end) return false;
       if (options?.transactionType && options.transactionType !== 'ALL' && t.transactionType !== options.transactionType) return false;

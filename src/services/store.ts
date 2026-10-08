@@ -696,23 +696,50 @@ class StoreService {
     type: StockMovementReason,
     quantityDelta: number,
     notes?: string,
-    referenceNo?: string
+    referenceNo?: string,
+    branchId?: string
   ) {
     const product = this.state.products.find((p) => p.id === productId);
     if (!product) return;
 
-    const previousStock = product.currentStock;
-    const newStock = Math.max(0, previousStock + quantityDelta);
+    // Resolve branchId if not explicitly passed
+    let effectiveBranchId = branchId;
+    if (!effectiveBranchId) {
+      try {
+        const saved = safeGetTenantItem<string | null>('active_branch_id', null);
+        if (saved && saved !== 'ALL') effectiveBranchId = saved;
+      } catch {}
+    }
 
-    product.currentStock = newStock;
-    product.updatedAt = new Date().toISOString();
+    // Update branch_inventory
+    const allBranchInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
+    let targetBranchInv = effectiveBranchId ? allBranchInv.find((bi: any) => bi.branchId === effectiveBranchId && bi.productId === productId) : null;
+    if (effectiveBranchId && !targetBranchInv) {
+      targetBranchInv = {
+        id: `bi-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        branchId: effectiveBranchId,
+        productId,
+        currentStock: Math.max(0, (product.currentStock || 0) + quantityDelta),
+        openingStock: product.currentStock || 0,
+        status: 'Active',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      allBranchInv.push(targetBranchInv);
+    } else if (targetBranchInv) {
+      targetBranchInv.currentStock = Math.max(0, (Number(targetBranchInv.currentStock) || 0) + quantityDelta);
+      targetBranchInv.updatedAt = new Date().toISOString();
+    }
+    if (effectiveBranchId) {
+      safeSaveTenantStorage('vistaar_local_branch_inventory_db', allBranchInv);
+    }
 
-    // 1. Update local stockReceipts FIFO if deducting
+    // 1. Update local stockReceipts FIFO if deducting, filtered by branch
     if (!this.state.stockReceipts) this.state.stockReceipts = [];
     if (quantityDelta < 0) {
       let remainingToDeduct = Math.abs(quantityDelta);
       const activeReceipts = (this.state.stockReceipts || [])
-        .filter((r) => r.productId === productId && r.quantityRemaining > 0)
+        .filter((r) => r.productId === productId && (!effectiveBranchId || !r.branchId || r.branchId === effectiveBranchId) && r.quantityRemaining > 0)
         .sort((a, b) => new Date(a.receivedDate).getTime() - new Date(b.receivedDate).getTime());
 
       for (const rec of activeReceipts) {
@@ -726,7 +753,7 @@ class StoreService {
       const localReceipts = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []);
       let remTenant = Math.abs(quantityDelta);
       const activeLocal = localReceipts
-        .filter((r: any) => r.product_id === productId && (r.quantity_remaining || 0) > 0)
+        .filter((r: any) => r.product_id === productId && (!effectiveBranchId || !r.branch_id || r.branch_id === effectiveBranchId) && (r.quantity_remaining || 0) > 0)
         .sort((a: any, b: any) => new Date(a.received_date || a.receivedDate).getTime() - new Date(b.received_date || b.receivedDate).getTime());
 
       for (const rec of activeLocal) {
@@ -737,12 +764,25 @@ class StoreService {
       }
       safeSaveTenantStorage('vistaar_local_stock_receipts_db', localReceipts);
     } else if (quantityDelta > 0 && type === 'Sales Return') {
-      const rec = this.state.stockReceipts.find((r) => r.productId === productId);
+      const rec = this.state.stockReceipts.find((r) => r.productId === productId && (!effectiveBranchId || !r.branchId || r.branchId === effectiveBranchId));
       if (rec) {
         rec.quantityRemaining += quantityDelta;
         rec.updatedAt = new Date().toISOString();
       }
     }
+
+    // Recalculate total stock across branches if branch inventories exist
+    const prodBranchEntries = allBranchInv.filter((bi: any) => bi.productId === productId);
+    let newStock = 0;
+    if (prodBranchEntries.length > 0) {
+      newStock = prodBranchEntries.reduce((sum: number, bi: any) => sum + (Number(bi.currentStock) || 0), 0);
+    } else {
+      newStock = Math.max(0, product.currentStock + quantityDelta);
+    }
+
+    const previousStock = product.currentStock;
+    product.currentStock = newStock;
+    product.updatedAt = new Date().toISOString();
     this.syncProductStock(productId, newStock);
 
     // 2. Add StockMovement record
@@ -750,6 +790,7 @@ class StoreService {
     const mov: StockMovement = {
       id: `mov-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       productId,
+      branchId: effectiveBranchId,
       type: movementType,
       quantity: quantityDelta,
       date: new Date().toISOString().split('T')[0],
@@ -763,6 +804,7 @@ class StoreService {
     const txn: InventoryTransaction = {
       id: `txn-${Date.now()}`,
       productId,
+      branchId: effectiveBranchId,
       type,
       quantityDelta,
       previousStock,
@@ -2260,7 +2302,34 @@ class StoreService {
     this.saveToStorage();
   }
 
-  public getProductAvailableStock(productId: string): number {
+  public getProductAvailableStock(productId: string, branchId?: string): number {
+    let effectiveBranchId = branchId;
+    if (!effectiveBranchId) {
+      try {
+        const saved = safeGetTenantItem<string | null>('active_branch_id', null);
+        if (saved && saved !== 'ALL') effectiveBranchId = saved;
+      } catch {}
+    }
+
+    if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+      const allInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
+      const entry = allInv.find((bi: any) => bi.branchId === effectiveBranchId && bi.productId === productId);
+      if (entry) {
+        return Math.max(0, Number(entry.currentStock) || 0);
+      }
+      const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+      const b = branches.find((branch: any) => branch.id === effectiveBranchId);
+      if (b?.isMainBranch) {
+        let prod = (this.state.products || []).find((p) => p.id === productId);
+        if (!prod) {
+          const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+          prod = local.find((p) => p.id === productId);
+        }
+        return prod ? Math.max(0, Number(prod.currentStock) || 0) : 0;
+      }
+      return 0;
+    }
+
     let prod = (this.state.products || []).find((p) => p.id === productId);
     if (!prod) {
       const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);

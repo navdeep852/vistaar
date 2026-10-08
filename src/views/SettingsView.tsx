@@ -2436,11 +2436,6 @@ export const SettingsView: React.FC = () => {
           </div>
         )}
 
-        {/* 7. BRANCHES & LOCATIONS TAB */}
-        {activeSubTab === 'branches' && isTabAllowed('branches') && (
-          <BranchSettingsTab employees={employees} />
-        )}
-
         {/* Save Bar */}
         {activeSubTab !== 'preview' && activeSubTab !== 'branches' && (
           <div className="flex justify-end pt-4 border-t border-slate-200 dark:border-slate-800">
@@ -2454,6 +2449,11 @@ export const SettingsView: React.FC = () => {
           </div>
         )}
       </form>
+
+      {/* 7. BRANCHES & LOCATIONS TAB (Independent View - Outside Business Settings Form) */}
+      {activeSubTab === 'branches' && isTabAllowed('branches') && (
+        <BranchSettingsTab employees={employees} />
+      )}
 
       {/* ==================== ADD EMPLOYEE MODAL ==================== */}
       <Modal

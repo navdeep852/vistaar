@@ -42,7 +42,10 @@ export class UdhariService {
 
         if (error) {
           const errStr = handleSupabaseError(error, 'getUdhariRecords');
-          const fallback = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
+          let fallback = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
+          if (options?.branchId && options.branchId !== 'ALL') {
+            fallback = fallback.filter((r: any) => (r.branchId || r.branch_id) === options.branchId);
+          }
           return { data: fallback, error: errStr };
         }
 
@@ -69,11 +72,17 @@ export class UdhariService {
         return { data: mapped };
       }
 
-      const fallback = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
+      let fallback = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
+      if (options?.branchId && options.branchId !== 'ALL') {
+        fallback = fallback.filter((r: any) => (r.branchId || r.branch_id) === options.branchId);
+      }
       return { data: fallback };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getUdhariRecords');
-      const fallback = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
+      let fallback = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
+      if (options?.branchId && options.branchId !== 'ALL') {
+        fallback = fallback.filter((r: any) => (r.branchId || r.branch_id) === options.branchId);
+      }
       return { data: fallback, error: errStr };
     }
   }
@@ -106,29 +115,58 @@ export class UdhariService {
       status: udhari.status || 'UNPAID',
     };
 
-    try {
-      let { data, error } = await supabase
-        .from('udhari_records')
-        .insert([payload])
-        .select('id')
-        .single();
+    let createdDbId: string | undefined = undefined;
+    if (isSupabaseConfigured() && isValidUuid(wsId)) {
+      try {
+        let { data, error } = await supabase
+          .from('udhari_records')
+          .insert([payload])
+          .select('id')
+          .single();
 
-      if (error && (error.code === '42703' || error.message?.includes('invoice_id'))) {
-        delete payload.invoice_id;
-        const retry = await supabase.from('udhari_records').insert([payload]).select('id').single();
-        data = retry.data;
-        error = retry.error;
-      }
+        if (error && (error.code === '42703' || error.message?.includes('invoice_id'))) {
+          delete payload.invoice_id;
+          const retry = await supabase.from('udhari_records').insert([payload]).select('id').single();
+          data = retry.data;
+          error = retry.error;
+        }
 
-      if (error) {
-        const errStr = handleSupabaseError(error, 'createUdhari');
-        return { error: errStr };
+        if (!error && data) {
+          createdDbId = data.id;
+        }
+      } catch (e: any) {
+        console.warn('[createUdhari] DB write notice:', e?.message || e);
       }
-      return { udhariId: data.id };
-    } catch (e: any) {
-      const errStr = handleSupabaseError(e, 'createUdhari');
-      return { error: errStr };
     }
+
+    // Mirror to local tenant storage for resilience and offline support
+    const localRecords = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
+    const localEntry = {
+      id: code,
+      dbId: createdDbId || code,
+      branchId: udhari.branchId,
+      customerId: udhari.customerId,
+      invoiceId: udhari.invoiceId,
+      customerNameSnapshot: udhari.customerNameSnapshot || 'Customer',
+      phoneSnapshot: udhari.phoneSnapshot,
+      originalAmount: Number(udhari.originalAmount) || 0,
+      totalReceived: Number(udhari.totalReceived) || 0,
+      outstandingAmount: udhari.outstandingAmount !== undefined ? Number(udhari.outstandingAmount) : (Number(udhari.originalAmount) || 0),
+      dueDate: udhari.dueDate || new Date().toISOString().split('T')[0],
+      status: udhari.status || 'UNPAID',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      payments: [],
+    };
+    const existIdx = localRecords.findIndex((r: any) => r.id === code || (r.invoiceId && r.invoiceId === udhari.invoiceId));
+    if (existIdx >= 0) {
+      localRecords[existIdx] = { ...localRecords[existIdx], ...localEntry };
+    } else {
+      localRecords.unshift(localEntry);
+    }
+    safeSaveTenantStorage(LOCAL_UDHARI_KEY, localRecords);
+
+    return { udhariId: createdDbId || code };
   }
 
   /**
@@ -276,6 +314,23 @@ export class UdhariService {
       }
     } catch (e: any) {
       console.warn('[syncInvoiceUdhari] notice:', e);
+    }
+
+    if (!isCleared) {
+      const res = await this.createUdhari({
+        id: `UD-${params.invoiceNumber}`,
+        customerId: params.customerId,
+        invoiceId: params.invoiceId,
+        branchId: params.branchId,
+        customerNameSnapshot: params.customerName,
+        phoneSnapshot: params.customerPhone || '9999999999',
+        originalAmount,
+        totalReceived,
+        outstandingAmount,
+        dueDate: effectiveDueDate,
+        status: udhariStatus as any,
+      });
+      return { udhariId: res.udhariId };
     }
 
     return {};

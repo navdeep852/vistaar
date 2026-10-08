@@ -100,7 +100,7 @@ export const UdhariView: React.FC = () => {
   const refreshData = () => {
     const all = store.getUdharis();
     if (currentBranch) {
-      setUdharis(all.filter((u) => !u.branchId || u.branchId === currentBranch.id));
+      setUdharis(all.filter((u) => u.branchId === currentBranch.id || (!u.branchId && currentBranch.isMainBranch)));
     } else {
       setUdharis(all);
     }
@@ -110,7 +110,7 @@ export const UdhariView: React.FC = () => {
 
   useEffect(() => {
     refreshData();
-    udhariService.getUdhariRecords(currentBranch?.id).then((res) => {
+    udhariService.getUdhariRecords(undefined, { branchId: currentBranch?.id }).then((res) => {
       if (res.data && res.data.length > 0) {
         store.syncRemoteUdharis(res.data);
         refreshData();
@@ -388,7 +388,7 @@ export const UdhariView: React.FC = () => {
       setConfirmModalOpen(true);
       showToast(`Recorded payment of ${formatCurrency(numAmount)} from ${activeUdhari.customerNameSnapshot}!`, 'success');
       refreshData();
-      udhariService.getUdhariRecords().then((res) => {
+      udhariService.getUdhariRecords(undefined, { branchId: currentBranch?.id }).then((res) => {
         if (res.data && res.data.length > 0) {
           store.syncRemoteUdharis(res.data);
           refreshData();

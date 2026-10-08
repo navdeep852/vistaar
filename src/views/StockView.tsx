@@ -20,11 +20,12 @@ interface StockViewProps {
 }
 
 export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }) => {
-  const { currentBranch } = useBranch();
-  const [activeSubSection, setActiveSubSection] = useState<'movements' | 'transfers'>('movements');
+  const { currentBranch, branches } = useBranch();
+  const [activeSubSection, setActiveSubSection] = useState<'movements' | 'transfers' | 'comparison'>('movements');
   const [products, setProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
   const [transfers, setTransfers] = useState<StockTransfer[]>([]);
+  const [branchInventory, setBranchInventory] = useState<any[]>([]);
   const [adjustModalOpen, setAdjustModalOpen] = useState(false);
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [denialModalOpen, setDenialModalOpen] = useState(false);
@@ -39,13 +40,15 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
   const settings = store.getSettings();
 
   const loadData = async () => {
-    const [prodRes, trfRes] = await Promise.all([
+    const [prodRes, trfRes, bInvRes] = await Promise.all([
       productService.getProducts({ branchId: currentBranch?.id }),
       branchService.getStockTransfers(currentBranch?.id),
+      branchService.getBranchInventory(),
     ]);
     const prodList = prodRes.data || [];
     setProducts(prodList);
     setTransfers(trfRes.data || []);
+    setBranchInventory(bInvRes.data || []);
     setTransactions(store.getState().inventoryTransactions);
     if (prodList.length > 0 && !selectedProductId) {
       setSelectedProductId(prodList[0].id);
@@ -208,6 +211,18 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
           <ArrowLeftRight className="w-3.5 h-3.5" />
           <span>Inter-Branch Transfers ({transfers.length})</span>
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubSection('comparison')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+            activeSubSection === 'comparison'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <Boxes className="w-3.5 h-3.5" />
+          <span>Multi-Branch Stock Comparison ({products.length})</span>
+        </button>
       </div>
 
       {/* Denial Informational Modal for Non-Owner Employees */}
@@ -357,6 +372,91 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
                       </td>
                     </tr>
                   ))
+                )}
+              </tbody>
+            </table>
+          </ScrollableTable>
+        </div>
+      )}
+
+      {/* MULTI-BRANCH STOCK COMPARISON TABLE */}
+      {activeSubSection === 'comparison' && (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card overflow-hidden transition-colors">
+          <div className="p-4 bg-slate-50 dark:bg-slate-800/40 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center">
+            <div>
+              <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                Multi-Branch Stock Matrix & Location Allocation
+              </h4>
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
+                Authoritative independent branch inventory breakdown across all operating locations.
+              </p>
+            </div>
+            {canTransferStock && (
+              <button
+                onClick={() => setTransferModalOpen(true)}
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1 shadow-sm cursor-pointer"
+              >
+                <ArrowLeftRight className="w-3.5 h-3.5" />
+                <span>Quick Transfer</span>
+              </button>
+            )}
+          </div>
+          <ScrollableTable minWidth="850px">
+            <table className="w-full min-w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 min-w-[200px]">Product</th>
+                  <th className="px-6 py-3.5 min-w-[120px]">SKU / Part #</th>
+                  {branches.map((b) => (
+                    <th key={b.id} className="px-6 py-3.5 min-w-[120px] text-center whitespace-nowrap">
+                      {b.branchName} ({b.branchCode})
+                    </th>
+                  ))}
+                  <th className="px-6 py-3.5 min-w-[120px] text-right font-extrabold text-blue-600 dark:text-blue-400 whitespace-nowrap">
+                    Total Enterprise Stock
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                {products.length === 0 ? (
+                  <tr>
+                    <td colSpan={branches.length + 3} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500">
+                      No products found in the catalog.
+                    </td>
+                  </tr>
+                ) : (
+                  products.map((prod) => {
+                    let totalStock = 0;
+                    return (
+                      <tr key={prod.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                        <td className="px-6 py-4 font-bold text-slate-900 dark:text-slate-100">
+                          {prod.name}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-slate-500 dark:text-slate-400">
+                          {prod.partNumber || prod.sku || '—'}
+                        </td>
+                        {branches.map((b) => {
+                          const biEntry = branchInventory.find((bi) => bi.branchId === b.id && bi.productId === prod.id);
+                          const bStock = biEntry ? Number(biEntry.currentStock) || 0 : (b.isMainBranch ? Number(prod.currentStock) || 0 : 0);
+                          totalStock += bStock;
+                          return (
+                            <td key={b.id} className="px-6 py-4 text-center font-bold">
+                              <span className={`px-2.5 py-1 rounded-lg text-xs ${
+                                bStock > 0
+                                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100'
+                                  : 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400'
+                              }`}>
+                                {bStock}
+                              </span>
+                            </td>
+                          );
+                        })}
+                        <td className="px-6 py-4 text-right font-extrabold text-blue-600 dark:text-blue-400 text-sm">
+                          {totalStock}
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>

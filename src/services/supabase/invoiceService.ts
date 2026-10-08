@@ -387,7 +387,7 @@ export class InvoiceService {
 
       // Perform stock deduction across line products
       for (const [productId, req] of reqMap.entries()) {
-        store.adjustStock(productId, 'Sale', -req.qty, `Invoice Finalization #${invNumber}`, invNumber);
+        store.adjustStock(productId, 'Sale', -req.qty, `Invoice Finalization #${invNumber}`, invNumber, branchId);
 
         if (isSupabaseConfigured()) {
           try {
@@ -578,7 +578,7 @@ export class InvoiceService {
       }
 
       for (const [pId, req] of requestedByProduct.entries()) {
-        const avail = await productService.getProductAvailableStock(pId);
+        const avail = await productService.getProductAvailableStock(pId, payload.branchId);
         if (avail < req.quantity) {
           return {
             success: false,
@@ -823,6 +823,7 @@ export class InvoiceService {
           referenceType: 'INVOICE',
           referenceId: authoritativeInvoiceId,
           referenceNumber: inv.invoiceNumber,
+          branchId: payload.branchId,
           transactionType: 'SALE',
           direction: 'IN',
           amount: effectivePaid, // Inflow = actual cash received
@@ -848,6 +849,7 @@ export class InvoiceService {
             sourceType: 'INVOICE_PAYMENT',
             sourceId: authoritativeInvoiceId,
             referenceNumber: inv.invoiceNumber,
+            branchId: payload.branchId,
             direction: 'IN',
             amount: effectivePaid,
             paymentMethod: payload.paymentMode || 'Cash',
@@ -865,6 +867,7 @@ export class InvoiceService {
           await paymentService.createPayment({
             invoiceId: authoritativeInvoiceId,
             invoiceNumber: inv.invoiceNumber,
+            branchId: payload.branchId,
             customerId: payload.customerId,
             customerName: payload.customerName || 'Customer',
             amount: effectivePaid,

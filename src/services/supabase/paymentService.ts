@@ -179,6 +179,7 @@ export class PaymentService {
     try {
       const { customerPaymentService } = await import('./customerPaymentService');
       const res = await customerPaymentService.recordCustomerPayment({
+        branchId: payment.branchId,
         invoiceId: payment.invoiceId,
         invoiceNumber: payment.invoiceNumber,
         customerId: payment.customerId,
