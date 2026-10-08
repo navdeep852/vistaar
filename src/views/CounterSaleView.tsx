@@ -125,10 +125,14 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
 
   useEffect(() => {
     refreshData();
-    const handleBranchChanged = () => refreshData();
-    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
+    const handleRefresh = () => refreshData();
+    window.addEventListener('vistaar:branch_changed', handleRefresh);
+    window.addEventListener('vistaar:stock_transferred', handleRefresh);
+    window.addEventListener('vistaar:branch_inventory_updated', handleRefresh);
     return () => {
-      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
+      window.removeEventListener('vistaar:branch_changed', handleRefresh);
+      window.removeEventListener('vistaar:stock_transferred', handleRefresh);
+      window.removeEventListener('vistaar:branch_inventory_updated', handleRefresh);
     };
   }, [currentBranch?.id]);
 

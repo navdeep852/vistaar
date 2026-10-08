@@ -40,22 +40,70 @@ export function buildTenantCacheKey(key: string, branchId?: string): string {
  */
 export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = [], branchId?: string): T[] {
   const tenantKey = buildTenantCacheKey(key, branchId);
+  const unifiedKey = buildTenantCacheKey(key);
   const legacyKey = `${key}_${getActiveCompanyId()}`;
 
-  if (typeof localStorage !== 'undefined') {
-    try {
-      const stored = localStorage.getItem(tenantKey) || (!branchId ? localStorage.getItem(legacyKey) : null);
-      if (stored) return JSON.parse(stored);
-    } catch (e) {
-      console.warn(`Failed to read tenant storage key ${tenantKey}:`, e);
+  const readRaw = (k: string): T[] | null => {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const stored = localStorage.getItem(k);
+        if (stored) return JSON.parse(stored);
+      } catch (e) {
+        console.warn(`Failed to read tenant storage key ${k}:`, e);
+      }
+    }
+    if (memoryStore[k]) {
+      try {
+        return JSON.parse(memoryStore[k]);
+      } catch (e) {
+        console.warn(`Failed to parse memory tenant key ${k}:`, e);
+      }
+    }
+    return null;
+  };
+
+  // Special handling for unified table: vistaar_local_branch_inventory_db
+  if (key === 'vistaar_local_branch_inventory_db') {
+    const unified = readRaw(unifiedKey);
+    if (unified && Array.isArray(unified) && unified.length > 0) {
+      if (branchId && branchId !== 'ALL') {
+        return unified.filter((it: any) => (it.branchId || it.branch_id) === branchId);
+      }
+      return unified;
     }
   }
 
-  if (memoryStore[tenantKey] || (!branchId && memoryStore[legacyKey])) {
-    try {
-      return JSON.parse(memoryStore[tenantKey] || memoryStore[legacyKey]);
-    } catch (e) {
-      console.warn(`Failed to parse memory tenant key ${tenantKey}:`, e);
+  // 1. Direct branch-specific read
+  const direct = readRaw(tenantKey);
+  if (direct && Array.isArray(direct) && direct.length > 0) {
+    return direct;
+  }
+
+  // 2. If branchId is specified, check if unified table has items for this branch
+  if (branchId && branchId !== 'ALL') {
+    const unified = readRaw(unifiedKey);
+    if (unified && Array.isArray(unified) && unified.length > 0) {
+      const branchItems = unified.filter((it: any) => (it.branchId || it.branch_id) === branchId);
+      if (branchItems.length > 0) return branchItems;
+    }
+  }
+
+  // 3. Fallback to unified key if direct was empty and no specific branch filter or unified exists
+  if (!branchId || branchId === 'ALL') {
+    const unified = readRaw(unifiedKey);
+    if (unified && Array.isArray(unified) && unified.length > 0) {
+      return unified;
+    }
+  }
+
+  // 4. Legacy key fallback
+  const legacy = readRaw(legacyKey);
+  if (legacy && Array.isArray(legacy)) {
+    if (branchId && branchId !== 'ALL') {
+      const filtered = legacy.filter((it: any) => (it.branchId || it.branch_id) === branchId);
+      if (filtered.length > 0) return filtered;
+    } else {
+      return legacy;
     }
   }
 
@@ -77,6 +125,23 @@ export function safeSaveTenantStorage<T = any>(key: string, items: T[], branchId
       }
     } catch (e) {
       console.warn(`Failed to save tenant storage key ${tenantKey}:`, e);
+    }
+  }
+
+  // If saving branch-specific inventory, also merge into unified table
+  if (key === 'vistaar_local_branch_inventory_db' && branchId && branchId !== 'ALL') {
+    const unifiedKey = buildTenantCacheKey(key);
+    const existingUnified = safeGetTenantStorage<any>(key, []);
+    const filteredUnified = existingUnified.filter((it: any) => (it.branchId || it.branch_id) !== branchId);
+    const merged = [...filteredUnified, ...items];
+    const mergedStr = JSON.stringify(merged);
+    memoryStore[unifiedKey] = mergedStr;
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(unifiedKey, mergedStr);
+        const legacyKey = `${key}_${getActiveCompanyId()}`;
+        localStorage.setItem(legacyKey, mergedStr);
+      } catch {}
     }
   }
 }

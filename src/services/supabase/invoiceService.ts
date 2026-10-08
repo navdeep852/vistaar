@@ -406,10 +406,32 @@ export class InvoiceService {
                 .eq('workspace_id', wsId)
                 .eq('id', productId);
             }
+
+            if (branchId && isValidUuid(branchId)) {
+              const { data: bProd } = await supabase
+                .from('branch_inventory')
+                .select('current_stock')
+                .eq('branch_id', branchId)
+                .eq('product_id', productId)
+                .maybeSingle();
+
+              if (bProd) {
+                const newBStock = Math.max(0, (Number(bProd.current_stock) || 0) - req.qty);
+                await supabase
+                  .from('branch_inventory')
+                  .update({ current_stock: newBStock, updated_at: new Date().toISOString() })
+                  .eq('branch_id', branchId)
+                  .eq('product_id', productId);
+              }
+            }
           } catch (e) {
             console.warn('[Stock Deduction] Supabase update warning:', e);
           }
         }
+      }
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('vistaar:branch_inventory_updated', { detail: { branchId } }));
       }
 
       // Invalidate product service cache so all views receive fresh stock immediately

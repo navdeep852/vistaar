@@ -58,11 +58,15 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
 
   useEffect(() => {
     loadData();
-    const handleBranchChanged = () => loadData();
-    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
+    const handleRefresh = () => loadData();
+    window.addEventListener('vistaar:branch_changed', handleRefresh);
+    window.addEventListener('vistaar:stock_transferred', handleRefresh);
+    window.addEventListener('vistaar:branch_inventory_updated', handleRefresh);
     const unsubscribeStore = store.subscribe(loadData);
     return () => {
-      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
+      window.removeEventListener('vistaar:branch_changed', handleRefresh);
+      window.removeEventListener('vistaar:stock_transferred', handleRefresh);
+      window.removeEventListener('vistaar:branch_inventory_updated', handleRefresh);
       unsubscribeStore();
     };
   }, [currentBranch?.id]);
@@ -436,8 +440,12 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
                           {prod.partNumber || prod.sku || '—'}
                         </td>
                         {branches.map((b) => {
-                          const biEntry = branchInventory.find((bi) => bi.branchId === b.id && bi.productId === prod.id);
-                          const bStock = biEntry ? Number(biEntry.currentStock) || 0 : (b.isMainBranch ? Number(prod.currentStock) || 0 : 0);
+                          const biEntry = branchInventory.find(
+                            (bi) => (bi.branchId || bi.branch_id) === b.id && (bi.productId || bi.product_id) === prod.id
+                          );
+                          const bStock = biEntry != null
+                            ? Number(biEntry.currentStock ?? biEntry.current_stock ?? 0)
+                            : (b.isMainBranch ? Number(prod.currentStock || 0) : 0);
                           totalStock += bStock;
                           return (
                             <td key={b.id} className="px-6 py-4 text-center font-bold">

@@ -200,14 +200,18 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
     if (initialOpenCreate) {
       handleOpenAddProduct();
     }
-    const handleBranchChanged = () => refreshData();
-    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
+    const handleRefresh = () => refreshData();
+    window.addEventListener('vistaar:branch_changed', handleRefresh);
+    window.addEventListener('vistaar:stock_transferred', handleRefresh);
+    window.addEventListener('vistaar:branch_inventory_updated', handleRefresh);
     // Re-fetch data if auth session profile initializes asynchronously
     const unsubscribeAuth = supabaseAuthService.subscribe(() => {
       refreshData();
     });
     return () => {
-      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
+      window.removeEventListener('vistaar:branch_changed', handleRefresh);
+      window.removeEventListener('vistaar:stock_transferred', handleRefresh);
+      window.removeEventListener('vistaar:branch_inventory_updated', handleRefresh);
       unsubscribeAuth();
     };
   }, [initialOpenCreate, initialCategoryFilter, currentBranch?.id]);

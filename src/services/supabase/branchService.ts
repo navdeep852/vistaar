@@ -1,14 +1,18 @@
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { Branch, UserBranchAccess, BranchInventory, StockTransfer, StockTransferItem } from '../../types';
+import { Branch, UserBranchAccess, BranchInventory, StockTransfer, StockTransferItem, Product, StockReceipt, StockMovement } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 import { auditLogService } from './auditLogService';
+import { store } from '../store';
 
 const LOCAL_BRANCHES_KEY = 'vistaar_local_branches_db';
 const LOCAL_USER_BRANCH_ACCESS_KEY = 'vistaar_local_user_branch_access_db';
 const LOCAL_BRANCH_INVENTORY_KEY = 'vistaar_local_branch_inventory_db';
 const LOCAL_STOCK_TRANSFERS_KEY = 'vistaar_local_stock_transfers_db';
+const LOCAL_PRODUCTS_KEY = 'vistaar_local_products_db';
+const LOCAL_RECEIPTS_KEY = 'vistaar_local_stock_receipts_db';
+const LOCAL_MOVEMENTS_KEY = 'vistaar_local_stock_movements_db';
 
 export function generateUuid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -473,11 +477,232 @@ export class BranchService {
   }
 
   /**
+   * Authoritative Multi-Branch Catalog & Inventory Synchronizer.
+   * Guarantees:
+   * 1. Every catalog product has persistent branch_inventory records.
+   * 2. Existing product stock and branchless receipts are permanently mapped to Main Branch.
+   * 3. Secondary branches (e.g. testbranch) have persistent branch_inventory records initialized to 0.
+   * 4. Idempotent across local tenant storage and remote Supabase.
+   */
+  public async ensureBranchInventorySynchronized(targetBranchId?: string): Promise<BranchInventory[]> {
+    const wsId = await this.getWorkspaceId();
+    const branchesRes = await this.getBranches({ activeOnly: false });
+    const allBranches = branchesRes.data || [];
+    if (allBranches.length === 0) return [];
+
+    const mainBranch = allBranches.find((b) => b.isMainBranch) || allBranches[0];
+    if (!mainBranch) return [];
+
+    // 1. Gather all products across store, local storage, and remote Supabase
+    const localProds = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+    const storeProds = (typeof store !== 'undefined' && store?.getProducts) ? store.getProducts() : [];
+    const prodMap = new Map<string, any>();
+    localProds.forEach((p) => { if (p?.id) prodMap.set(p.id, p); });
+    storeProds.forEach((p) => { if (p?.id && !prodMap.has(p.id)) prodMap.set(p.id, p); });
+
+    if (isSupabaseConfigured() && isValidUuid(wsId)) {
+      try {
+        const { data: sbProds, error: pErr } = await supabase
+          .from('products')
+          .select('id, name, sku, part_number, current_stock, minimum_stock, location, buy_price, selling_price')
+          .eq('workspace_id', wsId);
+        if (!pErr && sbProds && sbProds.length > 0) {
+          sbProds.forEach((p: any) => {
+            if (p?.id) {
+              const existing = prodMap.get(p.id);
+              prodMap.set(p.id, {
+                id: p.id,
+                name: p.name,
+                productName: p.name,
+                sku: p.sku,
+                partNumber: p.part_number,
+                currentStock: existing?.currentStock !== undefined ? existing.currentStock : Number(p.current_stock) || 0,
+                minimumStock: Number(p.minimum_stock) || 0,
+                location: p.location,
+                buyPrice: Number(p.buy_price) || 0,
+                sellingPrice: Number(p.selling_price) || 0,
+              });
+            }
+          });
+        }
+      } catch (e) {
+        // remote table error, ignore
+      }
+    }
+
+    const allProducts = Array.from(prodMap.values());
+    if (allProducts.length === 0) return [];
+
+    // 2. Load existing branch inventory from unified key
+    const allBranchInv = safeGetTenantStorage<BranchInventory>(LOCAL_BRANCH_INVENTORY_KEY, []);
+    const invMap = new Map<string, BranchInventory>();
+    allBranchInv.forEach((bi) => {
+      invMap.set(`${bi.branchId}__${bi.productId}`, bi);
+    });
+
+    // 3. Load existing stock receipts and backfill branchless receipts to Main Branch
+    const localReceipts = safeGetTenantStorage<any>(LOCAL_RECEIPTS_KEY, []);
+    let receiptsModified = false;
+    localReceipts.forEach((r: any) => {
+      if (!r.branchId && !r.branch_id) {
+        r.branchId = mainBranch.id;
+        r.branch_id = mainBranch.id;
+        receiptsModified = true;
+      }
+    });
+
+    if (typeof store !== 'undefined' && store?.getState) {
+      const stateReceipts = store.getState().stockReceipts || [];
+      stateReceipts.forEach((r: any) => {
+        if (!r.branchId) {
+          r.branchId = mainBranch.id;
+        }
+      });
+    }
+
+    let inventoryModified = false;
+    const nowIso = new Date().toISOString();
+
+    // 4. Ensure each product has a Main Branch inventory entry and secondary branch entries
+    for (const p of allProducts) {
+      const masterStock = Math.max(0, Number(p.currentStock ?? p.stock) || 0);
+      const mainKey = `${mainBranch.id}__${p.id}`;
+      let mainEntry = invMap.get(mainKey);
+
+      if (!mainEntry) {
+        // Create Main Branch inventory entry with master stock
+        mainEntry = {
+          id: generateUuid(),
+          workspaceId: wsId || 'default',
+          branchId: mainBranch.id,
+          productId: p.id,
+          currentStock: masterStock,
+          openingStock: masterStock,
+          minStock: Number(p.minStock ?? p.minimumStock) || 0,
+          reorderLevel: Number(p.reorderLevel) || 0,
+          rackLocation: p.location,
+          purchasePrice: p.buyPrice ? Number(p.buyPrice) : undefined,
+          sellingPrice: p.sellingPrice ? Number(p.sellingPrice) : undefined,
+          status: masterStock > 0 ? 'Active' : 'Out of Stock',
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        invMap.set(mainKey, mainEntry);
+        allBranchInv.push(mainEntry);
+        inventoryModified = true;
+
+        // If master stock > 0, ensure Main Branch has an active stock receipt for FIFO
+        const hasMainReceipt = localReceipts.some((r: any) => 
+          (r.productId === p.id || r.product_id === p.id) && 
+          (r.branchId === mainBranch.id || r.branch_id === mainBranch.id) && 
+          Number(r.quantityRemaining ?? r.quantity_remaining) > 0
+        );
+
+        if (!hasMainReceipt && masterStock > 0) {
+          const initReceipt = {
+            id: `rec-init-${p.id}`,
+            workspace_id: wsId || 'default',
+            product_id: p.id,
+            productId: p.id,
+            branch_id: mainBranch.id,
+            branchId: mainBranch.id,
+            receipt_number: `GRN-OPEN-${Date.now().toString().slice(-4)}`,
+            received_date: nowIso.split('T')[0],
+            quantity_received: masterStock,
+            quantityReceived: masterStock,
+            quantity_remaining: masterStock,
+            quantityRemaining: masterStock,
+            buy_price: Number(p.buyPrice) || 0,
+            buyPrice: Number(p.buyPrice) || 0,
+            notes: 'Authoritative opening stock for Main Branch',
+            created_at: nowIso,
+            createdAt: nowIso,
+            updated_at: nowIso,
+            updatedAt: nowIso,
+          };
+          localReceipts.unshift(initReceipt);
+          if (typeof store !== 'undefined' && store?.getState) {
+            const sRecs = store.getState().stockReceipts;
+            if (sRecs && !sRecs.some((r: any) => r.id === initReceipt.id)) {
+              sRecs.unshift(initReceipt as any);
+            }
+          }
+          receiptsModified = true;
+        }
+      }
+
+      // Also ensure entries for all other active branches (initialized to 0 if not present)
+      for (const b of allBranches) {
+        if (b.id === mainBranch.id) continue;
+        const bKey = `${b.id}__${p.id}`;
+        let bEntry = invMap.get(bKey);
+        if (!bEntry) {
+          bEntry = {
+            id: generateUuid(),
+            workspaceId: wsId || 'default',
+            branchId: b.id,
+            productId: p.id,
+            currentStock: 0,
+            openingStock: 0,
+            minStock: 0,
+            reorderLevel: 0,
+            rackLocation: p.location,
+            status: 'Active',
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          };
+          invMap.set(bKey, bEntry);
+          allBranchInv.push(bEntry);
+          inventoryModified = true;
+        }
+      }
+    }
+
+    if (receiptsModified) {
+      safeSaveTenantStorage(LOCAL_RECEIPTS_KEY, localReceipts);
+    }
+
+    if (inventoryModified) {
+      safeSaveTenantStorage(LOCAL_BRANCH_INVENTORY_KEY, allBranchInv);
+    }
+
+    // 5. If Supabase is configured and tables exist, attempt remote upsert
+    if (isSupabaseConfigured() && isValidUuid(wsId)) {
+      try {
+        const payload = allBranchInv.map((bi) => ({
+          workspace_id: wsId,
+          branch_id: bi.branchId,
+          product_id: bi.productId,
+          opening_stock: bi.openingStock,
+          current_stock: bi.currentStock,
+          min_stock: bi.minStock,
+          reorder_level: bi.reorderLevel,
+          rack_location: bi.rackLocation,
+          purchase_price: bi.purchasePrice,
+          selling_price: bi.sellingPrice,
+          status: bi.currentStock > 0 ? 'In Stock' : 'Out of Stock',
+          updated_at: new Date().toISOString(),
+        }));
+        await supabase.from('branch_inventory').upsert(payload, { onConflict: 'branch_id,product_id' });
+        await supabase.from('stock_receipts').update({ branch_id: mainBranch.id }).eq('workspace_id', wsId).is('branch_id', null);
+      } catch (sbErr) {
+        // Table may not yet be migrated in remote Supabase
+      }
+    }
+
+    return allBranchInv;
+  }
+
+  /**
    * Fetch Branch-specific inventory
    */
   public async getBranchInventory(branchId?: string, productId?: string): Promise<{ data: BranchInventory[]; error?: string }> {
     const wsId = await this.getWorkspaceId();
 
+    // 1. Automatically ensure catalog branch inventory is synchronized
+    await this.ensureBranchInventorySynchronized(branchId);
+
+    // 2. Try Supabase query if configured
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
       try {
         let query = supabase
@@ -528,35 +753,15 @@ export class BranchService {
           return { data: mapped };
         }
       } catch (e: any) {
-        console.warn('Supabase getBranchInventory note:', e);
+        // Fall through to local tenant storage
       }
     }
 
-    // Local tenant storage fallback
-    let allInv = safeGetTenantStorage<BranchInventory>(LOCAL_BRANCH_INVENTORY_KEY, []);
-    const prods = safeGetTenantStorage<any>('vistaar_local_products_db', []);
+    // 3. Local tenant storage query
+    const allInv = safeGetTenantStorage<BranchInventory>(LOCAL_BRANCH_INVENTORY_KEY, []);
+    const prods = safeGetTenantStorage<any>(LOCAL_PRODUCTS_KEY, []);
+    const storeProds = (typeof store !== 'undefined' && store?.getProducts) ? store.getProducts() : [];
     const branches = safeGetTenantStorage<Branch>(LOCAL_BRANCHES_KEY, []);
-    const mainBranch = branches.find((b) => b.isMainBranch) || branches[0];
-
-    // If local inventory is empty, initialize for Main Branch from products
-    if (allInv.length === 0 && mainBranch && prods.length > 0) {
-      allInv = prods.map((p: any) => ({
-        id: generateUuid(),
-        workspaceId: wsId || 'default',
-        branchId: mainBranch.id,
-        productId: p.id,
-        currentStock: Math.max(0, Number(p.currentStock) || 0),
-        openingStock: Math.max(0, Number(p.currentStock) || 0),
-        minStock: Number(p.minStock ?? p.minimumStock) || 0,
-        rackLocation: p.location,
-        purchasePrice: p.buyPrice ? Number(p.buyPrice) : undefined,
-        sellingPrice: p.sellingPrice ? Number(p.sellingPrice) : undefined,
-        status: 'Active',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      }));
-      safeSaveTenantStorage(LOCAL_BRANCH_INVENTORY_KEY, allInv);
-    }
 
     let filtered = allInv;
     if (branchId && branchId !== 'ALL') {
@@ -566,8 +771,11 @@ export class BranchService {
       filtered = filtered.filter((bi) => bi.productId === productId);
     }
 
-    const prodMap = new Map<string, any>(prods.map((p: any) => [p.id, p]));
+    const prodMap = new Map<string, any>();
+    prods.forEach((p: any) => { if (p?.id) prodMap.set(p.id, p); });
+    storeProds.forEach((p: any) => { if (p?.id && !prodMap.has(p.id)) prodMap.set(p.id, p); });
     const branchMap = new Map<string, any>(branches.map((b: any) => [b.id, b]));
+
     const result = filtered.map((bi) => ({
       ...bi,
       product: prodMap.get(bi.productId),
@@ -671,6 +879,9 @@ export class BranchService {
       return { success: false, error: 'Please add at least one item to transfer.' };
     }
 
+    // Ensure synchronized before validating
+    await this.ensureBranchInventorySynchronized();
+
     const branchesRes = await this.getBranches({ activeOnly: false });
     const sourceBranch = branchesRes.data.find((b) => b.id === payload.sourceBranchId);
     const destBranch = branchesRes.data.find((b) => b.id === payload.destinationBranchId);
@@ -693,6 +904,10 @@ export class BranchService {
       }
     }
 
+    const transferId = generateUuid();
+    const trfNum = `TRF-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`;
+    const transferDate = payload.transferDate || new Date().toISOString().split('T')[0];
+
     // Step 2: Try Remote Supabase RPC first if configured
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
       try {
@@ -701,22 +916,19 @@ export class BranchService {
             workspace_id: wsId,
             source_branch_id: payload.sourceBranchId,
             destination_branch_id: payload.destinationBranchId,
-            transfer_date: payload.transferDate || new Date().toISOString().split('T')[0],
+            transfer_date: transferDate,
+            transfer_number: trfNum,
             notes: payload.notes,
             items: payload.items,
           },
         });
 
         if (!error && data?.success) {
-          return {
-            success: true,
-            transferId: data.transfer_id,
-            transferNumber: data.transfer_number,
-          };
+          // Sync local storage as well
         } else if (error) {
           const code = (error as any).code || '';
           const msg = (error as any).message || '';
-          const isMissing = code === 'PGRST202' || msg.includes('Could not find the function') || msg.includes('does not exist');
+          const isMissing = code === 'PGRST202' || code === 'PGRST205' || msg.includes('Could not find the function') || msg.includes('does not exist');
           if (!isMissing) {
             return { success: false, error: handleSupabaseError(error, 'executeStockTransfer') };
           }
@@ -726,65 +938,153 @@ export class BranchService {
       }
     }
 
-    // Step 3: Local Atomic Stock Transfer Execution
-    const transferId = generateUuid();
-    const trfNum = `TRF-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`;
-    const transferDate = payload.transferDate || new Date().toISOString().split('T')[0];
-
+    // Step 3: Local Atomic Stock Transfer Execution & Storage Synchronization
     const allBranchInv = safeGetTenantStorage<BranchInventory>(LOCAL_BRANCH_INVENTORY_KEY, []);
+    const localReceipts = safeGetTenantStorage<any>(LOCAL_RECEIPTS_KEY, []);
+    const localMovements = safeGetTenantStorage<any>(LOCAL_MOVEMENTS_KEY, []);
+    const nowIso = new Date().toISOString();
 
     for (const item of payload.items) {
       const qty = Math.abs(Number(item.quantity) || 0);
 
-      // 1. Deduct from source branch
-      let srcEntry: BranchInventory | undefined = allBranchInv.find((bi) => bi.branchId === payload.sourceBranchId && bi.productId === item.productId);
-      if (!srcEntry) {
-        const prods = safeGetTenantStorage<any>('vistaar_local_products_db', []);
-        const p = prods.find((prod: any) => prod.id === item.productId);
-        srcEntry = {
-          id: generateUuid(),
-          workspaceId: wsId || 'default',
-          branchId: payload.sourceBranchId,
-          productId: item.productId,
-          currentStock: Math.max(0, Number(p?.currentStock) || 0),
-          openingStock: Math.max(0, Number(p?.currentStock) || 0),
-          minStock: 0,
-          status: 'Active',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        allBranchInv.push(srcEntry);
-      }
+      // 1. Deduct from source branch inventory
+      let srcEntry = allBranchInv.find((bi) => bi.branchId === payload.sourceBranchId && bi.productId === item.productId);
       if (srcEntry) {
         srcEntry.currentStock = Math.max(0, srcEntry.currentStock - qty);
-        srcEntry.updatedAt = new Date().toISOString();
+        srcEntry.updatedAt = nowIso;
       }
 
-      // 2. Add to destination branch
-      let destEntry: BranchInventory | undefined = allBranchInv.find((bi) => bi.branchId === payload.destinationBranchId && bi.productId === item.productId);
+      // 2. Add to destination branch inventory
+      let destEntry = allBranchInv.find((bi) => bi.branchId === payload.destinationBranchId && bi.productId === item.productId);
       if (!destEntry) {
         destEntry = {
           id: generateUuid(),
           workspaceId: wsId || 'default',
           branchId: payload.destinationBranchId,
           productId: item.productId,
-          currentStock: 0,
+          currentStock: qty,
           openingStock: 0,
           minStock: 0,
+          reorderLevel: 0,
           status: 'Active',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+          createdAt: nowIso,
+          updatedAt: nowIso,
         };
         allBranchInv.push(destEntry);
-      }
-      if (destEntry) {
+      } else {
         destEntry.currentStock += qty;
-        destEntry.updatedAt = new Date().toISOString();
+        destEntry.updatedAt = nowIso;
+      }
+
+      // 3. FIFO Deduct from source receipts
+      let remToDeduct = qty;
+      const sourceReceipts = localReceipts
+        .filter((r: any) => 
+          (r.productId === item.productId || r.product_id === item.productId) && 
+          (r.branchId === payload.sourceBranchId || r.branch_id === payload.sourceBranchId) && 
+          Number(r.quantityRemaining ?? r.quantity_remaining) > 0
+        )
+        .sort((a: any, b: any) => 
+          new Date(a.receivedDate || a.received_date || 0).getTime() - 
+          new Date(b.receivedDate || b.received_date || 0).getTime()
+        );
+
+      let unitCost = item.unitCost;
+      for (const rec of sourceReceipts) {
+        if (remToDeduct <= 0) break;
+        const availInRec = Number(rec.quantityRemaining ?? rec.quantity_remaining) || 0;
+        const deduct = Math.min(availInRec, remToDeduct);
+        if (rec.quantityRemaining !== undefined) rec.quantityRemaining -= deduct;
+        if (rec.quantity_remaining !== undefined) rec.quantity_remaining -= deduct;
+        rec.updatedAt = nowIso;
+        rec.updated_at = nowIso;
+        remToDeduct -= deduct;
+        if (!unitCost && (rec.buyPrice || rec.buy_price)) {
+          unitCost = Number(rec.buyPrice || rec.buy_price);
+        }
+      }
+
+      // Also update in-memory store receipts if present
+      if (typeof store !== 'undefined' && store?.getState) {
+        const storeRecs = (store.getState().stockReceipts || [])
+          .filter((r) => r.productId === item.productId && r.branchId === payload.sourceBranchId && r.quantityRemaining > 0)
+          .sort((a, b) => new Date(a.receivedDate).getTime() - new Date(b.receivedDate).getTime());
+        let storeRem = qty;
+        for (const sr of storeRecs) {
+          if (storeRem <= 0) break;
+          const deduct = Math.min(sr.quantityRemaining, storeRem);
+          sr.quantityRemaining -= deduct;
+          sr.updatedAt = nowIso;
+          storeRem -= deduct;
+        }
+      }
+
+      // 4. Create new Stock Receipt at destination branch
+      const destReceipt = {
+        id: `rec-trf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        workspace_id: wsId || 'default',
+        branch_id: payload.destinationBranchId,
+        branchId: payload.destinationBranchId,
+        product_id: item.productId,
+        productId: item.productId,
+        receipt_number: `REC-${trfNum}`,
+        received_date: transferDate,
+        quantity_received: qty,
+        quantityReceived: qty,
+        quantity_remaining: qty,
+        quantityRemaining: qty,
+        buy_price: unitCost || 0,
+        buyPrice: unitCost || 0,
+        notes: `Inter-branch transfer from ${sourceName} (${trfNum})`,
+        created_at: nowIso,
+        createdAt: nowIso,
+        updated_at: nowIso,
+        updatedAt: nowIso,
+      };
+      localReceipts.unshift(destReceipt);
+      if (typeof store !== 'undefined' && store?.getState) {
+        store.getState().stockReceipts?.unshift(destReceipt as any);
+      }
+
+      // 5. Add Stock Movement records for audit trail
+      const movOut: any = {
+        id: `mov-${Date.now()}-out-${Math.random().toString(36).slice(2, 6)}`,
+        workspaceId: wsId || 'default',
+        productId: item.productId,
+        branchId: payload.sourceBranchId,
+        type: 'TRANSFER_OUT',
+        quantity: -qty,
+        date: transferDate,
+        referenceId: trfNum,
+        referenceType: 'STOCK_TRANSFER',
+        notes: `Transferred to ${destName}`,
+        createdAt: nowIso,
+      };
+      const movIn: any = {
+        id: `mov-${Date.now()}-in-${Math.random().toString(36).slice(2, 6)}`,
+        workspaceId: wsId || 'default',
+        productId: item.productId,
+        branchId: payload.destinationBranchId,
+        type: 'TRANSFER_IN',
+        quantity: qty,
+        date: transferDate,
+        referenceId: trfNum,
+        referenceType: 'STOCK_TRANSFER',
+        notes: `Received from ${sourceName}`,
+        createdAt: nowIso,
+      };
+      localMovements.unshift(movOut, movIn);
+      if (typeof store !== 'undefined' && store?.getState) {
+        store.getState().stockMovements?.unshift(movOut as any, movIn as any);
       }
     }
 
+    // Save atomic storage updates
     safeSaveTenantStorage(LOCAL_BRANCH_INVENTORY_KEY, allBranchInv);
+    safeSaveTenantStorage(LOCAL_RECEIPTS_KEY, localReceipts);
+    safeSaveTenantStorage(LOCAL_MOVEMENTS_KEY, localMovements);
 
+    // Save StockTransfer record
     const newTrf: StockTransfer = {
       id: transferId,
       workspaceId: wsId || 'default',
@@ -796,8 +1096,8 @@ export class BranchService {
       transferDate,
       status: 'Completed',
       notes: payload.notes,
-      createdAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
+      createdAt: nowIso,
+      completedAt: nowIso,
       items: payload.items.map((it) => ({
         id: generateUuid(),
         workspaceId: wsId || 'default',
@@ -813,6 +1113,21 @@ export class BranchService {
     transfersList.unshift(newTrf);
     safeSaveTenantStorage(LOCAL_STOCK_TRANSFERS_KEY, transfersList);
 
+    // Step 4: Cache Invalidation & Event Notifications
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('vistaar:stock_transferred', {
+        detail: {
+          transferId,
+          transferNumber: trfNum,
+          sourceBranchId: payload.sourceBranchId,
+          destinationBranchId: payload.destinationBranchId,
+        },
+      }));
+      window.dispatchEvent(new CustomEvent('vistaar:branch_changed', {
+        detail: { branchId: payload.sourceBranchId },
+      }));
+    }
+
     return { success: true, transferId, transferNumber: trfNum };
   }
 
@@ -822,13 +1137,16 @@ export class BranchService {
   public async getAuthoritativeStock(productId: string, branchId?: string): Promise<number> {
     const wsId = await this.getWorkspaceId();
 
+    // Ensure synchronized first
+    await this.ensureBranchInventorySynchronized(branchId);
+
     if (!branchId || branchId === 'ALL') {
       const allInv = safeGetTenantStorage<BranchInventory>(LOCAL_BRANCH_INVENTORY_KEY, []);
       const matching = allInv.filter((bi) => bi.productId === productId);
       if (matching.length > 0) {
         return matching.reduce((sum, bi) => sum + (Number(bi.currentStock) || 0), 0);
       }
-      const prods = safeGetTenantStorage<any>('vistaar_local_products_db', []);
+      const prods = safeGetTenantStorage<any>(LOCAL_PRODUCTS_KEY, []);
       const p = prods.find((prod: any) => prod.id === productId);
       return Math.max(0, Number(p?.currentStock) || 0);
     }
@@ -864,17 +1182,10 @@ export class BranchService {
       return Math.max(0, Number(entry.currentStock) || 0);
     }
 
-    const branches = safeGetTenantStorage<Branch>(LOCAL_BRANCHES_KEY, []);
-    const b = branches.find((branch) => branch.id === branchId);
-    if (b?.isMainBranch) {
-      const prods = safeGetTenantStorage<any>('vistaar_local_products_db', []);
-      const p = prods.find((prod: any) => prod.id === productId);
-      return Math.max(0, Number(p?.currentStock) || 0);
-    }
-
     return 0;
   }
 }
 
 export const branchService = new BranchService();
+
 

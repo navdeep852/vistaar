@@ -183,18 +183,27 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         setUsesPartNumber(res.data.usesPartNumber);
       }
     }).catch(() => {});
-    productService.getProducts({ branchId: currentBranch?.id }).then((res) => {
-      if (res && res.data && res.data.length > 0) {
-        setProducts(res.data);
-      }
-    }).catch((e) => console.warn('Failed to pre-fetch products in DocumentEditorView:', e));
+    const reloadProducts = () => {
+      productService.getProducts({ branchId: currentBranch?.id }).then((res) => {
+        if (res && res.data && res.data.length > 0) {
+          setProducts(res.data);
+        }
+      }).catch((e) => console.warn('Failed to pre-fetch products in DocumentEditorView:', e));
+    };
+    reloadProducts();
+    window.addEventListener('vistaar:stock_transferred', reloadProducts);
+    window.addEventListener('vistaar:branch_inventory_updated', reloadProducts);
     const unsub = store.subscribe(() => {
       const updated = store.getCustomers();
       if (updated) {
         setCustomersList(updated);
       }
     });
-    return unsub;
+    return () => {
+      window.removeEventListener('vistaar:stock_transferred', reloadProducts);
+      window.removeEventListener('vistaar:branch_inventory_updated', reloadProducts);
+      unsub();
+    };
   }, [currentBranch?.id]);
 
   // Dates

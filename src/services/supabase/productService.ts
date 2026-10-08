@@ -5,7 +5,7 @@ import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { store } from '../store';
 
-import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from './safeStorage';
 import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
 import { hasCurrentUserPermission, requirePermission } from '../../lib/permissions';
 import { auditLogService } from './auditLogService';
@@ -83,11 +83,26 @@ export class ProductService {
       items = items.map((p) => {
         let branchStock: number | undefined = undefined;
         if (branchId && branchId !== 'ALL') {
-          const bEntry = allBranchInv.find((bi: any) => bi.branchId === branchId && bi.productId === p.id);
+          let bEntry = allBranchInv.find((bi: any) => bi.branchId === branchId && bi.productId === p.id);
           if (bEntry) {
             branchStock = Math.max(0, Number(bEntry.currentStock) || 0);
           } else if (isMain) {
             branchStock = p.currentStock || 0;
+            // Create persistent branch_inventory record so other services find it
+            const newBEntry = {
+              id: `bi-${Date.now()}-${p.id}`,
+              branchId,
+              productId: p.id,
+              currentStock: branchStock,
+              openingStock: branchStock,
+              minStock: Number((p as any).minStock ?? p.minimumStock) || 0,
+              rackLocation: p.location,
+              status: branchStock > 0 ? 'Active' : 'Out of Stock',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+            allBranchInv.push(newBEntry);
+            safeSaveTenantStorage('vistaar_local_branch_inventory_db', allBranchInv);
           } else {
             branchStock = 0;
           }
@@ -234,7 +249,23 @@ export class ProductService {
               p.sellingPrice = Number(bRow.selling_price ?? bRow.sellingPrice);
             }
           } else if (isMain) {
-            // Main branch retains product master stock
+            // Main branch retains product master stock and persists branch_inventory row
+            const allLocalBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
+            let existEntry = allLocalBInv.find((bi: any) => bi.branchId === branchId && bi.productId === p.id);
+            if (!existEntry) {
+              const newBEntry = {
+                id: `bi-${Date.now()}-${p.id}`,
+                branchId,
+                productId: p.id,
+                currentStock: p.currentStock || 0,
+                openingStock: p.currentStock || 0,
+                status: (p.currentStock || 0) > 0 ? 'Active' : 'Out of Stock',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              };
+              allLocalBInv.push(newBEntry);
+              safeSaveTenantStorage('vistaar_local_branch_inventory_db', allLocalBInv);
+            }
           } else {
             p.currentStock = 0;
           }
@@ -412,12 +443,28 @@ export class ProductService {
       local.unshift(fullProd);
       safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, local);
 
-      // Save initial stock receipt locally if initialStock > 0
+      // Save initial stock receipt and branch inventory locally if initialStock > 0
       if (initialStock > 0) {
+        // Resolve target branch
+        let targetBranchId: string | null = (product as any).branchId || null;
+        if (!targetBranchId) {
+          try {
+            const savedBId = safeGetTenantItem<string | null>('active_branch_id', null);
+            if (savedBId && savedBId !== 'ALL') targetBranchId = savedBId;
+          } catch {}
+        }
+        if (!targetBranchId) {
+          const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+          const mainB = branches.find((b: any) => b.isMainBranch) || branches[0];
+          targetBranchId = mainB?.id || 'default';
+        }
+
         const localReceipts = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []);
         localReceipts.unshift({
           id: `rcpt-${Date.now()}`,
           workspace_id: this.getWorkspaceId(),
+          branch_id: targetBranchId,
+          branchId: targetBranchId,
           product_id: fullProd.id,
           receipt_number: `GRN-${Date.now()}`,
           purchase_order_number: (product as any).purchaseOrderNumber || '',
@@ -429,6 +476,25 @@ export class ProductService {
           created_at: new Date().toISOString(),
         });
         safeSaveTenantStorage('vistaar_local_stock_receipts_db', localReceipts);
+
+        // Update branch_inventory
+        const allLocalBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
+        allLocalBInv.push({
+          id: `bi-${Date.now()}-${fullProd.id}`,
+          workspaceId: this.getWorkspaceId() || 'default',
+          branchId: targetBranchId,
+          productId: fullProd.id,
+          currentStock: initialStock,
+          openingStock: initialStock,
+          minStock: Number(fullProd.minimumStock) || 0,
+          rackLocation: fullProd.location,
+          purchasePrice: fullProd.buyPrice,
+          sellingPrice: fullProd.sellingPrice,
+          status: initialStock > 0 ? 'Active' : 'Out of Stock',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+        safeSaveTenantStorage('vistaar_local_branch_inventory_db', allLocalBInv);
       }
 
       return { product: fullProd };
@@ -515,12 +581,27 @@ export class ProductService {
       createdProduct.productCode = partNo;
       createdProduct.category = product.category || 'General';
 
-      // If initial stock is specified, create an initial stock receipt (GRN) in Supabase
+      // If initial stock is specified, create an initial stock receipt (GRN) and branch_inventory in Supabase
       if (initialStock > 0 && createdProduct.id) {
         try {
+          // Resolve target branch
+          let targetBranchId: string | null = (product as any).branchId || null;
+          if (!targetBranchId) {
+            try {
+              const savedBId = safeGetTenantItem<string | null>('active_branch_id', null);
+              if (savedBId && savedBId !== 'ALL') targetBranchId = savedBId;
+            } catch {}
+          }
+          if (!targetBranchId) {
+            const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+            const mainB = branches.find((b: any) => b.isMainBranch) || branches[0];
+            targetBranchId = mainB?.id || 'default';
+          }
+
           const pAny = product as any;
           const receiptPayload: any = {
             product_id: createdProduct.id,
+            branch_id: targetBranchId,
             supplier_id: product.supplierId || null,
             receipt_number: `GRN-${Date.now()}`,
             purchase_order_number: pAny.purchaseOrderNumber || null,
@@ -534,6 +615,48 @@ export class ProductService {
             receiptPayload.workspace_id = wsId;
           }
           await supabase.from('stock_receipts').insert([receiptPayload]);
+
+          // Also upsert into branch_inventory
+          try {
+            await supabase.from('branch_inventory').upsert({
+              workspace_id: wsId,
+              branch_id: targetBranchId,
+              product_id: createdProduct.id,
+              opening_stock: initialStock,
+              current_stock: initialStock,
+              minimum_stock: Number(createdProduct.minimumStock) || 0,
+              rack_location: createdProduct.location || null,
+              buy_price: createdProduct.buyPrice,
+              selling_price: createdProduct.sellingPrice,
+              status: initialStock > 0 ? 'In Stock' : 'Out of Stock',
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'branch_id,product_id' });
+          } catch (biErr) {
+            console.warn('branch_inventory remote upsert notice:', biErr);
+          }
+
+          // Also update local branch_inventory
+          const allLocalBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
+          let bEntry = allLocalBInv.find((bi: any) => bi.branchId === targetBranchId && bi.productId === createdProduct.id);
+          if (!bEntry) {
+            allLocalBInv.push({
+              id: `bi-${Date.now()}-${createdProduct.id}`,
+              workspaceId: wsId || 'default',
+              branchId: targetBranchId,
+              productId: createdProduct.id,
+              currentStock: initialStock,
+              openingStock: initialStock,
+              minStock: Number(createdProduct.minimumStock) || 0,
+              rackLocation: createdProduct.location,
+              status: initialStock > 0 ? 'Active' : 'Out of Stock',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            });
+          } else {
+            bEntry.currentStock = initialStock;
+            bEntry.updatedAt = new Date().toISOString();
+          }
+          safeSaveTenantStorage('vistaar_local_branch_inventory_db', allLocalBInv);
 
           let stockUpdateQuery = supabase
             .from('products')

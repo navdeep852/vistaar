@@ -4,6 +4,7 @@ import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { hasCurrentUserPermission, AuthorizationError } from '../../lib/permissions';
 import { auditLogService } from './auditLogService';
+import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from './safeStorage';
 
 const LOCAL_RECEIPTS_KEY = 'vistaar_local_stock_receipts';
 const LOCAL_MOVEMENTS_KEY = 'vistaar_local_stock_movements';
@@ -110,11 +111,25 @@ export class InventoryService {
     const wsId = this.getWorkspaceId();
     const qty = Number(receipt.quantityReceived) || 0;
 
+    let targetBranchId = receipt.branchId;
+    if (!targetBranchId) {
+      try {
+        const saved = safeGetTenantItem<string | null>('active_branch_id', null);
+        if (saved && saved !== 'ALL') {
+          targetBranchId = saved;
+        } else {
+          const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+          const main = branches.find((b: any) => b.isMainBranch) || branches[0];
+          if (main) targetBranchId = main.id;
+        }
+      } catch {}
+    }
+
     const payload: any = {
       workspace_id: wsId,
       product_id: receipt.productId,
       supplier_id: receipt.supplierId || null,
-      branch_id: receipt.branchId || null,
+      branch_id: targetBranchId || null,
       receipt_number: receipt.receiptNumber || `GRN-${Date.now()}`,
       purchase_order_number: receipt.purchaseOrderNumber || null,
       received_date: receipt.receivedDate || new Date().toISOString().split('T')[0],
@@ -122,6 +137,37 @@ export class InventoryService {
       quantity_remaining: receipt.quantityRemaining ?? qty,
       buy_price: receipt.buyPrice,
       notes: receipt.notes || null,
+    };
+
+    const updateLocalBranchInventory = (pId: string, bId: string, addedQty: number) => {
+      try {
+        const allBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
+        let rec = allBInv.find((bi: any) => (bi.branchId || bi.branch_id) === bId && (bi.productId || bi.product_id) === pId);
+        if (rec) {
+          rec.currentStock = Math.max(0, (Number(rec.currentStock ?? rec.current_stock) || 0) + addedQty);
+          rec.current_stock = rec.currentStock;
+          rec.updatedAt = new Date().toISOString();
+        } else {
+          allBInv.push({
+            id: `bi-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+            workspaceId: wsId,
+            branchId: bId,
+            productId: pId,
+            currentStock: addedQty,
+            current_stock: addedQty,
+            openingStock: 0,
+            status: 'Active',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+        }
+        safeSaveTenantStorage('vistaar_local_branch_inventory_db', allBInv);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('vistaar:branch_inventory_updated', { detail: { branchId: bId, productId: pId } }));
+        }
+      } catch (e) {
+        console.warn('Failed to update local branch inventory on stock receipt:', e);
+      }
     };
 
     try {
@@ -133,28 +179,33 @@ export class InventoryService {
 
       if (error) {
         const errStr = handleSupabaseError(error, 'createStockReceipt');
-        if (errStr.startsWith('Network Error')) {
-          const newReceipt = { id: `rec-${Date.now()}`, ...payload, createdAt: new Date().toISOString() };
-          const local = safeStorageGet(LOCAL_RECEIPTS_KEY);
-          local.unshift(newReceipt);
-          safeStorageSave(LOCAL_RECEIPTS_KEY, local);
+        const newReceipt = { id: `rec-${Date.now()}`, ...payload, branchId: targetBranchId, createdAt: new Date().toISOString() };
+        const local = safeStorageGet(LOCAL_RECEIPTS_KEY);
+        local.unshift(newReceipt);
+        safeStorageSave(LOCAL_RECEIPTS_KEY, local);
 
-          if (receipt.productId) {
-            await auditLogService.logInventoryMutation({
-              productId: receipt.productId,
-              movementType: 'STOCK_RECEIVED',
-              quantityDelta: qty,
-              previousQuantity: 0,
-              resultingQuantity: qty,
-              referenceType: 'STOCK_RECEIPT',
-              referenceId: payload.receipt_number,
-              reason: receipt.notes || 'Goods Received Note',
-            });
-          }
+        const tenantRecs = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []);
+        tenantRecs.unshift(newReceipt);
+        safeSaveTenantStorage('vistaar_local_stock_receipts_db', tenantRecs);
 
-          return { receipt: newReceipt };
+        if (receipt.productId && targetBranchId) {
+          updateLocalBranchInventory(receipt.productId, targetBranchId, qty);
         }
-        return { error: errStr };
+
+        if (receipt.productId) {
+          await auditLogService.logInventoryMutation({
+            productId: receipt.productId,
+            movementType: 'STOCK_RECEIVED',
+            quantityDelta: qty,
+            previousQuantity: 0,
+            resultingQuantity: qty,
+            referenceType: 'STOCK_RECEIPT',
+            referenceId: payload.receipt_number,
+            reason: receipt.notes || 'Goods Received Note',
+          });
+        }
+
+        return { receipt: newReceipt };
       }
 
       if (data && data.product_id) {
@@ -170,23 +221,25 @@ export class InventoryService {
         }
 
         // Branch-specific inventory increment
-        if (receipt.branchId) {
+        if (targetBranchId) {
           const { data: bInv } = await supabase
             .from('branch_inventory')
             .select('current_stock')
             .eq('workspace_id', wsId)
-            .eq('branch_id', receipt.branchId)
+            .eq('branch_id', targetBranchId)
             .eq('product_id', data.product_id)
             .maybeSingle();
 
           const prevBranchStock = bInv ? Number(bInv.current_stock) || 0 : 0;
           await supabase.from('branch_inventory').upsert({
             workspace_id: wsId,
-            branch_id: receipt.branchId,
+            branch_id: targetBranchId,
             product_id: data.product_id,
             current_stock: prevBranchStock + qty,
             updated_at: new Date().toISOString(),
           }, { onConflict: 'branch_id,product_id' });
+
+          updateLocalBranchInventory(data.product_id, targetBranchId, qty);
         }
 
         await auditLogService.logInventoryMutation({
@@ -203,10 +256,18 @@ export class InventoryService {
       return { receipt: data };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'createStockReceipt');
-      const newReceipt = { id: `rec-${Date.now()}`, ...payload, createdAt: new Date().toISOString() };
+      const newReceipt = { id: `rec-${Date.now()}`, ...payload, branchId: targetBranchId, createdAt: new Date().toISOString() };
       const local = safeStorageGet(LOCAL_RECEIPTS_KEY);
       local.unshift(newReceipt);
       safeStorageSave(LOCAL_RECEIPTS_KEY, local);
+
+      const tenantRecs = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []);
+      tenantRecs.unshift(newReceipt);
+      safeSaveTenantStorage('vistaar_local_stock_receipts_db', tenantRecs);
+
+      if (receipt.productId && targetBranchId) {
+        updateLocalBranchInventory(receipt.productId, targetBranchId, qty);
+      }
 
       if (receipt.productId) {
         await auditLogService.logInventoryMutation({
