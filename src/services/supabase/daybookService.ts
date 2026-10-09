@@ -2,7 +2,7 @@ import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { DaybookTransaction, DaybookFilterOptions, DaybookSummaryMetrics } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
-import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from './safeStorage';
 import { fromDbDaybookTransaction } from './types';
 import { expenseService } from './expenseService';
 
@@ -178,17 +178,30 @@ export class DaybookService {
     options?: DaybookFilterOptions
   ): Promise<DaybookTransaction[]> {
     const { start, end } = this.getDateBounds(options?.dateRange, options?.startDate, options?.endDate);
+    const effectiveBranchId = options?.branchId !== undefined ? options.branchId : (safeGetTenantItem('active_branch_id') || undefined);
+    const mainBranchId = safeGetTenantItem('main_branch_id');
+    const isMainBranch = !effectiveBranchId || effectiveBranchId === 'ALL' || effectiveBranchId === mainBranchId || String(effectiveBranchId).toLowerCase().includes('main');
 
     // 1. Collect Invoices from Supabase and Local Store
     const invoiceMap = new Map<string, any>(); // key: id and invoice_number
     try {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
-        const { data: dbInvs } = await supabase
+        let invQ = supabase
           .from('invoices')
-          .select('id, invoice_number, grand_total, paid_amount, balance_amount, status, date, due_date, customer_id, customer_name, customer_phone, created_at')
+          .select('id, invoice_number, grand_total, paid_amount, balance_amount, status, date, due_date, customer_id, customer_name, customer_phone, created_at, branch_id')
           .eq('workspace_id', wsId);
 
+        if (effectiveBranchId && effectiveBranchId !== 'ALL' && isValidUuid(effectiveBranchId)) {
+          invQ = invQ.eq('branch_id', effectiveBranchId);
+        }
+
+        const { data: dbInvs } = await invQ;
+
         (dbInvs || []).forEach((inv: any) => {
+          const b = inv.branch_id || inv.branchId;
+          if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+            if (b ? b !== effectiveBranchId : !isMainBranch) return;
+          }
           if (inv.id) invoiceMap.set(inv.id, inv);
           if (inv.invoice_number) invoiceMap.set(inv.invoice_number, inv);
         });
@@ -200,9 +213,14 @@ export class DaybookService {
     try {
       const { store } = await import('../store');
       store.getInvoices().forEach((inv) => {
+        if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+          const b = inv.branchId || (inv as any).branch_id;
+          if (b ? b !== effectiveBranchId : !isMainBranch) return;
+        }
         const row = {
           id: inv.id,
           invoice_number: inv.invoiceNumber,
+          branch_id: inv.branchId,
           grand_total: inv.grandTotal,
           paid_amount: inv.paidAmount,
           balance_amount: inv.balanceAmount,
@@ -225,10 +243,16 @@ export class DaybookService {
     const counterSaleMap = new Map<string, any>();
     try {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
-        let { data: dbCs, error: csErr } = await supabase
+        let csQ = supabase
           .from('counter_sales')
           .select('id, sale_number, invoice_number, branch_id, customer_id, customer_name, final_total, amount_received, balance_amount, status, payment_method, sale_date, created_at')
           .eq('workspace_id', wsId);
+
+        if (effectiveBranchId && effectiveBranchId !== 'ALL' && isValidUuid(effectiveBranchId)) {
+          csQ = csQ.eq('branch_id', effectiveBranchId);
+        }
+
+        let { data: dbCs, error: csErr } = await csQ;
 
         if (csErr && csErr.code === '42703') {
           const fb = await supabase
@@ -239,6 +263,10 @@ export class DaybookService {
         }
 
         (dbCs || []).forEach((cs: any) => {
+          const b = cs.branch_id || cs.branchId;
+          if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+            if (b ? b !== effectiveBranchId : !isMainBranch) return;
+          }
           if (cs.id) counterSaleMap.set(cs.id, cs);
           if (cs.sale_number) counterSaleMap.set(cs.sale_number, cs);
           if (cs.invoice_number) counterSaleMap.set(cs.invoice_number, cs);
@@ -251,6 +279,10 @@ export class DaybookService {
     try {
       const { store } = await import('../store');
       store.getCounterSales().forEach((cs) => {
+        if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+          const b = cs.branchId || (cs as any).branch_id;
+          if (b ? b !== effectiveBranchId : !isMainBranch) return;
+        }
         const row = {
           id: cs.id,
           sale_number: cs.saleNumber,
@@ -277,6 +309,10 @@ export class DaybookService {
     try {
       const localCS = safeGetTenantStorage<any>('vistaar_local_counter_sales_db', []);
       localCS.forEach((cs: any) => {
+        if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+          const b = cs.branchId || cs.branch_id;
+          if (b ? b !== effectiveBranchId : !isMainBranch) return;
+        }
         const row = {
           id: cs.id,
           sale_number: cs.saleNumber || cs.sale_number,
@@ -309,12 +345,22 @@ export class DaybookService {
 
     try {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
-        const { data: dbPays } = await supabase
+        let payQ = supabase
           .from('payments')
-          .select('id, payment_number, invoice_id, invoice_number, amount, payment_date, method, customer_id, customer_name, reference_no, notes, created_at')
+          .select('id, payment_number, invoice_id, invoice_number, amount, payment_date, method, customer_id, customer_name, reference_no, notes, created_at, branch_id')
           .eq('workspace_id', wsId);
 
+        if (effectiveBranchId && effectiveBranchId !== 'ALL' && isValidUuid(effectiveBranchId)) {
+          payQ = payQ.eq('branch_id', effectiveBranchId);
+        }
+
+        const { data: dbPays } = await payQ;
+
         (dbPays || []).forEach((p: any) => {
+          const b = p.branch_id || p.branchId;
+          if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+            if (b ? b !== effectiveBranchId : !isMainBranch) return;
+          }
           const k = p.id || `${p.invoice_id}:${p.payment_number}:${p.amount}`;
           if (!seenPaymentKeys.has(k)) {
             seenPaymentKeys.add(k);
@@ -329,6 +375,10 @@ export class DaybookService {
     try {
       const { store } = await import('../store');
       store.getPayments().forEach((p) => {
+        if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+          const b = p.branchId || (p as any).branch_id;
+          if (b ? b !== effectiveBranchId : !isMainBranch) return;
+        }
         const k = p.id || `${p.invoiceId}:${p.paymentNumber}:${p.amount}`;
         if (!seenPaymentKeys.has(k)) {
           seenPaymentKeys.add(k);
@@ -337,6 +387,7 @@ export class DaybookService {
             payment_number: p.paymentNumber,
             invoice_id: p.invoiceId,
             invoice_number: p.invoiceNumber,
+            branch_id: p.branchId,
             amount: p.amount,
             payment_date: p.date,
             method: p.method,

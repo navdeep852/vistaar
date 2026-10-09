@@ -54,7 +54,13 @@ export class ProductService {
     branchId?: string;
   }): Promise<{ data: Product[]; count: number; error?: string }> {
     let wsId = options?.workspaceId && isValidUuid(options.workspaceId) ? options.workspaceId : this.getWorkspaceId();
-    const branchId = options?.branchId && options.branchId !== 'ALL' ? options.branchId : undefined;
+    let branchId = options?.branchId && options.branchId !== 'ALL' ? options.branchId : undefined;
+    if (branchId === undefined && options?.branchId !== 'ALL') {
+      try {
+        const saved = safeGetTenantItem<string | null>('active_branch_id', null);
+        if (saved && saved !== 'ALL') branchId = saved;
+      } catch {}
+    }
     const isDefaultFetch = !options?.search && !options?.categoryId && !options?.page && !branchId;
 
     // Return from in-memory cache if available and fresh (<30s)
@@ -808,12 +814,20 @@ export class ProductService {
       return 0;
     }
 
-    // If branchId is specified and not 'ALL', query branch-specific authoritative stock
-    if (branchId && branchId !== 'ALL') {
+    let targetBranchId = branchId;
+    if (targetBranchId === undefined) {
+      try {
+        const saved = safeGetTenantItem<string | null>('active_branch_id', null);
+        if (saved && saved !== 'ALL') targetBranchId = saved;
+      } catch {}
+    }
+
+    // If targetBranchId is specified and not 'ALL', query branch-specific authoritative stock
+    if (targetBranchId && targetBranchId !== 'ALL') {
       if (isSupabaseConfigured() && isValidUuid(productId)) {
         try {
           const { data: bStock, error: bErr } = await supabase.rpc('get_authoritative_branch_product_stock', {
-            p_branch_id: branchId,
+            p_branch_id: targetBranchId,
             p_product_id: productId,
           });
           if (!bErr && bStock !== null && bStock !== undefined && !isNaN(Number(bStock))) {
@@ -825,7 +839,7 @@ export class ProductService {
           const { data: biRow } = await supabase
             .from('branch_inventory')
             .select('current_stock')
-            .eq('branch_id', branchId)
+            .eq('branch_id', targetBranchId)
             .eq('product_id', productId)
             .maybeSingle();
           if (biRow) {
@@ -836,21 +850,21 @@ export class ProductService {
 
       // Local branch_inventory lookup
       const allLocalBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
-      const bRow = allLocalBInv.find((bi: any) => bi.branchId === branchId && bi.productId === productId);
+      const bRow = allLocalBInv.find((bi: any) => bi.branchId === targetBranchId && bi.productId === productId);
       if (bRow) {
         return Math.max(0, Number(bRow.currentStock ?? bRow.current_stock) || 0);
       }
 
       // Check if branch is Main Branch
       const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
-      const bObj = branches.find((b: any) => b.id === branchId);
+      const bObj = branches.find((b: any) => b.id === targetBranchId);
       if (bObj?.isMainBranch) {
         const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
         const p = local.find((prod) => prod.id === productId) || store.getProducts().find((prod) => prod.id === productId);
         return p ? Math.max(0, Number(p.currentStock) || 0) : 0;
       }
 
-      // If non-main branch (Delhi, Lucknow, etc.) and no inventory record exists, available stock is strictly 0!
+      // If non-main branch (TEST, Delhi, Lucknow, etc.) and no inventory record exists, available stock is strictly 0!
       return 0;
     }
 

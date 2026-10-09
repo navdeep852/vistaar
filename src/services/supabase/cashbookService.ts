@@ -1,7 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
-import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from './safeStorage';
 import {
   CashbookFilterOptions,
   CashbookSummaryMetrics,
@@ -210,6 +210,9 @@ export class CashbookService {
   public async getTransactions(options?: CashbookFilterOptions): Promise<{ data: DaybookTransaction[]; count: number; error?: string }> {
     const wsId = await this.getWorkspaceId();
     const { start, end } = this.getCashbookDateBounds(options);
+    const effectiveBranchId = options?.branchId !== undefined ? options.branchId : (safeGetTenantItem('active_branch_id') || undefined);
+    const mainBranchId = safeGetTenantItem('main_branch_id');
+    const isMainBranch = !effectiveBranchId || effectiveBranchId === 'ALL' || effectiveBranchId === mainBranchId || String(effectiveBranchId).toLowerCase().includes('main');
 
     const mergedList: DaybookTransaction[] = [];
     const seenKeys = new Set<string>();
@@ -225,8 +228,8 @@ export class CashbookService {
           .select('*')
           .eq('workspace_id', wsId);
 
-        if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
-          cbQuery = cbQuery.eq('branch_id', options.branchId);
+        if (effectiveBranchId && effectiveBranchId !== 'ALL' && isValidUuid(effectiveBranchId)) {
+          cbQuery = cbQuery.eq('branch_id', effectiveBranchId);
         }
 
         if (start) cbQuery = cbQuery.gte('entry_date', start);
@@ -235,6 +238,10 @@ export class CashbookService {
         const { data: cbData, error: cbErr } = await cbQuery;
         if (!cbErr && cbData) {
           for (const row of cbData) {
+            const b = row.branch_id || row.branchId;
+            if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+              if (b ? b !== effectiveBranchId : !isMainBranch) continue;
+            }
             const key = `${row.source_type || 'MANUAL'}:${row.source_id || row.id}:${row.direction || 'IN'}`;
             const rRef = row.reference_number || row.party_name || '';
             const receiptKey = `${row.direction || 'IN'}:${rRef}:${row.amount}:${row.entry_date}`;
@@ -250,6 +257,7 @@ export class CashbookService {
             mergedList.push({
               id: row.id,
               workspaceId: row.workspace_id,
+              branchId: row.branch_id,
               transactionCode: row.entry_number,
               transactionDate: row.entry_date,
               transactionType: 'CUSTOMER_PAYMENT',
@@ -278,8 +286,8 @@ export class CashbookService {
           .select('*')
           .eq('workspace_id', wsId);
 
-        if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
-          payQuery = payQuery.eq('branch_id', options.branchId);
+        if (effectiveBranchId && effectiveBranchId !== 'ALL' && isValidUuid(effectiveBranchId)) {
+          payQuery = payQuery.eq('branch_id', effectiveBranchId);
         }
 
         if (start) payQuery = payQuery.gte('payment_date', start);
@@ -294,12 +302,24 @@ export class CashbookService {
           if (start) fbPayQuery = fbPayQuery.gte('payment_date', start);
           if (end) fbPayQuery = fbPayQuery.lte('payment_date', end);
           const fbPayRes = await fbPayQuery;
-          payData = fbPayRes.data;
+          if (!fbPayRes.error && fbPayRes.data) {
+            payData = fbPayRes.data.filter((p: any) => {
+              const b = p.branch_id || p.branchId;
+              if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+                return b ? b === effectiveBranchId : isMainBranch;
+              }
+              return true;
+            });
+          }
           payErr = fbPayRes.error;
         }
 
         if (!payErr && payData) {
           for (const p of payData) {
+            const b = p.branch_id || p.branchId;
+            if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+              if (b ? b !== effectiveBranchId : !isMainBranch) continue;
+            }
             const amt = Number(p.amount) || 0;
             const method = p.method || 'Cash';
             if (amt <= 0) continue;
@@ -319,6 +339,7 @@ export class CashbookService {
             mergedList.push({
               id: `cb-pay-${p.id}`,
               workspaceId: p.workspace_id,
+              branchId: p.branch_id,
               transactionCode: p.payment_number || `PAY-${p.id.substring(0, 8)}`,
               transactionDate: txDate,
               transactionType: 'CUSTOMER_PAYMENT',
@@ -348,8 +369,8 @@ export class CashbookService {
           .eq('workspace_id', wsId)
           .eq('status', 'COMPLETED');
 
-        if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
-          csQuery = csQuery.eq('branch_id', options.branchId);
+        if (effectiveBranchId && effectiveBranchId !== 'ALL' && isValidUuid(effectiveBranchId)) {
+          csQuery = csQuery.eq('branch_id', effectiveBranchId);
         }
 
         if (start) csQuery = csQuery.gte('sale_date', start);
@@ -365,12 +386,24 @@ export class CashbookService {
           if (start) fbQuery = fbQuery.gte('sale_date', start);
           if (end) fbQuery = fbQuery.lte('sale_date', end);
           const fbRes = await fbQuery;
-          csData = fbRes.data;
+          if (!fbRes.error && fbRes.data) {
+            csData = fbRes.data.filter((cs: any) => {
+              const b = cs.branch_id || cs.branchId;
+              if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+                return b ? b === effectiveBranchId : isMainBranch;
+              }
+              return true;
+            });
+          }
           csErr = fbRes.error;
         }
 
         if (!csErr && csData) {
           for (const cs of csData) {
+            const b = cs.branch_id || cs.branchId;
+            if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+              if (b ? b !== effectiveBranchId : !isMainBranch) continue;
+            }
             const method = cs.payment_method || 'Cash';
             if (method === 'Credit' || method === 'Credit / Udhari' || method === 'Udhari') continue;
 
@@ -388,6 +421,7 @@ export class CashbookService {
             mergedList.push({
               id: `cb-cs-${cs.id}`,
               workspaceId: cs.workspace_id,
+              branchId: cs.branch_id,
               transactionCode: `CB-${cs.sale_number}`,
               transactionDate: cs.sale_date,
               transactionType: 'CUSTOMER_PAYMENT',
@@ -413,7 +447,10 @@ export class CashbookService {
         const { store } = await import('../store');
         for (const cs of store.getCounterSales()) {
           if (cs.status === 'CANCELLED') continue;
-          if (options?.branchId && options.branchId !== 'ALL' && cs.branchId && cs.branchId !== options.branchId) continue;
+          if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+            const b = cs.branchId || (cs as any).branch_id;
+            if (b ? b !== effectiveBranchId : !isMainBranch) continue;
+          }
           const method = cs.paymentMethod || 'Cash';
           if (['Credit', 'Credit / Udhari', 'Udhari'].includes(method)) continue;
           const rec = Number(cs.amountReceived !== undefined ? cs.amountReceived : cs.finalTotal) || 0;
@@ -425,6 +462,7 @@ export class CashbookService {
           mergedList.push({
             id: `cb-cs-${cs.id}`,
             workspaceId: wsId,
+            branchId: cs.branchId,
             transactionCode: `CB-${cs.saleNumber}`,
             transactionDate: cs.saleDate,
             transactionType: 'CUSTOMER_PAYMENT',
@@ -449,9 +487,9 @@ export class CashbookService {
     const local = safeGetTenantStorage<any>(LOCAL_CASHBOOK_KEY, []);
     for (const t of local) {
       if (wsId && t.workspaceId && t.workspaceId !== wsId) continue;
-      if (options?.branchId && options.branchId !== 'ALL') {
+      if (effectiveBranchId && effectiveBranchId !== 'ALL') {
         const entryBranch = t.branchId || t.branch_id;
-        if (entryBranch !== options.branchId) continue;
+        if (entryBranch ? entryBranch !== effectiveBranchId : !isMainBranch) continue;
       }
       const key = `${t.sourceType || 'MANUAL'}:${t.sourceId || t.id}:${t.direction || 'IN'}`;
       const rRef = t.referenceNumber || t.partyName || '';

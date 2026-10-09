@@ -597,7 +597,7 @@ export class CustomerPaymentService {
         invoiceId: targetInvoice?.id || payload.invoiceId,
         invoiceNumber,
         counterSaleId: payload.counterSaleId,
-        branchId: payload.branchId,
+        branchId: payload.branchId || targetInvoice?.branchId,
         udhariId: targetUdhari?.id || payload.udhariId,
         customerId: resolvedCustomerId || targetInvoice?.customerId || targetUdhari?.customerId,
         customerName,
@@ -608,6 +608,7 @@ export class CustomerPaymentService {
         reference: payload.reference,
         notes: payload.notes,
         isDbPersisted,
+        isUpfrontInvoicePayment: payload.isUpfrontInvoicePayment,
       });
     } catch (storeErr: any) {
       return { success: false, error: storeErr?.message || 'Payment recording failed.' };

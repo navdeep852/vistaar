@@ -147,7 +147,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onNavigateTab, activ
   useEffect(() => {
     let isMounted = true;
     const updateData = () => {
-      expenseService.getExpenses({ branchId: currentBranch?.id, includeCompanyLevel: true }).then((res) => {
+      const shouldIncludeCompany = currentBranch?.isMainBranch || currentBranch?.id === 'ALL';
+      expenseService.getExpenses({ branchId: currentBranch?.id, includeCompanyLevel: shouldIncludeCompany }).then((res) => {
         if (isMounted && res.data) {
           setExpenses(res.data);
         }

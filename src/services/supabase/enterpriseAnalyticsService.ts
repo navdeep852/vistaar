@@ -1,7 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { supabaseAuthService } from '../supabaseAuth';
 import { isValidUuid } from '../../lib/supabaseError';
-import { safeGetTenantStorage } from './safeStorage';
+import { safeGetTenantStorage, safeGetTenantItem } from './safeStorage';
 import { ResolvedDateRange, resolveDateRange, formatFriendlyDate, formatIndianDate, addDays } from '../../lib/dateRange';
 import { salesAnalyticsService } from './salesAnalyticsService';
 import { udhariService } from './udhariService';
@@ -358,13 +358,17 @@ export class EnterpriseAnalyticsService {
     let productsList: any[] = [];
     let expensesList: any[] = [];
 
+    const effectiveBranchId = branchId !== undefined ? branchId : (safeGetTenantItem('active_branch_id') || undefined);
+    const mainBranchId = safeGetTenantItem('main_branch_id');
+    const isMainBranch = !effectiveBranchId || effectiveBranchId === 'ALL' || effectiveBranchId === mainBranchId || String(effectiveBranchId).toLowerCase().includes('main');
+
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
       try {
         let invQ = supabase
           .from('invoices')
           .select('*, invoice_items(*)')
           .eq('workspace_id', wsId)
-          .in('status', ['Issued', 'Partially Paid', 'Paid'])
+          .in('status', ['Issued', 'Partially Paid', 'Paid', 'issued', 'partially paid', 'paid'])
           .gte('date', dateRange.startDateStr)
           .lte('date', dateRange.endDateStr);
 
@@ -390,11 +394,11 @@ export class EnterpriseAnalyticsService {
           .gte('expense_date', dateRange.startDateStr)
           .lte('expense_date', dateRange.endDateStr);
 
-        if (branchId && branchId !== 'ALL' && isValidUuid(branchId)) {
-          invQ = invQ.eq('branch_id', branchId);
-          csQ = csQ.eq('branch_id', branchId);
-          payQ = payQ.eq('branch_id', branchId);
-          expQ = expQ.or(`branch_id.eq.${branchId},branch_id.is.null`);
+        if (effectiveBranchId && effectiveBranchId !== 'ALL' && isValidUuid(effectiveBranchId)) {
+          invQ = invQ.eq('branch_id', effectiveBranchId);
+          csQ = csQ.eq('branch_id', effectiveBranchId);
+          payQ = payQ.eq('branch_id', effectiveBranchId);
+          expQ = expQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null`);
         }
 
         let [invRes, csRes, payRes, prodRes, expRes] = await Promise.all([
@@ -414,7 +418,15 @@ export class EnterpriseAnalyticsService {
             .gte('sale_date', dateRange.startDateStr)
             .lte('sale_date', dateRange.endDateStr);
           if (!retryCs.error && retryCs.data) {
-            csRes = retryCs as any;
+            csRes = {
+              data: retryCs.data.filter((cs: any) => {
+                const b = cs.branch_id || cs.branchId;
+                if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+                  return b ? b === effectiveBranchId : isMainBranch;
+                }
+                return true;
+              })
+            } as any;
           }
         }
 
@@ -423,11 +435,39 @@ export class EnterpriseAnalyticsService {
             .from('invoices')
             .select('*')
             .eq('workspace_id', wsId)
-            .in('status', ['Issued', 'Partially Paid', 'Paid'])
+            .in('status', ['Issued', 'Partially Paid', 'Paid', 'issued', 'partially paid', 'paid'])
             .gte('date', dateRange.startDateStr)
             .lte('date', dateRange.endDateStr);
           if (!retryInv.error && retryInv.data) {
-            invRes = retryInv as any;
+            invRes = {
+              data: retryInv.data.filter((inv: any) => {
+                const b = inv.branch_id || inv.branchId;
+                if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+                  return b ? b === effectiveBranchId : isMainBranch;
+                }
+                return true;
+              })
+            } as any;
+          }
+        }
+
+        if (payRes.error && (payRes.error.code === '42703' || payRes.error.message?.includes('branch_id'))) {
+          const retryPay = await supabase
+            .from('payments')
+            .select('*')
+            .eq('workspace_id', wsId)
+            .gte('payment_date', dateRange.startDateStr)
+            .lte('payment_date', dateRange.endDateStr);
+          if (!retryPay.error && retryPay.data) {
+            payRes = {
+              data: retryPay.data.filter((p: any) => {
+                const b = p.branch_id || p.branchId;
+                if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+                  return b ? b === effectiveBranchId : isMainBranch;
+                }
+                return true;
+              })
+            } as any;
           }
         }
 
@@ -448,6 +488,10 @@ export class EnterpriseAnalyticsService {
     if (expensesList.length === 0) {
       const localExps = store.getExpenses() || [];
       expensesList = localExps.filter((exp: any) => {
+        if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+          const b = exp.branchId || exp.branch_id;
+          if (b && b !== effectiveBranchId) return false;
+        }
         const d = (exp.date || exp.expense_date || exp.createdAt || '').split('T')[0];
         return d >= dateRange.startDateStr && d <= dateRange.endDateStr;
       });
@@ -460,7 +504,12 @@ export class EnterpriseAnalyticsService {
         : safeGetTenantStorage<Invoice>(LOCAL_INVOICES_KEY, []);
 
       invoices = localInvoices.filter((inv) => {
-        if (inv.status === 'Draft' || inv.status === 'Cancelled') return false;
+        const s = String(inv.status || '').toLowerCase();
+        if (s === 'draft' || s === 'cancelled') return false;
+        if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+          const b = inv.branchId || (inv as any).branch_id;
+          if (b ? b !== effectiveBranchId : !isMainBranch) return false;
+        }
         const d = (inv.date || inv.createdAt || '').split('T')[0];
         return d >= dateRange.startDateStr && d <= dateRange.endDateStr;
       });
@@ -478,8 +527,11 @@ export class EnterpriseAnalyticsService {
       : safeGetTenantStorage<any>(LOCAL_SALES_KEY, []);
 
     localCS.forEach((cs: any) => {
-      if (cs.status === 'CANCELLED') return;
-      if (branchId && branchId !== 'ALL' && cs.branchId && cs.branchId !== branchId) return;
+      if (String(cs.status || '').toUpperCase() === 'CANCELLED') return;
+      if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+        const b = cs.branchId || cs.branch_id;
+        if (b ? b !== effectiveBranchId : !isMainBranch) return;
+      }
       const d = (cs.sale_date ?? cs.saleDate ?? cs.created_at ?? '').split('T')[0];
       if (d < dateRange.startDateStr || d > dateRange.endDateStr) return;
       const k = cs.id ? String(cs.id).toLowerCase() : '';
@@ -494,6 +546,10 @@ export class EnterpriseAnalyticsService {
         ? store.getPayments()
         : safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
       payments = localPayments.filter((p: any) => {
+        if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+          const b = p.branchId || p.branch_id;
+          if (b ? b !== effectiveBranchId : !isMainBranch) return false;
+        }
         const d = (p.date || p.payment_date || p.createdAt || '').split('T')[0];
         return d >= dateRange.startDateStr && d <= dateRange.endDateStr;
       });

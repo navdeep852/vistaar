@@ -1173,6 +1173,7 @@ class StoreService {
           customerName: newInvoice.customerName || 'Customer',
           invoiceId: newInvoice.id,
           invoiceNumber: newInvoice.invoiceNumber,
+          branchId: newInvoice.branchId,
           amount: newInvoice.paidAmount,
           date: newInvoice.date || new Date().toISOString().split('T')[0],
           method: ((newInvoice as any).paymentMethod || (newInvoice as any).paymentMode || 'Cash') as any,
@@ -1379,6 +1380,7 @@ class StoreService {
     reference?: string;
     notes?: string;
     isDbPersisted?: boolean;
+    isUpfrontInvoicePayment?: boolean;
   }): { payment: Payment; invoice?: Invoice; udhari?: UdhariRecord } {
     if (!this.state.payments) this.state.payments = [];
     if (!this.state.invoices) this.state.invoices = [];
@@ -1432,9 +1434,16 @@ class StoreService {
       : (data.counterSaleId ? amount : 0)));
 
     if (!data.counterSaleId && !cs) {
-      const overpaymentCheck = validatePaymentAmount(maxPayable, amount);
-      if (!overpaymentCheck.valid) {
-        throw new Error(overpaymentCheck.error);
+      if (data.isUpfrontInvoicePayment) {
+        const maxUpfront = inv ? inv.grandTotal : amount;
+        if (amount > (maxUpfront + 0.05)) {
+          throw new Error(`Payment amount (₹${amount}) exceeds invoice total (₹${maxUpfront}).`);
+        }
+      } else {
+        const overpaymentCheck = validatePaymentAmount(maxPayable, amount);
+        if (!overpaymentCheck.valid) {
+          throw new Error(overpaymentCheck.error);
+        }
       }
     } else if (maxPayable > 0 && amount > (maxPayable + 0.05)) {
       throw new Error(`Payment amount (₹${amount}) exceeds balance amount (₹${maxPayable}).`);
@@ -1452,7 +1461,7 @@ class StoreService {
       invoiceId: inv?.id,
       invoiceNumber: invoiceNumber || undefined,
       counterSaleId: data.counterSaleId || cs?.id,
-      branchId: data.branchId || cs?.branchId,
+      branchId: data.branchId || inv?.branchId || cs?.branchId,
       udhariId: udhari?.id,
       amount,
       date: payDate,
@@ -1470,6 +1479,33 @@ class StoreService {
       this.state.payments[existingPayIdx] = newPayment;
     } else {
       this.state.payments.unshift(newPayment);
+    }
+
+    try {
+      const LOCAL_PAYMENTS_KEY = 'vistaar_local_payments_db';
+      const localPays = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
+      const pIdx = localPays.findIndex((p: any) => p.id === newPayment.id || (newPayment.paymentNumber && (p.paymentNumber === newPayment.paymentNumber || p.payment_number === newPayment.paymentNumber)));
+      const flatPay = {
+        ...newPayment,
+        payment_number: newPayment.paymentNumber,
+        customer_id: newPayment.customerId,
+        customer_name: newPayment.customerName,
+        invoice_id: newPayment.invoiceId,
+        invoice_number: newPayment.invoiceNumber,
+        counter_sale_id: newPayment.counterSaleId,
+        branch_id: newPayment.branchId,
+        payment_date: newPayment.date,
+        payment_method: newPayment.method,
+        created_at: newPayment.createdAt,
+      };
+      if (pIdx >= 0) {
+        localPays[pIdx] = flatPay;
+      } else {
+        localPays.unshift(flatPay);
+      }
+      safeSaveTenantStorage(LOCAL_PAYMENTS_KEY, localPays);
+    } catch {
+      // ignore
     }
 
     // 4. Update Invoice: Recompute from authoritative payments ledger
@@ -1521,6 +1557,9 @@ class StoreService {
     const udFin = calculateUdhariFinancials(effectiveTotal, effectivePaid, udhari?.dueDate || inv?.dueDate);
 
     if (udhari) {
+      if (data.branchId || inv?.branchId) {
+        udhari.branchId = data.branchId || inv?.branchId || udhari.branchId;
+      }
       udhari.originalAmount = udFin.originalAmount;
       udhari.totalReceived = udFin.totalReceived;
       udhari.outstandingAmount = udFin.outstandingAmount;
@@ -1533,6 +1572,7 @@ class StoreService {
       // Automatic Udhari record creation for invoice receivables
       udhari = {
         id: `UD-${inv.invoiceNumber}`,
+        branchId: data.branchId || inv.branchId,
         invoiceId: inv.id,
         customerId: inv.customerId || data.customerId,
         customerNameSnapshot: inv.customerName || customerName,

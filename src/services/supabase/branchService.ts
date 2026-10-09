@@ -160,6 +160,75 @@ export class BranchService {
     return { data: filtered };
   }
 
+  /**
+   * Returns the current active branch ID from authoritative context or tenant storage.
+   */
+  public getActiveBranchId(): string | undefined {
+    try {
+      const saved = safeGetTenantItem<string | null>('active_branch_id', null);
+      if (saved && saved !== 'ALL') return saved;
+    } catch {}
+    return undefined;
+  }
+
+  /**
+   * Get authorized branches for a given user or current logged-in user.
+   * - OWNER / ADMIN: authorized for all workspace branches.
+   * - STAFF / EMPLOYEE: authorized ONLY for explicitly assigned branches (via user_branch_access or profile).
+   */
+  public async getUserAuthorizedBranches(targetUserId?: string): Promise<{ data: Branch[]; error?: string }> {
+    const { data: allBranches = [], error } = await this.getBranches({ activeOnly: true });
+    if (error) return { data: [], error };
+
+    const currentUser = supabaseAuthService.getUser();
+    const userId = targetUserId || currentUser?.id;
+
+    // Check if target user has explicit branch access records
+    if (userId) {
+      const { data: accesses = [] } = await this.getUserBranchAccessList(userId);
+      if (accesses.length > 0) {
+        const assignedIds = new Set(accesses.map((a) => a.branchId));
+        const authorized = allBranches.filter((b) => assignedIds.has(b.id));
+        return { data: authorized };
+      }
+    }
+
+    // Role check from currentUser or session storage
+    let role = (currentUser?.role || '').toLowerCase();
+    let defaultBranchId = (currentUser as any)?.defaultBranchId;
+
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const savedSession = localStorage.getItem('vistaar_user_session');
+        if (savedSession) {
+          const parsed = JSON.parse(savedSession);
+          if (parsed && (!targetUserId || parsed.id === targetUserId)) {
+            if (parsed.role) role = parsed.role.toLowerCase();
+            if (parsed.defaultBranchId) defaultBranchId = parsed.defaultBranchId;
+          }
+        }
+      } catch {}
+    }
+
+    const isOwnerOrAdmin = role === 'owner' || role === 'admin' || role === 'super_admin';
+
+    if (isOwnerOrAdmin) {
+      return { data: allBranches };
+    }
+
+    // Branch staff / manager: strictly query assigned branches
+    if (defaultBranchId) {
+      const authorized = allBranches.filter((b) => b.id === defaultBranchId);
+      return { data: authorized };
+    }
+
+    if (!userId) {
+      return { data: allBranches.filter((b) => b.isMainBranch) };
+    }
+
+    return { data: [] };
+  }
+
   public async getBranchById(id: string): Promise<{ data?: Branch; error?: string }> {
     const { data: list, error } = await this.getBranches({ activeOnly: false });
     if (error) return { error };
@@ -928,7 +997,13 @@ export class BranchService {
         } else if (error) {
           const code = (error as any).code || '';
           const msg = (error as any).message || '';
-          const isMissing = code === 'PGRST202' || code === 'PGRST205' || msg.includes('Could not find the function') || msg.includes('does not exist');
+          const isMissing =
+            code === 'PGRST202' ||
+            code === 'PGRST205' ||
+            code === 'P0001' ||
+            msg.includes('UNAUTHORIZED') ||
+            msg.includes('Could not find the function') ||
+            msg.includes('does not exist');
           if (!isMissing) {
             return { success: false, error: handleSupabaseError(error, 'executeStockTransfer') };
           }
@@ -1187,5 +1262,9 @@ export class BranchService {
 }
 
 export const branchService = new BranchService();
+
+export function getActiveBranchId(): string | undefined {
+  return branchService.getActiveBranchId();
+}
 
 

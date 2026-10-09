@@ -3,33 +3,56 @@ import { Branch } from '../types';
 import { branchService } from '../services/supabase/branchService';
 import { supabaseAuthService } from '../services/supabaseAuth';
 import { safeGetTenantItem, safeSaveTenantItem } from '../services/supabase/safeStorage';
+import { productService } from '../services/supabase/productService';
+import { salesAnalyticsService } from '../services/supabase/salesAnalyticsService';
+import { auditLogService } from '../services/supabase/auditLogService';
 
-interface BranchContextType {
+export interface BranchContextType {
+  workspaceId: string;
+  branchId: string | undefined; // current active branch ID (undefined for 'ALL')
+  branchName: string;
+  branchCode: string;
+  role: string;
   currentBranch: Branch | null; // null signifies "All Branches"
-  branches: Branch[];
+  branches: Branch[]; // strictly authorized branches for current user
+  allWorkspaceBranches: Branch[]; // complete list for enterprise admin management
   isLoadingBranches: boolean;
   isAllBranchesSelected: boolean;
   canAccessAllBranches: boolean;
   activeBranchId: string | undefined;
-  switchBranch: (branchId: string | 'ALL') => Promise<void>;
+  switchBranch: (branchId: string | 'ALL', bypassPasswordCheck?: boolean) => Promise<{ success: boolean; error?: string }>;
+  requestSwitchBranch: () => void;
+  isSwitchModalOpen: boolean;
+  closeSwitchModal: () => void;
   refreshBranches: () => Promise<void>;
 }
 
 const BranchContext = createContext<BranchContextType>({
+  workspaceId: '',
+  branchId: undefined,
+  branchName: 'All Branches',
+  branchCode: 'ALL',
+  role: 'owner',
   currentBranch: null,
   branches: [],
+  allWorkspaceBranches: [],
   isLoadingBranches: false,
   isAllBranchesSelected: true,
   canAccessAllBranches: true,
   activeBranchId: undefined,
-  switchBranch: async () => {},
+  switchBranch: async () => ({ success: true }),
+  requestSwitchBranch: () => {},
+  isSwitchModalOpen: false,
+  closeSwitchModal: () => {},
   refreshBranches: async () => {},
 });
 
 export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [allWorkspaceBranches, setAllWorkspaceBranches] = useState<Branch[]>([]);
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
   const [isLoadingBranches, setIsLoadingBranches] = useState<boolean>(true);
+  const [isSwitchModalOpen, setIsSwitchModalOpen] = useState<boolean>(false);
 
   const currentUser = supabaseAuthService.getUser();
   const isOwnerOrAdmin = useMemo(() => {
@@ -41,8 +64,16 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const loadBranches = useCallback(async () => {
     try {
       setIsLoadingBranches(true);
-      const { data: list = [] } = await branchService.getBranches({ activeOnly: true });
-      setBranches(list);
+      const [fullListRes, authorizedRes] = await Promise.all([
+        branchService.getBranches({ activeOnly: true }),
+        branchService.getUserAuthorizedBranches(currentUser?.id),
+      ]);
+
+      const fullList = fullListRes.data || [];
+      const authorizedList = isOwnerOrAdmin ? fullList : (authorizedRes.data || []);
+
+      setAllWorkspaceBranches(fullList);
+      setBranches(authorizedList);
 
       // Determine initial / restored branch
       const savedBranchId = safeGetTenantItem<string | null>('active_branch_id', null);
@@ -51,31 +82,40 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (savedBranchId === 'ALL') {
           setCurrentBranch(null);
         } else if (savedBranchId) {
-          const match = list.find((b) => b.id === savedBranchId);
+          const match = fullList.find((b) => b.id === savedBranchId);
           if (match) {
             setCurrentBranch(match);
           } else {
-            // Default to main branch or all branches
-            const main = list.find((b) => b.isMainBranch) || list[0] || null;
+            // Default to main branch
+            const main = fullList.find((b) => b.isMainBranch) || fullList[0] || null;
             setCurrentBranch(main);
+            if (main) safeSaveTenantItem('active_branch_id', main.id);
           }
         } else {
-          // Default to main branch if available, else first branch or null
-          const main = list.find((b) => b.isMainBranch) || list[0] || null;
+          // Default to main branch if available
+          const main = fullList.find((b) => b.isMainBranch) || fullList[0] || null;
           setCurrentBranch(main);
+          if (main) safeSaveTenantItem('active_branch_id', main.id);
         }
       } else {
-        // Staff member: MUST have an assigned branch. Cannot view "ALL"
-        if (savedBranchId && savedBranchId !== 'ALL') {
-          const match = list.find((b) => b.id === savedBranchId);
+        // Staff member: MUST have an assigned branch. CANNOT view "ALL" or unauthorized branches
+        if (authorizedList.length === 1) {
+          // Only 1 branch authorized: strictly force that branch
+          setCurrentBranch(authorizedList[0]);
+          safeSaveTenantItem('active_branch_id', authorizedList[0].id);
+        } else if (authorizedList.length > 1) {
+          const match = authorizedList.find((b) => b.id === savedBranchId);
           if (match) {
             setCurrentBranch(match);
           } else {
-            setCurrentBranch(list[0] || null);
+            setCurrentBranch(authorizedList[0]);
+            safeSaveTenantItem('active_branch_id', authorizedList[0].id);
           }
         } else {
-          const main = list.find((b) => b.isMainBranch) || list[0] || null;
-          setCurrentBranch(main);
+          // If no specific branch access assigned, check default non-main or fallback
+          const defaultB = fullList.find((b) => !b.isMainBranch) || fullList[0] || null;
+          setCurrentBranch(defaultB);
+          if (defaultB) safeSaveTenantItem('active_branch_id', defaultB.id);
         }
       }
     } catch (err) {
@@ -83,7 +123,7 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } finally {
       setIsLoadingBranches(false);
     }
-  }, [isOwnerOrAdmin]);
+  }, [currentUser?.id, isOwnerOrAdmin]);
 
   useEffect(() => {
     loadBranches();
@@ -98,53 +138,138 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, [loadBranches]);
 
+  const requestSwitchBranch = useCallback(() => {
+    setIsSwitchModalOpen(true);
+  }, []);
+
+  const closeSwitchModal = useCallback(() => {
+    setIsSwitchModalOpen(false);
+  }, []);
+
   const switchBranch = useCallback(
-    async (branchId: string | 'ALL') => {
+    async (branchId: string | 'ALL', bypassPasswordCheck = false): Promise<{ success: boolean; error?: string }> => {
+      // 1. Authorization validation
       if (branchId === 'ALL') {
         if (!isOwnerOrAdmin) {
-          console.warn('Unauthorized attempt to switch to All Branches');
-          return;
+          await auditLogService.logSecurityEvent({
+            action: 'BRANCH_SWITCH_DENIED',
+            result: 'DENIED',
+            details: { reason: 'Unauthorized attempt to switch to All Branches', target: 'ALL' },
+          });
+          return { success: false, error: 'Unauthorized: Staff members cannot view consolidated enterprise data.' };
         }
+
+        const oldBranchId = currentBranch?.id;
         setCurrentBranch(null);
         safeSaveTenantItem('active_branch_id', 'ALL');
+
+        // Audit log branch switch
+        await auditLogService.logSecurityEvent({
+          action: 'BRANCH_SWITCHED',
+          result: 'ALLOWED',
+          details: { fromBranch: oldBranchId || 'ALL', toBranch: 'ALL' },
+        });
+
+        // 2. Clear branch-specific cached data
+        productService.invalidateCache();
+        salesAnalyticsService.invalidateCache();
+        try {
+          const { enterpriseAnalyticsService } = await import('../services/supabase/enterpriseAnalyticsService');
+          enterpriseAnalyticsService.invalidateCache();
+        } catch {}
+
+        // 3. Dispatch global events
         if (typeof window !== 'undefined') {
           window.dispatchEvent(
             new CustomEvent('vistaar:branch_changed', { detail: { branchId: 'ALL', branch: null } })
           );
+          window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
         }
-        return;
+
+        setIsSwitchModalOpen(false);
+        return { success: true };
       }
 
-      const selected = branches.find((b) => b.id === branchId);
+      // Check if target branch is in authorized list
+      const targetList = isOwnerOrAdmin ? allWorkspaceBranches : branches;
+      const selected = targetList.find((b) => b.id === branchId);
+
       if (!selected) {
-        console.warn(`Branch with id ${branchId} not found in authorized list.`);
-        return;
+        await auditLogService.logSecurityEvent({
+          action: 'BRANCH_SWITCH_DENIED',
+          result: 'DENIED',
+          details: { reason: 'Branch not found or unauthorized for this user', targetBranchId: branchId },
+        });
+        return { success: false, error: 'You are not authorized to access this branch.' };
       }
 
+      const oldBranchId = currentBranch?.id;
       setCurrentBranch(selected);
       safeSaveTenantItem('active_branch_id', selected.id);
 
+      // Audit log branch switch
+      await auditLogService.logSecurityEvent({
+        action: 'BRANCH_SWITCHED',
+        result: 'ALLOWED',
+        details: { fromBranch: oldBranchId || 'ALL', toBranch: selected.id, branchCode: selected.branchCode },
+      });
+
+      // 4. Invalidate caches immediately
+      productService.invalidateCache();
+      salesAnalyticsService.invalidateCache();
+      try {
+        const { enterpriseAnalyticsService } = await import('../services/supabase/enterpriseAnalyticsService');
+        enterpriseAnalyticsService.invalidateCache();
+      } catch {}
+
+      // 5. Notify all views and components
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
           new CustomEvent('vistaar:branch_changed', { detail: { branchId: selected.id, branch: selected } })
         );
+        window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
       }
+
+      setIsSwitchModalOpen(false);
+      return { success: true };
     },
-    [branches, isOwnerOrAdmin]
+    [allWorkspaceBranches, branches, currentBranch?.id, isOwnerOrAdmin]
   );
 
   const contextValue = useMemo<BranchContextType>(
     () => ({
+      workspaceId: currentUser?.companyId || 'default',
+      branchId: currentBranch?.id,
+      branchName: currentBranch ? currentBranch.branchName : 'All Branches',
+      branchCode: currentBranch ? currentBranch.branchCode : 'ALL',
+      role: (currentUser?.role || 'employee').toLowerCase(),
       currentBranch,
       branches,
+      allWorkspaceBranches,
       isLoadingBranches,
       isAllBranchesSelected: currentBranch === null,
       canAccessAllBranches: isOwnerOrAdmin,
       activeBranchId: currentBranch?.id,
       switchBranch,
+      requestSwitchBranch,
+      isSwitchModalOpen,
+      closeSwitchModal,
       refreshBranches: loadBranches,
     }),
-    [currentBranch, branches, isLoadingBranches, isOwnerOrAdmin, switchBranch, loadBranches]
+    [
+      currentUser?.companyId,
+      currentUser?.role,
+      currentBranch,
+      branches,
+      allWorkspaceBranches,
+      isLoadingBranches,
+      isOwnerOrAdmin,
+      switchBranch,
+      requestSwitchBranch,
+      isSwitchModalOpen,
+      closeSwitchModal,
+      loadBranches,
+    ]
   );
 
   return <BranchContext.Provider value={contextValue}>{children}</BranchContext.Provider>;

@@ -185,14 +185,25 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
     }).catch(() => {});
     const reloadProducts = () => {
       productService.getProducts({ branchId: currentBranch?.id }).then((res) => {
-        if (res && res.data && res.data.length > 0) {
+        if (res && res.data) {
           setProducts(res.data);
         }
       }).catch((e) => console.warn('Failed to pre-fetch products in DocumentEditorView:', e));
     };
     reloadProducts();
+    const handleBranchChange = () => {
+      reloadProducts();
+      // Part 9: Reset transaction drafts & stale branch stock when branch switches
+      setItems((prev) =>
+        prev.map((it) => ({
+          ...it,
+          availableStock: undefined,
+        }))
+      );
+    };
     window.addEventListener('vistaar:stock_transferred', reloadProducts);
     window.addEventListener('vistaar:branch_inventory_updated', reloadProducts);
+    window.addEventListener('vistaar:branch_changed', handleBranchChange);
     const unsub = store.subscribe(() => {
       const updated = store.getCustomers();
       if (updated) {
@@ -202,6 +213,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
     return () => {
       window.removeEventListener('vistaar:stock_transferred', reloadProducts);
       window.removeEventListener('vistaar:branch_inventory_updated', reloadProducts);
+      window.removeEventListener('vistaar:branch_changed', handleBranchChange);
       unsub();
     };
   }, [currentBranch?.id]);
@@ -405,7 +417,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
 
     if (prod.id) {
       try {
-        const liveStock = await productService.getProductAvailableStock(prod.id);
+        const liveStock = await productService.getProductAvailableStock(prod.id, currentBranch?.id);
         setItems((prev) => {
           const updated = [...prev];
           if (updated[index] && updated[index].productId === prod.id) {
@@ -611,6 +623,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
 
     if (documentType === 'invoice') {
       store.addInvoice({
+        branchId: currentBranch?.id || initialDraftData?.branchId || undefined,
         customerId: selectedCustomerId || undefined,
         customerName,
         customerPhone,
@@ -644,6 +657,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
       showToast('Invoice saved as Draft!', 'success');
     } else {
       const qt = store.addQuotation({
+        branchId: currentBranch?.id || initialDraftData?.branchId || undefined,
         customerId: selectedCustomerId || undefined,
         customerName,
         customerPhone,
@@ -788,7 +802,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
               item.sku = canonicalProd.sku;
             }
 
-            const liveAvail = await productService.getProductAvailableStock(targetProdId);
+            const liveAvail = await productService.getProductAvailableStock(targetProdId, currentBranch?.id);
             (item as any).availableStock = liveAvail;
 
             // Structured Forensic Logging (Phase 1)

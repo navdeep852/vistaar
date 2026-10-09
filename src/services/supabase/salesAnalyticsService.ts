@@ -1,7 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
-import { safeGetTenantStorage } from './safeStorage';
+import { safeGetTenantStorage, safeGetTenantItem } from './safeStorage';
 import { ResolvedDateRange, resolveDateRange } from '../../lib/dateRange';
 
 export interface SalesMetrics {
@@ -58,7 +58,11 @@ export class SalesAnalyticsService {
   public async getSalesMetrics(dateRange?: ResolvedDateRange, forceFresh = false, explicitWsId?: string, branchId?: string): Promise<SalesMetrics> {
     const range = dateRange || resolveDateRange('today');
     const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
-    const cacheKey = `${wsId}:${branchId || 'all'}:${range.rangeType}:${range.startDateStr}:${range.endDateStr}`;
+    const effectiveBranchId = branchId !== undefined ? branchId : (safeGetTenantItem('active_branch_id') || undefined);
+    const mainBranchId = safeGetTenantItem('main_branch_id');
+    const isMainBranch = !effectiveBranchId || effectiveBranchId === 'ALL' || effectiveBranchId === mainBranchId || String(effectiveBranchId).toLowerCase().includes('main');
+
+    const cacheKey = `${wsId}:${effectiveBranchId || 'all'}:${range.rangeType}:${range.startDateStr}:${range.endDateStr}`;
 
     const now = Date.now();
     const cached = this.cache.get(cacheKey);
@@ -80,8 +84,8 @@ export class SalesAnalyticsService {
           .gte('sale_date', range.startDateStr)
           .lte('sale_date', range.endDateStr);
 
-        if (branchId && branchId !== 'ALL' && isValidUuid(branchId)) {
-          csQ = csQ.eq('branch_id', branchId);
+        if (effectiveBranchId && effectiveBranchId !== 'ALL' && isValidUuid(effectiveBranchId)) {
+          csQ = csQ.eq('branch_id', effectiveBranchId);
         }
 
         let { data: csData, error: csErr } = await csQ;
@@ -96,7 +100,13 @@ export class SalesAnalyticsService {
             .lte('sale_date', range.endDateStr);
           const retryRes = await fallbackQ;
           if (!retryRes.error && retryRes.data) {
-            csData = retryRes.data;
+            csData = retryRes.data.filter((cs: any) => {
+              const b = cs.branch_id || cs.branchId;
+              if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+                return b ? b === effectiveBranchId : isMainBranch;
+              }
+              return true;
+            });
             csErr = null;
           }
         }
@@ -110,12 +120,12 @@ export class SalesAnalyticsService {
           .from('invoices')
           .select('id, invoice_number, date, grand_total, paid_amount, balance_amount, status, created_at, branch_id')
           .eq('workspace_id', wsId)
-          .in('status', ['Issued', 'Partially Paid', 'Paid'])
+          .in('status', ['Issued', 'Partially Paid', 'Paid', 'issued', 'partially paid', 'paid'])
           .gte('date', range.startDateStr)
           .lte('date', range.endDateStr);
 
-        if (branchId && branchId !== 'ALL' && isValidUuid(branchId)) {
-          invQ = invQ.eq('branch_id', branchId);
+        if (effectiveBranchId && effectiveBranchId !== 'ALL' && isValidUuid(effectiveBranchId)) {
+          invQ = invQ.eq('branch_id', effectiveBranchId);
         }
 
         let { data: invData, error: invErr } = await invQ;
@@ -125,12 +135,18 @@ export class SalesAnalyticsService {
             .from('invoices')
             .select('id, invoice_number, date, grand_total, paid_amount, balance_amount, status, created_at')
             .eq('workspace_id', wsId)
-            .in('status', ['Issued', 'Partially Paid', 'Paid'])
+            .in('status', ['Issued', 'Partially Paid', 'Paid', 'issued', 'partially paid', 'paid'])
             .gte('date', range.startDateStr)
             .lte('date', range.endDateStr);
           const retryInv = await fallbackInvQ;
           if (!retryInv.error && retryInv.data) {
-            invData = retryInv.data;
+            invData = retryInv.data.filter((inv: any) => {
+              const b = inv.branch_id || inv.branchId;
+              if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+                return b ? b === effectiveBranchId : isMainBranch;
+              }
+              return true;
+            });
             invErr = null;
           }
         }
@@ -154,8 +170,13 @@ export class SalesAnalyticsService {
 
     const localInv = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
     for (const li of localInv) {
-      if (li.status === 'Draft' || li.status === 'Cancelled') continue;
+      const s = String(li.status || '').toLowerCase();
+      if (s === 'draft' || s === 'cancelled') continue;
       if (wsId && (li.workspace_id || li.workspaceId) && (li.workspace_id !== wsId && li.workspaceId !== wsId)) continue;
+      if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+        const b = li.branch_id || li.branchId;
+        if (b ? b !== effectiveBranchId : !isMainBranch) continue;
+      }
       const d = (li.date ?? li.created_at ?? '').split('T')[0];
       if (d < range.startDateStr || d > range.endDateStr) continue;
       const k1 = li.id ? String(li.id).toLowerCase() : '';
@@ -170,8 +191,13 @@ export class SalesAnalyticsService {
     try {
       const { store } = await import('../store');
       for (const si of store.getInvoices()) {
-        if (si.status === 'Draft' || si.status === 'Cancelled') continue;
+        const s = String(si.status || '').toLowerCase();
+        if (s === 'draft' || s === 'cancelled') continue;
         if (wsId && (si as any).workspaceId && (si as any).workspaceId !== wsId) continue;
+        if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+          const b = si.branchId || (si as any).branch_id;
+          if (b ? b !== effectiveBranchId : !isMainBranch) continue;
+        }
         const d = (si.date || '').split('T')[0];
         if (d < range.startDateStr || d > range.endDateStr) continue;
         const k1 = si.id ? String(si.id).toLowerCase() : '';
@@ -182,6 +208,7 @@ export class SalesAnalyticsService {
           invoices.push({
             id: si.id,
             workspace_id: (si as any).workspaceId || wsId,
+            branch_id: si.branchId,
             invoice_number: si.invoiceNumber,
             date: si.date,
             grand_total: si.grandTotal,
@@ -204,8 +231,12 @@ export class SalesAnalyticsService {
 
     const localCS = safeGetTenantStorage<any>(LOCAL_SALES_KEY, []);
     for (const s of localCS) {
-      if (s.status === 'CANCELLED') continue;
+      if (String(s.status || '').toUpperCase() === 'CANCELLED') continue;
       if (wsId && (s.workspace_id || s.workspaceId) && (s.workspace_id !== wsId && s.workspaceId !== wsId)) continue;
+      if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+        const b = s.branch_id || s.branchId;
+        if (b ? b !== effectiveBranchId : !isMainBranch) continue;
+      }
       const d = (s.sale_date ?? s.saleDate ?? s.created_at ?? '').split('T')[0];
       if (d < range.startDateStr || d > range.endDateStr) continue;
       const k = s.id ? String(s.id).toLowerCase() : '';
@@ -219,8 +250,11 @@ export class SalesAnalyticsService {
     try {
       const { store } = await import('../store');
       for (const scs of store.getCounterSales()) {
-        if (scs.status === 'CANCELLED') continue;
-        if (branchId && branchId !== 'ALL' && scs.branchId && scs.branchId !== branchId) continue;
+        if (String(scs.status || '').toUpperCase() === 'CANCELLED') continue;
+        if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+          const b = scs.branchId || (scs as any).branch_id;
+          if (b ? b !== effectiveBranchId : !isMainBranch) continue;
+        }
         const d = (scs.saleDate || (scs as any).sale_date || '').split('T')[0];
         if (d < range.startDateStr || d > range.endDateStr) continue;
         const k = scs.id ? String(scs.id).toLowerCase() : '';

@@ -84,7 +84,7 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
     const updateData = () => {
       const all = store.getQuotations();
       if (currentBranch) {
-        setQuotations(all.filter((q) => !q.branchId || q.branchId === currentBranch.id));
+        setQuotations(all.filter((q) => q.branchId === currentBranch.id || (!q.branchId && (currentBranch.isMainBranch || currentBranch.id === 'ALL'))));
       } else {
         setQuotations(all);
       }

@@ -5,6 +5,7 @@ import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
 import { calculateUdhariFinancials } from '../financialCalculationService';
+import { getActiveBranchId } from './branchService';
 
 const LOCAL_UDHARI_KEY = 'vistaar_local_udharis_db';
 const LOCAL_UDHARI_PAYMENTS_KEY = 'vistaar_local_udhari_payments_db';
@@ -27,6 +28,7 @@ export class UdhariService {
 
   public async getUdhariRecords(explicitWsId?: string, options?: { branchId?: string }): Promise<{ data: any[]; error?: string }> {
     const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
+    const effectiveBId = options?.branchId !== undefined ? options.branchId : getActiveBranchId();
     try {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
         let query = supabase
@@ -34,8 +36,8 @@ export class UdhariService {
           .select('*, udhari_payments(*)')
           .eq('workspace_id', wsId);
 
-        if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
-          query = query.eq('branch_id', options.branchId);
+        if (effectiveBId && effectiveBId !== 'ALL' && isValidUuid(effectiveBId)) {
+          query = query.eq('branch_id', effectiveBId);
         }
 
         const { data, error } = await query.order('created_at', { ascending: false });
@@ -43,8 +45,8 @@ export class UdhariService {
         if (error) {
           const errStr = handleSupabaseError(error, 'getUdhariRecords');
           let fallback = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
-          if (options?.branchId && options.branchId !== 'ALL') {
-            fallback = fallback.filter((r: any) => (r.branchId || r.branch_id) === options.branchId);
+          if (effectiveBId && effectiveBId !== 'ALL') {
+            fallback = fallback.filter((r: any) => (r.branchId || r.branch_id) === effectiveBId);
           }
           return { data: fallback, error: errStr };
         }
@@ -73,15 +75,15 @@ export class UdhariService {
       }
 
       let fallback = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
-      if (options?.branchId && options.branchId !== 'ALL') {
-        fallback = fallback.filter((r: any) => (r.branchId || r.branch_id) === options.branchId);
+      if (effectiveBId && effectiveBId !== 'ALL') {
+        fallback = fallback.filter((r: any) => (r.branchId || r.branch_id) === effectiveBId);
       }
       return { data: fallback };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getUdhariRecords');
       let fallback = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
-      if (options?.branchId && options.branchId !== 'ALL') {
-        fallback = fallback.filter((r: any) => (r.branchId || r.branch_id) === options.branchId);
+      if (effectiveBId && effectiveBId !== 'ALL') {
+        fallback = fallback.filter((r: any) => (r.branchId || r.branch_id) === effectiveBId);
       }
       return { data: fallback, error: errStr };
     }

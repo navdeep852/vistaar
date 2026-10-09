@@ -129,7 +129,14 @@ export class GlobalSearchService {
       };
     }
 
-    // 2. Perform concurrent queries for entities (workspace/tenant scoped)
+    // 2. Resolve active branch context
+    const { branchService } = await import('./supabase/branchService');
+    const { safeGetTenantItem } = await import('./supabase/safeStorage');
+    const activeBranchId = branchService.getActiveBranchId();
+    const mainBranchId = safeGetTenantItem('main_branch_id');
+    const isMainBranch = !activeBranchId || activeBranchId === 'ALL' || activeBranchId === mainBranchId || String(activeBranchId).toLowerCase().includes('main');
+
+    // 2b. Perform concurrent queries for entities (workspace/tenant and branch scoped)
     const [
       productsRes,
       customersRes,
@@ -140,17 +147,17 @@ export class GlobalSearchService {
       udhariRes,
       expensesRes,
     ] = await Promise.allSettled([
-      // A. Products
-      productService.getProducts({ search: q, pageSize: 4 }).catch(() => ({ data: [] as Product[] })),
+      // A. Products (branch stock aware)
+      productService.getProducts({ search: q, pageSize: 4, branchId: activeBranchId }).catch(() => ({ data: [] as Product[] })),
 
       // B. Customers
       customerService.getCustomers({ search: q, pageSize: 4 }).catch(() => ({ data: [] as Customer[] })),
 
-      // C. Invoices
-      invoiceService.getInvoices({ search: q, pageSize: 4 }).catch(() => ({ data: [] as any[] })),
+      // C. Invoices (branch isolated)
+      invoiceService.getInvoices({ search: q, pageSize: 4, branchId: activeBranchId }).catch(() => ({ data: [] as any[] })),
 
-      // D. Quotations
-      quotationService.getQuotations().then((res) => {
+      // D. Quotations (branch isolated)
+      quotationService.getQuotations(undefined, { branchId: activeBranchId }).then((res) => {
         const list = res.data || [];
         return list
           .filter((quo: any) =>
@@ -175,19 +182,25 @@ export class GlobalSearchService {
       // F. Purchase Orders
       purchaseOrderService.getPurchaseOrders({ search: q, pageSize: 4 }).catch(() => ({ data: [] as any[] })),
 
-      // G. Udhari Ledger
+      // G. Udhari Ledger (branch isolated)
       Promise.resolve(
         (store.getUdharis() || [])
-          .filter((u: UdhariRecord) =>
-            (u.customerNameSnapshot && u.customerNameSnapshot.toLowerCase().includes(q)) ||
-            (u.id && u.id.toLowerCase().includes(q)) ||
-            (u.phoneSnapshot && u.phoneSnapshot.includes(q))
-          )
+          .filter((u: UdhariRecord) => {
+            if (activeBranchId && activeBranchId !== 'ALL') {
+              const b = u.branchId || (u as any).branch_id;
+              if (b ? b !== activeBranchId : !isMainBranch) return false;
+            }
+            return (
+              (u.customerNameSnapshot && u.customerNameSnapshot.toLowerCase().includes(q)) ||
+              (u.id && u.id.toLowerCase().includes(q)) ||
+              (u.phoneSnapshot && u.phoneSnapshot.includes(q))
+            );
+          })
           .slice(0, 4)
       ).catch(() => [] as UdhariRecord[]),
 
-      // H. Expenses
-      expenseService.getExpenses().then((res) => {
+      // H. Expenses (branch isolated)
+      expenseService.getExpenses({ branchId: activeBranchId, includeCompanyLevel: isMainBranch }).then((res) => {
         const list = res.data || store.getExpenses() || [];
         return list
           .filter((e: Expense) =>

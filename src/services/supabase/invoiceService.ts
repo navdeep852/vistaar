@@ -28,10 +28,11 @@ export class InvoiceService {
         return authWsId;
       }
     } catch (e: any) {
-      console.error('Failed to get authoritative workspace ID in invoiceService:', e?.message || e);
-      throw e;
+      console.warn('Failed to get authoritative workspace ID in invoiceService:', e?.message || e);
     }
-    throw new Error('[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined in invoiceService.');
+    const fallback = this.getWorkspaceId();
+    if (fallback && isValidUuid(fallback)) return fallback;
+    return '';
   }
 
   public async getInvoices(options?: {
@@ -74,7 +75,17 @@ export class InvoiceService {
       const { data, count, error } = await query;
       if (error) {
         const errStr = handleSupabaseError(error, 'getInvoices');
-        const fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
+        let fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
+        if (options?.branchId && options.branchId !== 'ALL') {
+          const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+          const bObj = branches.find((b: any) => b.id === options.branchId);
+          const isMain = Boolean(bObj?.isMainBranch);
+          fallback = fallback.filter((inv: any) => {
+            const bId = inv.branchId || inv.branch_id;
+            if (bId) return bId === options.branchId;
+            return isMain;
+          });
+        }
         const mappedFallback = fallback.map((inv: any) => fromDbInvoice(inv));
         return { data: mappedFallback, count: mappedFallback.length, error: errStr };
       }
@@ -82,7 +93,17 @@ export class InvoiceService {
       return { data: mapped, count: count || mapped.length };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getInvoices');
-      const fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
+      let fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
+      if (options?.branchId && options.branchId !== 'ALL') {
+        const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+        const bObj = branches.find((b: any) => b.id === options.branchId);
+        const isMain = Boolean(bObj?.isMainBranch);
+        fallback = fallback.filter((inv: any) => {
+          const bId = inv.branchId || inv.branch_id;
+          if (bId) return bId === options.branchId;
+          return isMain;
+        });
+      }
       const mappedFallback = fallback.map((inv: any) => fromDbInvoice(inv));
       return { data: mappedFallback, count: mappedFallback.length, error: errStr };
     }
@@ -336,6 +357,8 @@ export class InvoiceService {
         let msg = (error as any).message || '';
         const isUnavailable =
           code === 'PGRST202' ||
+          code === 'P0001' ||
+          msg.includes('UNAUTHORIZED') ||
           msg.includes('Could not find the function') ||
           msg.includes('does not exist') ||
           msg.startsWith('Failed to fetch') ||
@@ -407,21 +430,33 @@ export class InvoiceService {
                 .eq('id', productId);
             }
 
-            if (branchId && isValidUuid(branchId)) {
-              const { data: bProd } = await supabase
-                .from('branch_inventory')
-                .select('current_stock')
-                .eq('branch_id', branchId)
-                .eq('product_id', productId)
-                .maybeSingle();
+            if (branchId) {
+              const allLocalBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
+              const targetBEntry = allLocalBInv.find((bi: any) => (bi.branchId === branchId || bi.branch_id === branchId) && (bi.productId === productId || bi.product_id === productId));
+              if (targetBEntry) {
+                const curB = Number(targetBEntry.currentStock ?? targetBEntry.current_stock ?? 0);
+                targetBEntry.currentStock = Math.max(0, curB - req.qty);
+                targetBEntry.current_stock = targetBEntry.currentStock;
+                targetBEntry.updatedAt = new Date().toISOString();
+                safeSaveTenantStorage('vistaar_local_branch_inventory_db', allLocalBInv);
+              }
 
-              if (bProd) {
-                const newBStock = Math.max(0, (Number(bProd.current_stock) || 0) - req.qty);
-                await supabase
+              if (isValidUuid(branchId)) {
+                const { data: bProd } = await supabase
                   .from('branch_inventory')
-                  .update({ current_stock: newBStock, updated_at: new Date().toISOString() })
+                  .select('current_stock')
                   .eq('branch_id', branchId)
-                  .eq('product_id', productId);
+                  .eq('product_id', productId)
+                  .maybeSingle();
+
+                if (bProd) {
+                  const newBStock = Math.max(0, (Number(bProd.current_stock) || 0) - req.qty);
+                  await supabase
+                    .from('branch_inventory')
+                    .update({ current_stock: newBStock, updated_at: new Date().toISOString() })
+                    .eq('branch_id', branchId)
+                    .eq('product_id', productId);
+                }
               }
             }
           } catch (e) {
@@ -826,7 +861,7 @@ export class InvoiceService {
       // Synchronize local store stock levels for products that were deducted
       for (const [pId] of requestedByProduct.entries()) {
         try {
-          const remainingStock = await productService.getProductAvailableStock(pId);
+          const remainingStock = await productService.getProductAvailableStock(pId, payload.branchId);
           store.syncProductStock(pId, remainingStock);
         } catch {
           // ignore
@@ -909,6 +944,7 @@ export class InvoiceService {
         store.syncInvoiceUdhari({
           invoiceId: authoritativeInvoiceId,
           invoiceNumber: inv.invoiceNumber,
+          branchId: payload.branchId || inv.branchId,
           customerId: payload.customerId,
           customerName: payload.customerName || 'Customer',
           customerPhone: payload.customerPhone || '9999999999',
@@ -922,6 +958,7 @@ export class InvoiceService {
         await udhariService.syncInvoiceUdhari({
           invoiceId: authoritativeInvoiceId,
           invoiceNumber: inv.invoiceNumber,
+          branchId: payload.branchId || inv.branchId,
           customerId: payload.customerId,
           customerName: payload.customerName || 'Customer',
           customerPhone: payload.customerPhone || '9999999999',

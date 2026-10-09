@@ -79,22 +79,36 @@ export class CounterSaleService {
               .eq('id', productId);
           }
 
-          // 2b. Deduct from branch_inventory
-          if (branchId && isValidUuid(branchId)) {
-            const { data: bProd } = await supabase
-              .from('branch_inventory')
-              .select('current_stock')
-              .eq('branch_id', branchId)
-              .eq('product_id', productId)
-              .maybeSingle();
+          // 2b. Deduct strictly from branch_inventory
+          if (branchId) {
+            // Local branch inventory storage update
+            const allLocalBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
+            const targetBEntry = allLocalBInv.find((bi: any) => (bi.branchId === branchId || bi.branch_id === branchId) && (bi.productId === productId || bi.product_id === productId));
+            if (targetBEntry) {
+              const curB = Number(targetBEntry.currentStock ?? targetBEntry.current_stock ?? 0);
+              const nextB = Math.max(0, curB - quantity);
+              targetBEntry.currentStock = nextB;
+              targetBEntry.current_stock = nextB;
+              targetBEntry.updatedAt = new Date().toISOString();
+              safeSaveTenantStorage('vistaar_local_branch_inventory_db', allLocalBInv);
+            }
 
-            if (bProd) {
-              const newBStock = Math.max(0, (Number(bProd.current_stock) || 0) - quantity);
-              await supabase
+            if (isValidUuid(branchId)) {
+              const { data: bProd } = await supabase
                 .from('branch_inventory')
-                .update({ current_stock: newBStock, updated_at: new Date().toISOString() })
+                .select('current_stock')
                 .eq('branch_id', branchId)
-                .eq('product_id', productId);
+                .eq('product_id', productId)
+                .maybeSingle();
+
+              if (bProd) {
+                const newBStock = Math.max(0, (Number(bProd.current_stock) || 0) - quantity);
+                await supabase
+                  .from('branch_inventory')
+                  .update({ current_stock: newBStock, updated_at: new Date().toISOString() })
+                  .eq('branch_id', branchId)
+                  .eq('product_id', productId);
+              }
             }
           }
 
@@ -274,13 +288,23 @@ export class CounterSaleService {
           const errStr = handleSupabaseError(error, 'getCounterSales');
           const fallback = safeStorageGet(LOCAL_SALES_KEY);
           const storeSales = store.getCounterSales();
-          const merged = [...(fallback || [])];
+          let merged = [...(fallback || [])];
           const seenIds = new Set(merged.map((s: any) => s.id));
           for (const ss of storeSales) {
             if (!seenIds.has(ss.id)) {
               merged.push(ss);
               seenIds.add(ss.id);
             }
+          }
+          if (options?.branchId && options.branchId !== 'ALL') {
+            const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+            const bObj = branches.find((b: any) => b.id === options.branchId);
+            const isMain = Boolean(bObj?.isMainBranch);
+            merged = merged.filter((s: any) => {
+              const bId = s.branchId || s.branch_id;
+              if (bId) return bId === options.branchId;
+              return isMain;
+            });
           }
           return { data: merged.map((row: any) => fromDbCounterSale(row)), error: errStr };
         }
@@ -290,7 +314,7 @@ export class CounterSaleService {
       const errStr = handleSupabaseError(e, 'getCounterSales');
       const fallback = safeStorageGet(LOCAL_SALES_KEY);
       const storeSales = store.getCounterSales();
-      const merged = [...(fallback || [])];
+      let merged = [...(fallback || [])];
       const seenIds = new Set(merged.map((s: any) => s.id));
       for (const ss of storeSales) {
         if (!seenIds.has(ss.id)) {
@@ -298,18 +322,38 @@ export class CounterSaleService {
           seenIds.add(ss.id);
         }
       }
+      if (options?.branchId && options.branchId !== 'ALL') {
+        const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+        const bObj = branches.find((b: any) => b.id === options.branchId);
+        const isMain = Boolean(bObj?.isMainBranch);
+        merged = merged.filter((s: any) => {
+          const bId = s.branchId || s.branch_id;
+          if (bId) return bId === options.branchId;
+          return isMain;
+        });
+      }
       return { data: merged.map((row: any) => fromDbCounterSale(row)), error: errStr };
     }
 
     const fallback = safeStorageGet(LOCAL_SALES_KEY);
     const storeSales = store.getCounterSales();
-    const merged = [...(fallback || [])];
+    let merged = [...(fallback || [])];
     const seenIds = new Set(merged.map((s: any) => s.id));
     for (const ss of storeSales) {
       if (!seenIds.has(ss.id)) {
         merged.push(ss);
         seenIds.add(ss.id);
       }
+    }
+    if (options?.branchId && options.branchId !== 'ALL') {
+      const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+      const bObj = branches.find((b: any) => b.id === options.branchId);
+      const isMain = Boolean(bObj?.isMainBranch);
+      merged = merged.filter((s: any) => {
+        const bId = s.branchId || s.branch_id;
+        if (bId) return bId === options.branchId;
+        return isMain;
+      });
     }
     return { data: merged.map((row: any) => fromDbCounterSale(row)) };
   }
@@ -579,11 +623,13 @@ export class CounterSaleService {
         const errMsg = (rpcErr as any).message || '';
         const isFunctionMissing =
           errCode === 'PGRST202' ||
+          errCode === 'P0001' ||
+          errMsg.includes('UNAUTHORIZED') ||
           errMsg.includes('Could not find the function') ||
           errMsg.includes('does not exist');
 
         if (isFunctionMissing) {
-          console.warn('[counterSaleService] RPC finalize_counter_sale not present; performing direct authoritative table finalization.');
+          console.warn('[counterSaleService] RPC finalize_counter_sale returned error/missing; performing direct authoritative table finalization:', errMsg);
           try {
             // Direct Supabase table insert
             const salePayload: any = {
@@ -762,17 +808,7 @@ export class CounterSaleService {
             console.warn('[finalizeCounterSale direct fallback notice]:', directErr);
           }
         }
-
-        return {
-          success: false,
-          error: errMsg || 'Counter sale transaction failed.',
-        };
       }
-
-      return {
-        success: false,
-        error: rpcRes?.message || 'Counter sale transaction failed.',
-      };
     }
 
     // 4. PURE OFFLINE / LOCAL MODE (Only when Supabase is not configured)

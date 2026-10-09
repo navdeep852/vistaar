@@ -79,7 +79,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
     const updateData = () => {
       const all = store.getInvoices();
       if (currentBranch) {
-        setInvoices(all.filter((i) => !i.branchId || i.branchId === currentBranch.id));
+        setInvoices(all.filter((i) => i.branchId === currentBranch.id || (!i.branchId && (currentBranch.isMainBranch || currentBranch.id === 'ALL'))));
       } else {
         setInvoices(all);
       }

@@ -1209,6 +1209,104 @@ export class SupabaseAuthService {
   }
 
   /**
+   * Securely re-authenticate the current active user with their password.
+   * Required for sensitive administrative actions like switching operating branches.
+   * NEVER uses hardcoded passwords; verifies against live Supabase Auth credentials or salted hash.
+   */
+  public async verifyCurrentUserPassword(password: string): Promise<{ success: boolean; error?: string }> {
+    if (!password || !password.trim()) {
+      return { success: false, error: 'Password is required to verify identity.' };
+    }
+
+    const user = this.getUser();
+    if (!user) {
+      return { success: false, error: 'No active user session found. Please log in again.' };
+    }
+
+    const email = user.email?.trim().toLowerCase();
+    if (!email) {
+      return { success: false, error: 'User email is not available for identity verification.' };
+    }
+
+    // 1. Supabase Auth verify
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password: password.trim(),
+        });
+
+        if (!error && data?.user) {
+          await auditLogService.logSecurityEvent({
+            action: 'BRANCH_SWITCH_REAUTH_SUCCESS',
+            result: 'ALLOWED',
+            employeeId: user.employeeId || user.id,
+            details: { email, userId: user.id },
+          });
+          return { success: true };
+        }
+
+        if (error) {
+          console.warn('[BRANCH_SWITCH_REAUTH] Supabase verification notice:', error.message);
+          if (
+            error.message?.includes('Invalid login credentials') ||
+            error.message?.includes('invalid_credentials')
+          ) {
+            await auditLogService.logSecurityEvent({
+              action: 'BRANCH_SWITCH_REAUTH_FAILED',
+              result: 'DENIED',
+              employeeId: user.employeeId || user.id,
+              details: { reason: 'Incorrect password' },
+            });
+            return { success: false, error: 'Incorrect password. Verification failed.' };
+          }
+        }
+      } catch (err: any) {
+        console.warn('[BRANCH_SWITCH_REAUTH] Supabase Auth exception:', err);
+      }
+    }
+
+    // 2. Fallback to local verified credentials database (PBKDF2/SHA-256 salted hash)
+    const localUsers = safeStorageGet(REGISTERED_USERS_KEY);
+    if (localUsers) {
+      try {
+        const usersList: any[] = JSON.parse(localUsers);
+        const matched = usersList.find((u: any) =>
+          (u.email && u.email.toLowerCase() === email) ||
+          (u.employeeId && user.employeeId && u.employeeId.toUpperCase() === user.employeeId.toUpperCase()) ||
+          (u.id && u.id === user.id)
+        );
+
+        if (matched && matched.passwordHash) {
+          const { verifyPassword } = await import('../lib/cryptoUtils');
+          const isValid = await verifyPassword(password.trim(), matched.passwordHash);
+          if (isValid) {
+            await auditLogService.logSecurityEvent({
+              action: 'BRANCH_SWITCH_REAUTH_SUCCESS',
+              result: 'ALLOWED',
+              employeeId: user.employeeId || user.id,
+              details: { source: 'local_hash_verification' },
+            });
+            return { success: true };
+          } else {
+            await auditLogService.logSecurityEvent({
+              action: 'BRANCH_SWITCH_REAUTH_FAILED',
+              result: 'DENIED',
+              employeeId: user.employeeId || user.id,
+              details: { reason: 'Incorrect password' },
+            });
+            return { success: false, error: 'Incorrect password. Verification failed.' };
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to parse local users for password verification:', e);
+      }
+    }
+
+    return { success: false, error: 'Incorrect password. Verification failed.' };
+  }
+
+  /**
    * Request Email OTP Verification for Signup
    */
   public async requestEmailOtp(email: string): Promise<{ success: boolean; error?: string; accountExists?: boolean }> {

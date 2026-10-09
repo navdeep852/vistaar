@@ -2,18 +2,16 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   Building2,
   ChevronDown,
-  Check,
+  Lock,
   Store,
   Warehouse,
   Factory,
   Globe2,
-  Plus,
   Settings,
-  Sparkles,
 } from 'lucide-react';
 import { useBranch } from '../context/BranchContext';
-import { Branch, BranchType } from '../types';
-import { hasCurrentUserPermission } from '../lib/permissions';
+import { BranchType } from '../types';
+import { SwitchBranchModal } from './SwitchBranchModal';
 
 interface BranchSwitcherProps {
   className?: string;
@@ -42,10 +40,13 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
   const {
     currentBranch,
     branches,
+    allWorkspaceBranches,
     isLoadingBranches,
     isAllBranchesSelected,
     canAccessAllBranches,
-    switchBranch,
+    requestSwitchBranch,
+    isSwitchModalOpen,
+    closeSwitchModal,
   } = useBranch();
 
   const [isOpen, setIsOpen] = useState(false);
@@ -61,16 +62,37 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleSelectBranch = async (branchId: string | 'ALL') => {
+  const handleOpenAuthModal = () => {
     setIsOpen(false);
-    await switchBranch(branchId);
+    requestSwitchBranch();
   };
 
   const CurrentIcon = currentBranch ? getBranchIcon(currentBranch.branchType) : Globe2;
+  const availableCount = canAccessAllBranches ? allWorkspaceBranches.length : branches.length;
+  const canSwitch = canAccessAllBranches || availableCount > 1;
 
-  // If there are no branches or only 1 branch and user cannot switch, show subtle indicator
-  if (branches.length === 0 && !isLoadingBranches) {
+  // If there are no branches loaded yet
+  if (branches.length === 0 && !isLoadingBranches && !canAccessAllBranches) {
     return null;
+  }
+
+  // If staff user only has 1 branch assigned, show locked badge
+  if (!canSwitch) {
+    return (
+      <>
+        <div
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 text-xs font-semibold select-none ${className}`}
+          title="Assigned Operating Location (Locked to your assigned branch)"
+        >
+          <CurrentIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+          <span className="truncate max-w-[120px]">{currentBranch?.branchName || 'Assigned Branch'}</span>
+          <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">
+            {currentBranch?.branchCode}
+          </span>
+        </div>
+        <SwitchBranchModal isOpen={isSwitchModalOpen} onClose={closeSwitchModal} />
+      </>
+    );
   }
 
   // Mobile compact layout
@@ -79,86 +101,18 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
       <div className={`relative ${className}`} ref={dropdownRef}>
         <button
           type="button"
-          onClick={() => setIsOpen(!isOpen)}
+          onClick={handleOpenAuthModal}
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/80 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-xs font-semibold cursor-pointer max-w-[140px] truncate"
-          title="Active Branch / Location"
+          title="Authenticate to Switch Location"
         >
           <CurrentIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
           <span className="truncate">
             {isAllBranchesSelected ? 'All Branches' : currentBranch?.branchName || 'Branch'}
           </span>
-          {branches.length > 1 && <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />}
+          <Lock className="w-3 h-3 text-slate-400 shrink-0 ml-0.5" />
         </button>
 
-        {isOpen && branches.length > 1 && (
-          <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-2 z-50 animate-fade-in text-xs">
-            <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800/80 mb-1">
-              <span className="font-bold text-slate-400 uppercase tracking-wider text-[10px]">
-                Operating Location
-              </span>
-            </div>
-
-            {canAccessAllBranches && (
-              <button
-                type="button"
-                onClick={() => handleSelectBranch('ALL')}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-colors cursor-pointer text-left ${
-                  isAllBranchesSelected
-                    ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold'
-                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/60'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Globe2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                  <div>
-                    <div className="font-semibold">All Branches</div>
-                    <div className="text-[10px] text-slate-400 font-normal">Consolidated Workspace Data</div>
-                  </div>
-                </div>
-                {isAllBranchesSelected && <Check className="w-4 h-4 text-blue-600" />}
-              </button>
-            )}
-
-            <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
-
-            <div className="max-h-60 overflow-y-auto space-y-1">
-              {branches.map((b) => {
-                const Icon = getBranchIcon(b.branchType);
-                const isSelected = currentBranch?.id === b.id;
-                return (
-                  <button
-                    key={b.id}
-                    type="button"
-                    onClick={() => handleSelectBranch(b.id)}
-                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-colors cursor-pointer text-left ${
-                      isSelected
-                        ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold'
-                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/60'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Icon className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
-                      <div className="min-w-0">
-                        <div className="font-semibold truncate flex items-center gap-1.5">
-                          {b.branchName}
-                          {b.isMainBranch && (
-                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-semibold uppercase">
-                              Main
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[10px] text-slate-400 truncate">
-                          {b.branchCode} {b.city ? `• ${b.city}` : ''}
-                        </div>
-                      </div>
-                    </div>
-                    {isSelected && <Check className="w-4 h-4 text-blue-600 shrink-0" />}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        <SwitchBranchModal isOpen={isSwitchModalOpen} onClose={closeSwitchModal} />
       </div>
     );
   }
@@ -170,7 +124,7 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/60 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-700 transition-all text-xs font-semibold shadow-2xs cursor-pointer group"
-        title="Switch Operating Branch"
+        title="Switch Operating Branch (Password Authentication Required)"
       >
         <div className="w-6 h-6 rounded-lg bg-blue-100/80 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
           <CurrentIcon className="w-3.5 h-3.5" />
@@ -185,20 +139,18 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
           </span>
         </div>
 
-        {branches.length > 1 && (
-          <ChevronDown
-            className={`w-3.5 h-3.5 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-transform ${
-              isOpen ? 'rotate-180' : ''
-            }`}
-          />
-        )}
+        <ChevronDown
+          className={`w-3.5 h-3.5 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-transform ${
+            isOpen ? 'rotate-180' : ''
+          }`}
+        />
       </button>
 
       {isOpen && (
         <div className="absolute left-0 mt-2 w-72 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-2 z-50 animate-fade-in text-xs backdrop-blur-md">
           <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800/80 mb-1 flex items-center justify-between">
             <span className="font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider text-[10px]">
-              Active Branch Filter
+              Active Operating Branch
             </span>
             {currentBranch && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-medium">
@@ -207,94 +159,49 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
             )}
           </div>
 
-          {canAccessAllBranches && (
-            <button
-              type="button"
-              onClick={() => handleSelectBranch('ALL')}
-              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all cursor-pointer text-left ${
-                isAllBranchesSelected
-                  ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold shadow-2xs'
-                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/60'
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center">
-                  <Globe2 className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="font-semibold text-slate-900 dark:text-slate-100">All Branches</div>
-                  <div className="text-[10px] text-slate-400">Consolidated Workspace Reports</div>
-                </div>
+          <div className="p-3 my-1 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 flex items-center justify-between">
+            <div>
+              <div className="font-bold text-slate-800 dark:text-slate-200 text-xs">
+                {isAllBranchesSelected ? 'All Branches (Consolidated)' : currentBranch?.branchName}
               </div>
-              {isAllBranchesSelected && <Check className="w-4 h-4 text-blue-600" />}
-            </button>
-          )}
-
-          <div className="my-1.5 border-t border-slate-100 dark:border-slate-800" />
-
-          <div className="max-h-64 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
-            {branches.map((b) => {
-              const Icon = getBranchIcon(b.branchType);
-              const isSelected = currentBranch?.id === b.id;
-              return (
-                <button
-                  key={b.id}
-                  type="button"
-                  onClick={() => handleSelectBranch(b.id)}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl transition-all cursor-pointer text-left ${
-                    isSelected
-                      ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold shadow-2xs'
-                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/60'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div
-                      className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                        isSelected
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
-                      }`}
-                    >
-                      <Icon className="w-3.5 h-3.5" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="font-semibold text-slate-900 dark:text-slate-100 truncate flex items-center gap-1.5">
-                        <span className="truncate">{b.branchName}</span>
-                        {b.isMainBranch && (
-                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-semibold uppercase shrink-0">
-                            Main
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-slate-400 truncate">
-                        {b.branchCode} {b.city ? `• ${b.city}` : ''}
-                      </div>
-                    </div>
-                  </div>
-                  {isSelected && <Check className="w-4 h-4 text-blue-600 shrink-0" />}
-                </button>
-              );
-            })}
+              <div className="text-[10px] text-slate-400">
+                {isAllBranchesSelected
+                  ? 'Viewing enterprise-wide numbers'
+                  : `Operating Code: ${currentBranch?.branchCode || 'N/A'}`}
+              </div>
+            </div>
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
           </div>
 
-          {hasCurrentUserPermission('branches.manage') && onManageBranches && (
-            <>
-              <div className="my-1.5 border-t border-slate-100 dark:border-slate-800" />
+          <button
+            type="button"
+            onClick={handleOpenAuthModal}
+            className="w-full mt-1.5 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-md shadow-blue-500/20 transition-all cursor-pointer text-xs"
+          >
+            <Lock className="w-3.5 h-3.5" />
+            <span>Switch Location (Authenticate)</span>
+          </button>
+
+          {onManageBranches && canAccessAllBranches && (
+            <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800/80">
               <button
                 type="button"
                 onClick={() => {
                   setIsOpen(false);
                   onManageBranches();
                 }}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 font-medium transition-colors cursor-pointer"
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-xs cursor-pointer"
               >
                 <Settings className="w-3.5 h-3.5" />
                 <span>Manage Branches & Locations</span>
               </button>
-            </>
+            </div>
           )}
         </div>
       )}
+
+      {/* Security Authenticated Branch Switch Modal */}
+      <SwitchBranchModal isOpen={isSwitchModalOpen} onClose={closeSwitchModal} />
     </div>
   );
 };
