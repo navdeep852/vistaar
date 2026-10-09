@@ -4,6 +4,7 @@ import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { store } from '../store';
 import { fromDbCounterSale } from './types';
 import { salesAnalyticsService } from './salesAnalyticsService';
+import { productService } from './productService';
 import { CounterSale } from '../../types';
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 
@@ -11,21 +12,17 @@ const LOCAL_SALES_KEY = 'vistaar_local_counter_sales_db';
 
 const safeStorageGet = (key: string): any[] => {
   try {
-    if (typeof localStorage !== 'undefined') {
-      const stored = localStorage.getItem(key);
-      if (stored) return JSON.parse(stored);
-    }
+    const list = safeGetTenantStorage<any>(key, []);
+    if (Array.isArray(list) && list.length > 0) return list;
   } catch (e) {
     // ignore
   }
-  return [];
+  return store.getCounterSales();
 };
 
 const safeStorageSave = (key: string, items: any[]): void => {
   try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(key, JSON.stringify(items));
-    }
+    safeSaveTenantStorage(key, items);
   } catch (e) {
     // ignore
   }
@@ -158,11 +155,12 @@ export class CounterSaleService {
       let items: any[] = [];
       let invoiceNumber = '';
       let saleDate = new Date().toISOString().split('T')[0];
+      let branchId: string | undefined;
 
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
         const { data: saleData } = await supabase
           .from('counter_sales')
-          .select('invoice_number, sale_date, counter_sale_items(*)')
+          .select('invoice_number, sale_date, branch_id, counter_sale_items(*)')
           .eq('workspace_id', wsId)
           .eq('id', saleId)
           .single();
@@ -171,6 +169,7 @@ export class CounterSaleService {
           items = saleData.counter_sale_items;
           invoiceNumber = saleData.invoice_number || '';
           saleDate = saleData.sale_date || saleDate;
+          branchId = saleData.branch_id || undefined;
         }
       } else {
         const local = safeStorageGet(LOCAL_SALES_KEY);
@@ -178,6 +177,7 @@ export class CounterSaleService {
         if (target) {
           items = target.items || [];
           invoiceNumber = target.invoiceNumber || target.invoice_number || '';
+          branchId = target.branchId || target.branch_id || undefined;
         }
       }
 
@@ -188,7 +188,7 @@ export class CounterSaleService {
         if (!productId || quantity <= 0) continue;
 
         // Restore in local store
-        store.adjustStock(productId, 'Sales Return', quantity, `Cancelled Counter Sale #${invoiceNumber}`, invoiceNumber);
+        store.adjustStock(productId, 'Sales Return', quantity, `Cancelled Counter Sale #${invoiceNumber}`, invoiceNumber, branchId);
 
         if (isSupabaseConfigured() && isValidUuid(wsId)) {
           // Restore products.current_stock
@@ -258,23 +258,60 @@ export class CounterSaleService {
           query = query.eq('branch_id', options.branchId);
         }
 
-        const { data, error } = await query.order('created_at', { ascending: false });
+        let { data, error } = await query.order('created_at', { ascending: false });
+
+        if (error && (error.code === '42703' || error.message?.includes('branch_id'))) {
+          const fbQuery = await supabase
+            .from('counter_sales')
+            .select('*, counter_sale_items(*)')
+            .eq('workspace_id', wsId)
+            .order('created_at', { ascending: false });
+          data = fbQuery.data;
+          error = fbQuery.error;
+        }
 
         if (error) {
           const errStr = handleSupabaseError(error, 'getCounterSales');
           const fallback = safeStorageGet(LOCAL_SALES_KEY);
-          return { data: (fallback || []).map((row: any) => fromDbCounterSale(row)), error: errStr };
+          const storeSales = store.getCounterSales();
+          const merged = [...(fallback || [])];
+          const seenIds = new Set(merged.map((s: any) => s.id));
+          for (const ss of storeSales) {
+            if (!seenIds.has(ss.id)) {
+              merged.push(ss);
+              seenIds.add(ss.id);
+            }
+          }
+          return { data: merged.map((row: any) => fromDbCounterSale(row)), error: errStr };
         }
         return { data: (data || []).map((row: any) => fromDbCounterSale(row)) };
       }
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getCounterSales');
       const fallback = safeStorageGet(LOCAL_SALES_KEY);
-      return { data: (fallback || []).map((row: any) => fromDbCounterSale(row)), error: errStr };
+      const storeSales = store.getCounterSales();
+      const merged = [...(fallback || [])];
+      const seenIds = new Set(merged.map((s: any) => s.id));
+      for (const ss of storeSales) {
+        if (!seenIds.has(ss.id)) {
+          merged.push(ss);
+          seenIds.add(ss.id);
+        }
+      }
+      return { data: merged.map((row: any) => fromDbCounterSale(row)), error: errStr };
     }
 
     const fallback = safeStorageGet(LOCAL_SALES_KEY);
-    return { data: (fallback || []).map((row: any) => fromDbCounterSale(row)) };
+    const storeSales = store.getCounterSales();
+    const merged = [...(fallback || [])];
+    const seenIds = new Set(merged.map((s: any) => s.id));
+    for (const ss of storeSales) {
+      if (!seenIds.has(ss.id)) {
+        merged.push(ss);
+        seenIds.add(ss.id);
+      }
+    }
+    return { data: merged.map((row: any) => fromDbCounterSale(row)) };
   }
 
   public async getCounterSaleMetrics(options?: { branchId?: string }): Promise<{
@@ -338,7 +375,18 @@ export class CounterSaleService {
 
     // 1. PRE-FINALIZATION AUTHORITATIVE STOCK VALIDATION FOR ALL ITEMS
     const { productService } = await import('./productService');
-    const saleBranchId = sale.branchId && isValidUuid(sale.branchId) ? sale.branchId : undefined;
+    let saleBranchId = sale.branchId;
+    if (!saleBranchId || saleBranchId === 'ALL') {
+      try {
+        const saved = safeGetTenantItem<string | null>('active_branch_id', null);
+        if (saved && saved !== 'ALL') saleBranchId = saved;
+      } catch {}
+    }
+    if (!saleBranchId) {
+      const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+      const mainB = branches.find((b: any) => b.isMainBranch) || branches[0];
+      saleBranchId = mainB?.id || 'default';
+    }
 
     for (const item of items) {
       const productId = item.productId || item.product_id;
@@ -358,7 +406,7 @@ export class CounterSaleService {
 
     // 2. BUILD RPC PAYLOAD
     const rpcPayload = {
-      branch_id: saleBranchId || null,
+      branch_id: (saleBranchId && isValidUuid(saleBranchId)) ? saleBranchId : null,
       customer_id: sale.customerId || null,
       sale_number: saleNumber,
       invoice_number: invoiceNumber,
@@ -467,9 +515,61 @@ export class CounterSaleService {
           }
         }
 
+        // In case the DB RPC did not create the payment row (or older migration):
+        if (recAmt > 0 && !['Credit', 'Credit / Udhari', 'Udhari'].includes(finalPayMethod)) {
+          try {
+            const { paymentService } = await import('./paymentService');
+            await paymentService.createPayment({
+              counterSaleId: completeSale.id,
+              branchId: completeSale.branchId,
+              amount: recAmt,
+              method: finalPayMethod as any,
+              customerName: completeSale.customerName || 'Walk-in Customer',
+              customerId: completeSale.customerId,
+              invoiceNumber: completeSale.invoiceNumber || completeSale.saleNumber,
+              referenceNo: completeSale.paymentReference,
+              notes: completeSale.paymentNotes || `Counter Sale payment #${completeSale.invoiceNumber || completeSale.saleNumber}`,
+              date: completeSale.saleDate,
+            });
+          } catch (payErr) {
+            console.warn('[finalizeCounterSale] Payment sync notice:', payErr);
+          }
+        }
+
+        // Record Udhari if balanceAmount > 0
+        if (balAmt > 0 && completeSale.customerId) {
+          try {
+            const { udhariService } = await import('./udhariService');
+            await udhariService.syncInvoiceUdhari({
+              invoiceId: completeSale.id,
+              invoiceNumber: completeSale.invoiceNumber || completeSale.saleNumber,
+              customerId: completeSale.customerId,
+              customerName: completeSale.customerName || 'Customer',
+              customerPhone: completeSale.phoneNumber || '9999999999',
+              grandTotal: finalTot,
+              paidAmount: recAmt,
+              balanceAmount: balAmt,
+              dueDate: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
+            });
+          } catch (uErr) {
+            console.warn('[finalizeCounterSale] Udhari sync notice:', uErr);
+          }
+        }
+
+        store.addOrUpdateCounterSale(completeSale);
+        const local = safeStorageGet(LOCAL_SALES_KEY);
+        local.unshift(completeSale);
+        safeStorageSave(LOCAL_SALES_KEY, local);
+
         // Invalidate caches
         productService.invalidateCache();
         salesAnalyticsService.invalidateCache();
+        try {
+          const { enterpriseAnalyticsService } = await import('./enterpriseAnalyticsService');
+          enterpriseAnalyticsService.invalidateCache();
+        } catch {}
+        store.notify();
+        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
 
         return { success: true, data: completeSale };
       }
@@ -486,33 +586,42 @@ export class CounterSaleService {
           console.warn('[counterSaleService] RPC finalize_counter_sale not present; performing direct authoritative table finalization.');
           try {
             // Direct Supabase table insert
-            const { data: insertedSale, error: insertErr } = await supabase
+            const salePayload: any = {
+              workspace_id: wsId,
+              branch_id: saleBranchId || null,
+              customer_id: (sale.customerId && isValidUuid(sale.customerId)) ? sale.customerId : null,
+              sale_number: saleNumber,
+              invoice_number: invoiceNumber,
+              customer_name: sale.customerName || 'Walk-in Customer',
+              phone_number: sale.phoneNumber || '',
+              sale_date: sale.saleDate || new Date().toISOString().split('T')[0],
+              estimate_reference: sale.estimateReference || null,
+              subtotal: sale.subtotal || 0,
+              discount_type: sale.discountType || 'fixed',
+              discount_value: sale.discountValue || 0,
+              discount_amount: sale.discountAmount || 0,
+              final_total: finalTotal,
+              status: 'COMPLETED',
+              notes: sale.notes || null,
+              payment_method: paymentMethod,
+              amount_received: amountReceived,
+              balance_amount: balanceAmount,
+              payment_reference: sale.paymentReference || null,
+              payment_notes: sale.paymentNotes || null,
+            };
+
+            let { data: insertedSale, error: insertErr } = await supabase
               .from('counter_sales')
-              .insert([{
-                workspace_id: wsId,
-                branch_id: saleBranchId || null,
-                customer_id: (sale.customerId && isValidUuid(sale.customerId)) ? sale.customerId : null,
-                sale_number: saleNumber,
-                invoice_number: invoiceNumber,
-                customer_name: sale.customerName || 'Walk-in Customer',
-                phone_number: sale.phoneNumber || '',
-                sale_date: sale.saleDate || new Date().toISOString().split('T')[0],
-                estimate_reference: sale.estimateReference || null,
-                subtotal: sale.subtotal || 0,
-                discount_type: sale.discountType || 'fixed',
-                discount_value: sale.discountValue || 0,
-                discount_amount: sale.discountAmount || 0,
-                final_total: finalTotal,
-                status: 'COMPLETED',
-                notes: sale.notes || null,
-                payment_method: paymentMethod,
-                amount_received: amountReceived,
-                balance_amount: balanceAmount,
-                payment_reference: sale.paymentReference || null,
-                payment_notes: sale.paymentNotes || null,
-              }])
+              .insert([salePayload])
               .select()
               .single();
+
+            if (insertErr && (insertErr.code === '42703' || insertErr.message?.includes('branch_id'))) {
+              delete salePayload.branch_id;
+              const retry = await supabase.from('counter_sales').insert([salePayload]).select().single();
+              insertedSale = retry.data;
+              insertErr = retry.error;
+            }
 
             if (!insertErr && insertedSale) {
               const saleId = insertedSale.id;
@@ -529,7 +638,19 @@ export class CounterSaleService {
                 buy_price_snapshot: Number(i.buyPriceSnapshot || i.buy_price_snapshot || 0),
               }));
 
-              await supabase.from('counter_sale_items').insert(itemRows);
+              const { error: itemsErr } = await supabase.from('counter_sale_items').insert(itemRows);
+              if (itemsErr && (itemsErr.code === '42703' || itemsErr.message?.includes('column'))) {
+                const strippedItems = itemRows.map((r: any) => ({
+                  counter_sale_id: r.counter_sale_id,
+                  product_id: r.product_id,
+                  product_name_snapshot: r.product_name_snapshot,
+                  part_number_snapshot: r.part_number_snapshot,
+                  quantity: r.quantity,
+                  rate: r.rate,
+                  amount: r.amount,
+                }));
+                await supabase.from('counter_sale_items').insert(strippedItems);
+              }
 
               // Deduct stock
               await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate, saleBranchId);
@@ -559,7 +680,28 @@ export class CounterSaleService {
                 console.warn('[finalizeCounterSale fallback] Daybook sync notice:', dbErr);
               }
 
-              // 2. Authoritative Cashbook Entry
+              // 2. Authoritative Payment Record
+              if (amountReceived > 0 && !['Credit', 'Credit / Udhari', 'Udhari'].includes(paymentMethod)) {
+                try {
+                  const { paymentService } = await import('./paymentService');
+                  await paymentService.createPayment({
+                    counterSaleId: saleId,
+                    branchId: saleBranchId,
+                    amount: amountReceived,
+                    method: paymentMethod as any,
+                    customerName: sale.customerName || 'Walk-in Customer',
+                    customerId: sale.customerId,
+                    invoiceNumber,
+                    referenceNo: sale.paymentReference,
+                    notes: sale.paymentNotes || `Counter Sale payment #${invoiceNumber}`,
+                    date: sale.saleDate,
+                  });
+                } catch (payErr) {
+                  console.warn('[finalizeCounterSale fallback] Payment sync notice:', payErr);
+                }
+              }
+
+              // 3. Authoritative Cashbook Entry
               if (amountReceived > 0 && !['Credit', 'Credit / Udhari', 'Udhari'].includes(paymentMethod)) {
                 try {
                   const { cashbookService } = await import('./cashbookService');
@@ -579,10 +721,42 @@ export class CounterSaleService {
                 }
               }
 
+              // 4. Record Udhari if balanceAmount > 0 and customer exists
+              if (balanceAmount > 0 && sale.customerId) {
+                try {
+                  const { udhariService } = await import('./udhariService');
+                  await udhariService.syncInvoiceUdhari({
+                    invoiceId: saleId,
+                    invoiceNumber,
+                    customerId: sale.customerId,
+                    customerName: sale.customerName || 'Customer',
+                    customerPhone: sale.phoneNumber || '9999999999',
+                    grandTotal: finalTotal,
+                    paidAmount: amountReceived,
+                    balanceAmount,
+                    dueDate: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
+                  });
+                } catch (uErr) {
+                  console.warn('[finalizeCounterSale fallback] Udhari sync notice:', uErr);
+                }
+              }
+
+              const completeSale = fromDbCounterSale({ ...insertedSale, branch_id: saleBranchId, items: itemRows });
+              store.addOrUpdateCounterSale(completeSale);
+              const local = safeStorageGet(LOCAL_SALES_KEY);
+              local.unshift(completeSale);
+              safeStorageSave(LOCAL_SALES_KEY, local);
+
               productService.invalidateCache();
               salesAnalyticsService.invalidateCache();
+              try {
+                const { enterpriseAnalyticsService } = await import('./enterpriseAnalyticsService');
+                enterpriseAnalyticsService.invalidateCache();
+              } catch {}
+              store.notify();
+              if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
 
-              return { success: true, data: fromDbCounterSale({ ...insertedSale, items: itemRows }) };
+              return { success: true, data: completeSale };
             }
           } catch (directErr) {
             console.warn('[finalizeCounterSale direct fallback notice]:', directErr);
@@ -605,6 +779,7 @@ export class CounterSaleService {
     const saleId = sale.id || `cs-${Date.now()}`;
     const offlineSale = {
       id: saleId,
+      branch_id: saleBranchId || null,
       sale_number: saleNumber,
       invoice_number: invoiceNumber,
       payment_method: paymentMethod,
@@ -670,12 +845,37 @@ export class CounterSaleService {
           transactionDate: sale.saleDate || new Date().toISOString().split('T')[0],
         });
       } catch {}
+
+      try {
+        const { paymentService } = await import('./paymentService');
+        await paymentService.createPayment({
+          counterSaleId: saleId,
+          branchId: saleBranchId,
+          amount: amountReceived,
+          method: paymentMethod as any,
+          customerName: sale.customerName || 'Walk-in Customer',
+          customerId: sale.customerId,
+          invoiceNumber,
+          referenceNo: sale.paymentReference,
+          notes: sale.paymentNotes || `Counter Sale payment #${invoiceNumber}`,
+          date: sale.saleDate,
+        });
+      } catch {}
     }
+
+    const domainSale = fromDbCounterSale(offlineSale);
+    store.addOrUpdateCounterSale(domainSale);
 
     productService.invalidateCache();
     salesAnalyticsService.invalidateCache();
+    try {
+      const { enterpriseAnalyticsService } = await import('./enterpriseAnalyticsService');
+      enterpriseAnalyticsService.invalidateCache();
+    } catch {}
+    store.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
 
-    return { success: true, data: fromDbCounterSale(offlineSale) };
+    return { success: true, data: domainSale };
   }
 
   public async cancelCounterSale(saleId: string): Promise<{ success: boolean; error?: string }> {
@@ -727,7 +927,18 @@ export class CounterSaleService {
         await this.restoreCounterSaleStock(saleId);
       }
 
-      // Void or Reverse Daybook transaction
+      // 1. Cancel linked payments in Supabase
+      if (isSupabaseConfigured() && isValidUuid(wsId)) {
+        try {
+          await supabase
+            .from('payments')
+            .delete()
+            .eq('workspace_id', wsId)
+            .eq('counter_sale_id', saleId);
+        } catch {}
+      }
+
+      // 2. Void or Reverse Daybook transaction
       try {
         const { daybookService } = await import('./daybookService');
         await daybookService.recordReversalTransaction({
@@ -739,7 +950,24 @@ export class CounterSaleService {
         // ignore
       }
 
+      // 3. Cancel in local store and storage
+      store.cancelCounterSale(saleId);
+      const local = safeStorageGet(LOCAL_SALES_KEY);
+      const lIdx = local.findIndex((s) => s.id === saleId);
+      if (lIdx >= 0) {
+        local[lIdx].status = 'CANCELLED';
+        safeStorageSave(LOCAL_SALES_KEY, local);
+      }
+
+      productService.invalidateCache();
       salesAnalyticsService.invalidateCache();
+      try {
+        const { enterpriseAnalyticsService } = await import('./enterpriseAnalyticsService');
+        enterpriseAnalyticsService.invalidateCache();
+      } catch {}
+      store.notify();
+      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
+
       return { success: true };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'cancelCounterSale');

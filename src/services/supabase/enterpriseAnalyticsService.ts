@@ -269,11 +269,17 @@ export class EnterpriseAnalyticsService {
   } {
     let cashCollectionsVal = 0;
     let upiCollectionsVal = 0;
+    const seenCsIdsInPayments = new Set<string>();
 
     // 1. Process customer/invoice/udhari payments received in this period
     payments.forEach((p) => {
       const totalAmt = Number(p.amount || 0);
       if (totalAmt <= 0) return;
+
+      const csId = p.counter_sale_id || p.counterSaleId;
+      if (csId) {
+        seenCsIdsInPayments.add(String(csId).toLowerCase());
+      }
 
       const splitCash = Number(p.cash_amount ?? p.cashAmount ?? 0);
       const splitUpi = Number(p.upi_amount ?? p.upiAmount ?? 0);
@@ -291,8 +297,13 @@ export class EnterpriseAnalyticsService {
       }
     });
 
-    // 2. Process counter sales in this period
+    // 2. Process counter sales in this period (skip if already accounted for via linked payment)
     counterSales.forEach((cs) => {
+      const csId = cs.id ? String(cs.id).toLowerCase() : '';
+      if (csId && seenCsIdsInPayments.has(csId)) {
+        return; // Already accounted for in payments
+      }
+
       const method = String(cs.payment_method ?? cs.paymentMethod ?? '').toLowerCase();
       if (method.includes('credit') || method.includes('udhari')) {
         return;
@@ -386,13 +397,39 @@ export class EnterpriseAnalyticsService {
           expQ = expQ.or(`branch_id.eq.${branchId},branch_id.is.null`);
         }
 
-        const [invRes, csRes, payRes, prodRes, expRes] = await Promise.all([
+        let [invRes, csRes, payRes, prodRes, expRes] = await Promise.all([
           invQ,
           csQ,
           payQ,
           supabase.from('products').select('*').eq('workspace_id', wsId),
           expQ,
         ]);
+
+        if (csRes.error && (csRes.error.code === '42703' || csRes.error.message?.includes('branch_id'))) {
+          const retryCs = await supabase
+            .from('counter_sales')
+            .select('*')
+            .eq('workspace_id', wsId)
+            .eq('status', 'COMPLETED')
+            .gte('sale_date', dateRange.startDateStr)
+            .lte('sale_date', dateRange.endDateStr);
+          if (!retryCs.error && retryCs.data) {
+            csRes = retryCs as any;
+          }
+        }
+
+        if (invRes.error && (invRes.error.code === '42703' || invRes.error.message?.includes('branch_id'))) {
+          const retryInv = await supabase
+            .from('invoices')
+            .select('*')
+            .eq('workspace_id', wsId)
+            .in('status', ['Issued', 'Partially Paid', 'Paid'])
+            .gte('date', dateRange.startDateStr)
+            .lte('date', dateRange.endDateStr);
+          if (!retryInv.error && retryInv.data) {
+            invRes = retryInv as any;
+          }
+        }
 
         if (invRes.data) invoices = invRes.data;
         if (csRes.data) counterSales = csRes.data;
@@ -429,16 +466,28 @@ export class EnterpriseAnalyticsService {
       });
     }
 
-    if (counterSales.length === 0) {
-      const localCS = store.getCounterSales().length > 0
-        ? store.getCounterSales()
-        : safeGetTenantStorage<any>(LOCAL_SALES_KEY, []);
-      counterSales = localCS.filter((cs: any) => {
-        if (cs.status === 'CANCELLED') return false;
-        const d = (cs.sale_date ?? cs.saleDate ?? cs.created_at ?? '').split('T')[0];
-        return d >= dateRange.startDateStr && d <= dateRange.endDateStr;
-      });
-    }
+    // Always merge in-memory and local counter sales with deduplication
+    const seenCsIds = new Set<string>();
+    counterSales.forEach((cs) => {
+      const k = cs.id ? String(cs.id).toLowerCase() : '';
+      if (k) seenCsIds.add(k);
+    });
+
+    const localCS = store.getCounterSales().length > 0
+      ? store.getCounterSales()
+      : safeGetTenantStorage<any>(LOCAL_SALES_KEY, []);
+
+    localCS.forEach((cs: any) => {
+      if (cs.status === 'CANCELLED') return;
+      if (branchId && branchId !== 'ALL' && cs.branchId && cs.branchId !== branchId) return;
+      const d = (cs.sale_date ?? cs.saleDate ?? cs.created_at ?? '').split('T')[0];
+      if (d < dateRange.startDateStr || d > dateRange.endDateStr) return;
+      const k = cs.id ? String(cs.id).toLowerCase() : '';
+      if (!k || !seenCsIds.has(k)) {
+        if (k) seenCsIds.add(k);
+        counterSales.push(cs);
+      }
+    });
 
     if (payments.length === 0) {
       const localPayments = store.getPayments().length > 0

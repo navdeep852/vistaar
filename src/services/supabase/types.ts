@@ -636,6 +636,7 @@ export function fromDbCounterSale(row: any): CounterSale {
 
   return {
     id: row.id,
+    branchId: row.branch_id || row.branchId || undefined,
     saleNumber: row.sale_number || row.saleNumber || `CS-${row.id}`,
     customerId: row.customer_id || row.customerId || undefined,
     customerName: row.customer_name || row.customerName || 'Walk-in Customer',
@@ -659,6 +660,25 @@ export function fromDbCounterSale(row: any): CounterSale {
     createdBy: row.created_by || row.createdBy || undefined,
     createdAt: row.created_at || new Date().toISOString(),
     updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
+  };
+}
+
+export function fromDbPayment(row: any): Payment {
+  return {
+    id: row.id,
+    branchId: row.branch_id || row.branchId || undefined,
+    paymentNumber: row.payment_number || row.paymentNumber || `PAY-${row.id?.substring(0, 8) || Date.now()}`,
+    customerId: row.customer_id || row.customerId || '',
+    customerName: row.customer_name || row.customerName || 'Customer',
+    invoiceId: row.invoice_id || row.invoiceId || undefined,
+    invoiceNumber: row.invoice_number || row.invoiceNumber || undefined,
+    counterSaleId: row.counter_sale_id || row.counterSaleId || undefined,
+    amount: Number(row.amount) || 0,
+    date: row.payment_date || row.date || (row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
+    method: row.method || row.payment_method || 'Cash',
+    referenceNo: row.reference_no || row.referenceNo || undefined,
+    notes: row.notes || undefined,
+    createdAt: row.created_at || row.createdAt || new Date().toISOString(),
   };
 }
 

@@ -39,7 +39,7 @@ export class SalesAnalyticsService {
     }
     const currentId = supabaseAuthService.getCurrentCompanyId();
     if (currentId && isValidUuid(currentId)) return currentId;
-    throw new Error('[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined in salesAnalyticsService.');
+    return currentId || '';
   }
 
   public invalidateCache(): void {
@@ -84,7 +84,22 @@ export class SalesAnalyticsService {
           csQ = csQ.eq('branch_id', branchId);
         }
 
-        const { data: csData, error: csErr } = await csQ;
+        let { data: csData, error: csErr } = await csQ;
+
+        if (csErr && (csErr.code === '42703' || csErr.message?.includes('branch_id'))) {
+          let fallbackQ = supabase
+            .from('counter_sales')
+            .select('id, sale_number, invoice_number, sale_date, final_total, status, payment_method, amount_received, balance_amount, created_at')
+            .eq('workspace_id', wsId)
+            .eq('status', 'COMPLETED')
+            .gte('sale_date', range.startDateStr)
+            .lte('sale_date', range.endDateStr);
+          const retryRes = await fallbackQ;
+          if (!retryRes.error && retryRes.data) {
+            csData = retryRes.data;
+            csErr = null;
+          }
+        }
 
         if (!csErr && csData) {
           counterSales = csData;
@@ -103,7 +118,22 @@ export class SalesAnalyticsService {
           invQ = invQ.eq('branch_id', branchId);
         }
 
-        const { data: invData, error: invErr } = await invQ;
+        let { data: invData, error: invErr } = await invQ;
+
+        if (invErr && (invErr.code === '42703' || invErr.message?.includes('branch_id'))) {
+          let fallbackInvQ = supabase
+            .from('invoices')
+            .select('id, invoice_number, date, grand_total, paid_amount, balance_amount, status, created_at')
+            .eq('workspace_id', wsId)
+            .in('status', ['Issued', 'Partially Paid', 'Paid'])
+            .gte('date', range.startDateStr)
+            .lte('date', range.endDateStr);
+          const retryInv = await fallbackInvQ;
+          if (!retryInv.error && retryInv.data) {
+            invData = retryInv.data;
+            invErr = null;
+          }
+        }
 
         if (!invErr && invData) {
           invoices = invData;
@@ -183,6 +213,24 @@ export class SalesAnalyticsService {
         if (k) seenCsIds.add(k);
         counterSales.push(s);
       }
+    }
+
+    // Merge in-memory counter sales from store
+    try {
+      const { store } = await import('../store');
+      for (const scs of store.getCounterSales()) {
+        if (scs.status === 'CANCELLED') continue;
+        if (branchId && branchId !== 'ALL' && scs.branchId && scs.branchId !== branchId) continue;
+        const d = (scs.saleDate || (scs as any).sale_date || '').split('T')[0];
+        if (d < range.startDateStr || d > range.endDateStr) continue;
+        const k = scs.id ? String(scs.id).toLowerCase() : '';
+        if (!k || !seenCsIds.has(k)) {
+          if (k) seenCsIds.add(k);
+          counterSales.push(scs);
+        }
+      }
+    } catch {
+      // ignore
     }
 
     // De-duplication: Track seen invoice/reference numbers to prevent double counting

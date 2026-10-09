@@ -285,7 +285,19 @@ export class CashbookService {
         if (start) payQuery = payQuery.gte('payment_date', start);
         if (end) payQuery = payQuery.lte('payment_date', end);
 
-        const { data: payData, error: payErr } = await payQuery;
+        let { data: payData, error: payErr } = await payQuery;
+        if (payErr && payErr.code === '42703') {
+          let fbPayQuery = supabase
+            .from('payments')
+            .select('*')
+            .eq('workspace_id', wsId);
+          if (start) fbPayQuery = fbPayQuery.gte('payment_date', start);
+          if (end) fbPayQuery = fbPayQuery.lte('payment_date', end);
+          const fbPayRes = await fbPayQuery;
+          payData = fbPayRes.data;
+          payErr = fbPayRes.error;
+        }
+
         if (!payErr && payData) {
           for (const p of payData) {
             const amt = Number(p.amount) || 0;
@@ -343,7 +355,20 @@ export class CashbookService {
         if (start) csQuery = csQuery.gte('sale_date', start);
         if (end) csQuery = csQuery.lte('sale_date', end);
 
-        const { data: csData, error: csErr } = await csQuery;
+        let { data: csData, error: csErr } = await csQuery;
+        if (csErr && csErr.code === '42703') {
+          let fbQuery = supabase
+            .from('counter_sales')
+            .select('*')
+            .eq('workspace_id', wsId)
+            .eq('status', 'COMPLETED');
+          if (start) fbQuery = fbQuery.gte('sale_date', start);
+          if (end) fbQuery = fbQuery.lte('sale_date', end);
+          const fbRes = await fbQuery;
+          csData = fbRes.data;
+          csErr = fbRes.error;
+        }
+
         if (!csErr && csData) {
           for (const cs of csData) {
             const method = cs.payment_method || 'Cash';
@@ -381,6 +406,42 @@ export class CashbookService {
         }
       } catch (csEx) {
         console.warn('[getTransactions] counter_sales query notice:', csEx);
+      }
+
+      // 3b. Merge in-memory and local counter sales
+      try {
+        const { store } = await import('../store');
+        for (const cs of store.getCounterSales()) {
+          if (cs.status === 'CANCELLED') continue;
+          if (options?.branchId && options.branchId !== 'ALL' && cs.branchId && cs.branchId !== options.branchId) continue;
+          const method = cs.paymentMethod || 'Cash';
+          if (['Credit', 'Credit / Udhari', 'Udhari'].includes(method)) continue;
+          const rec = Number(cs.amountReceived !== undefined ? cs.amountReceived : cs.finalTotal) || 0;
+          if (rec <= 0) continue;
+          const key = `COUNTER_SALE:${cs.id}:IN`;
+          if (seenCounterSaleIds.has(cs.id) || seenKeys.has(key)) continue;
+          seenKeys.add(key);
+          seenCounterSaleIds.add(cs.id);
+          mergedList.push({
+            id: `cb-cs-${cs.id}`,
+            workspaceId: wsId,
+            transactionCode: `CB-${cs.saleNumber}`,
+            transactionDate: cs.saleDate,
+            transactionType: 'CUSTOMER_PAYMENT',
+            direction: 'IN',
+            amount: rec,
+            paymentMode: method as any,
+            partyName: cs.customerName || 'Walk-in Customer',
+            referenceType: 'COUNTER_SALE' as any,
+            referenceId: cs.id,
+            referenceNumber: cs.invoiceNumber || cs.saleNumber,
+            description: `Counter Sale Receipt #${cs.invoiceNumber || cs.saleNumber}`,
+            status: 'COMPLETED',
+            createdAt: cs.createdAt,
+          });
+        }
+      } catch (storeEx) {
+        // ignore
       }
     }
 

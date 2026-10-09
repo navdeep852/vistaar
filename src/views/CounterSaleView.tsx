@@ -267,11 +267,13 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
     setReviewModalOpen(true);
   };
 
-  // Execute Sale Submission
+  // Execute Sale Submission with strict double-click & race guard
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = React.useRef(false);
 
   const handleConfirmAndCompleteSale = async () => {
-    if (isSubmitting) return;
+    if (isSubmitting || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     try {
       const res = await counterSaleService.createCounterSale({
@@ -296,13 +298,18 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
         notes,
         items: lineItems
           .filter((i) => i.productId)
-          .map((i) => ({
-            productId: i.productId!,
-            productName: i.productName,
-            partNumber: i.partNumber || '',
-            quantity: i.quantity,
-            rate: i.sellingPrice,
-          })),
+          .map((i) => {
+            const matchedProd = products.find((p) => p.id === i.productId);
+            const bPrice = Number((i as any).buyPrice ?? matchedProd?.buyPrice ?? 0);
+            return {
+              productId: i.productId!,
+              productName: i.productName,
+              partNumber: i.partNumber || matchedProd?.partNumber || '',
+              quantity: i.quantity,
+              rate: i.sellingPrice,
+              buyPriceSnapshot: bPrice,
+            };
+          }),
       });
 
       if (!res.success) throw new Error(res.error || 'Failed to record sale');
@@ -322,6 +329,7 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
     } catch (err: any) {
       showToast(err.message || 'Failed to complete counter sale', 'error');
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
   };

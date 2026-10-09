@@ -712,15 +712,26 @@ class StoreService {
 
     // Resolve branchId if not explicitly passed
     let effectiveBranchId = branchId;
-    if (!effectiveBranchId) {
+    if (!effectiveBranchId || effectiveBranchId === 'ALL') {
       try {
         const saved = safeGetTenantItem<string | null>('active_branch_id', null);
         if (saved && saved !== 'ALL') effectiveBranchId = saved;
       } catch {}
     }
-
     // Update branch_inventory
     const allBranchInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
+    if (!effectiveBranchId) {
+      const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+      const mainB = branches.find((b: any) => b.isMainBranch || b.is_main_branch) || branches[0];
+      if (mainB?.id) {
+        effectiveBranchId = mainB.id;
+      } else if (allBranchInv.length > 0) {
+        const existingEntry = allBranchInv.find((bi: any) => (bi.productId || bi.product_id) === productId);
+        effectiveBranchId = existingEntry?.branchId || existingEntry?.branch_id || 'default';
+      } else {
+        effectiveBranchId = 'default';
+      }
+    }
     let targetBranchInv = effectiveBranchId
       ? allBranchInv.find(
           (bi: any) =>
@@ -1357,6 +1368,8 @@ class StoreService {
     invoiceId?: string;
     invoiceNumber?: string;
     udhariId?: string;
+    counterSaleId?: string;
+    branchId?: string;
     customerId?: string;
     customerName?: string;
     customerPhone?: string;
@@ -1372,6 +1385,7 @@ class StoreService {
     if (!this.state.udharis) this.state.udharis = [];
     if (!this.state.udhariPayments) this.state.udhariPayments = [];
     if (!this.state.followUps) this.state.followUps = [];
+    if (!this.state.counterSales) this.state.counterSales = [];
 
     const amount = Number(data.amount);
     if (isNaN(amount) || amount <= 0) {
@@ -1403,30 +1417,48 @@ class StoreService {
       inv = this.state.invoices.find((i) => i.id === udhari?.invoiceId);
     }
 
+    // 2b. Resolve target Counter Sale
+    let cs = data.counterSaleId
+      ? this.state.counterSales.find((c) => c.id === data.counterSaleId)
+      : undefined;
+
     // Overpayment protection
-    const maxPayable = inv ? inv.balanceAmount : (udhari ? udhari.outstandingAmount : 0);
-    const overpaymentCheck = validatePaymentAmount(maxPayable, amount);
-    if (!overpaymentCheck.valid) {
-      throw new Error(overpaymentCheck.error);
+    const maxPayable = inv
+      ? inv.balanceAmount
+      : (udhari
+      ? udhari.outstandingAmount
+      : (cs
+      ? (cs.balanceAmount ?? cs.finalTotal ?? amount)
+      : (data.counterSaleId ? amount : 0)));
+
+    if (!data.counterSaleId && !cs) {
+      const overpaymentCheck = validatePaymentAmount(maxPayable, amount);
+      if (!overpaymentCheck.valid) {
+        throw new Error(overpaymentCheck.error);
+      }
+    } else if (maxPayable > 0 && amount > (maxPayable + 0.05)) {
+      throw new Error(`Payment amount (₹${amount}) exceeds balance amount (₹${maxPayable}).`);
     }
 
-    const customerName = data.customerName || inv?.customerName || udhari?.customerNameSnapshot || 'Customer';
-    const invoiceNumber = inv?.invoiceNumber || data.invoiceNumber || (udhari?.id?.startsWith('UD-') ? udhari.id.replace('UD-', '') : '');
+    const customerName = data.customerName || inv?.customerName || udhari?.customerNameSnapshot || cs?.customerName || 'Customer';
+    const invoiceNumber = inv?.invoiceNumber || data.invoiceNumber || (udhari?.id?.startsWith('UD-') ? udhari.id.replace('UD-', '') : (cs ? cs.saleNumber : ''));
 
     // 3. Create & insert standard Payment record
     const newPayment: Payment = {
       id: paymentId,
       paymentNumber,
-      customerId: data.customerId || inv?.customerId || udhari?.customerId || '',
+      customerId: data.customerId || inv?.customerId || udhari?.customerId || cs?.customerId || '',
       customerName,
       invoiceId: inv?.id,
       invoiceNumber: invoiceNumber || undefined,
+      counterSaleId: data.counterSaleId || cs?.id,
+      branchId: data.branchId || cs?.branchId,
       udhariId: udhari?.id,
       amount,
       date: payDate,
       method: data.paymentMethod,
       referenceNo: data.reference,
-      notes: data.notes || (invoiceNumber ? `Payment for Invoice #${invoiceNumber}` : undefined),
+      notes: data.notes || (cs ? `Payment for Counter Sale #${cs.saleNumber}` : (invoiceNumber ? `Payment for Invoice #${invoiceNumber}` : undefined)),
       createdAt: now,
     };
     const existingPayIdx = this.state.payments.findIndex(
@@ -1645,8 +1677,58 @@ class StoreService {
       }
     }
 
+    // 6c. Synchronize Daybook Entries for Counter Sale
+    if (!inv && (cs || data.counterSaleId)) {
+      try {
+        const LOCAL_DAYBOOK_KEY = 'vistaar_local_daybook_db';
+        const localDaybook = safeGetTenantStorage<any>(LOCAL_DAYBOOK_KEY, []);
+        const csTotal = cs ? Number(cs.finalTotal) : amount;
+        const csBal = cs ? Number(cs.balanceAmount ?? 0) : 0;
+        const pStatus = csBal <= 0.01 ? 'PAID' : 'PARTIALLY PAID';
+
+        const paymentRow: any = {
+          id: `db-pay-${paymentId}`,
+          workspaceId: '',
+          branchId: data.branchId || cs?.branchId,
+          transactionCode: paymentNumber,
+          transactionDate: payDate,
+          transactionType: 'CUSTOMER_PAYMENT',
+          direction: 'IN',
+          amount: amount,
+          totalAmount: csTotal,
+          remainingAmount: csBal,
+          paymentStatus: pStatus,
+          paymentMode: data.paymentMethod || 'Cash',
+          partyType: 'customer',
+          partyId: data.customerId || cs?.customerId,
+          partyName: customerName,
+          referenceType: 'COUNTER_SALE',
+          referenceId: data.counterSaleId || cs?.id || paymentId,
+          referenceNumber: cs?.saleNumber || cs?.invoiceNumber || paymentNumber,
+          description: `Counter Sale Payment #${cs?.saleNumber || cs?.invoiceNumber || ''}`.trim(),
+          notes: data.notes || (data.reference ? `Ref: ${data.reference}` : undefined),
+          status: 'COMPLETED',
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        const existingPayIdx = localDaybook.findIndex(
+          (t: any) => t.referenceId === paymentId || (t.referenceType === 'PAYMENT' && t.referenceId === paymentId)
+        );
+        if (existingPayIdx >= 0) {
+          localDaybook[existingPayIdx] = { ...localDaybook[existingPayIdx], ...paymentRow, id: localDaybook[existingPayIdx].id };
+        } else {
+          localDaybook.unshift(paymentRow);
+        }
+
+        safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, localDaybook);
+      } catch (dbErr) {
+        console.warn('[recordUnifiedCustomerPayment] Counter Sale Daybook sync notice:', dbErr);
+      }
+    }
+
     // 7. Synchronize Cashbook Entry for Cash Inflow
-    if (amount > 0) {
+    if (amount > 0 && !['Credit', 'Credit / Udhari', 'Udhari'].includes(data.paymentMethod)) {
       try {
         const LOCAL_CASHBOOK_KEY = 'vistaar_local_cashbook_entries_db';
         const localCashbook = safeGetTenantStorage<any>(LOCAL_CASHBOOK_KEY, []);
@@ -1655,10 +1737,11 @@ class StoreService {
           localCashbook.unshift({
             id: `cb-${Date.now()}`,
             workspaceId: (inv as any)?.workspaceId || (inv as any)?.companyId || '',
+            branchId: data.branchId || cs?.branchId,
             entryNumber: `CB-${paymentNumber}`,
             entryDate: payDate,
-            sourceType: 'INVOICE_PAYMENT',
-            sourceId: paymentId,
+            sourceType: data.counterSaleId ? 'COUNTER_SALE' : 'INVOICE_PAYMENT',
+            sourceId: data.counterSaleId || paymentId,
             referenceNumber: invoiceNumber || paymentNumber,
             direction: 'IN',
             amount,
@@ -3210,9 +3293,15 @@ class StoreService {
 
     const finalTotal = Math.max(0, subtotal - discountAmount);
 
+    const paymentMethod = data.paymentMethod || 'Cash';
+    const isCredit = paymentMethod === 'Credit / Udhari' || paymentMethod === 'Credit' || paymentMethod === 'Udhari';
+    const amountReceived = data.amountReceived !== undefined ? Number(data.amountReceived) : (isCredit ? 0 : finalTotal);
+    const balanceAmount = data.balanceAmount !== undefined ? Number(data.balanceAmount) : Math.max(0, finalTotal - amountReceived);
+
     const newSale: CounterSale = {
       id: saleId,
-      saleNumber,
+      branchId: data.branchId,
+      saleNumber: data.saleNumber || saleNumber,
       customerId: data.customerId,
       customerName,
       phoneNumber,
@@ -3225,6 +3314,9 @@ class StoreService {
       discountAmount,
       finalTotal,
       status: 'COMPLETED',
+      paymentMethod,
+      amountReceived,
+      balanceAmount,
       items: saleItems,
       notes: data.notes?.trim() || '',
       createdAt: now,
@@ -3232,7 +3324,80 @@ class StoreService {
     };
 
     this.state.counterSales.unshift(newSale);
+
+    // Save to tenant storage
+    const localCS = safeGetTenantStorage<any>('vistaar_local_counter_sales_db', []);
+    localCS.unshift(newSale);
+    safeSaveTenantStorage('vistaar_local_counter_sales_db', localCS);
+
+    // Record Payment if received
+    if (amountReceived > 0 && !isCredit) {
+      try {
+        this.recordUnifiedCustomerPayment({
+          counterSaleId: newSale.id,
+          branchId: newSale.branchId,
+          customerId: newSale.customerId,
+          customerName: newSale.customerName,
+          customerPhone: newSale.phoneNumber,
+          amount: amountReceived,
+          paymentMethod: paymentMethod as any,
+          paymentDate: saleDate,
+          notes: `Payment for Counter Sale #${newSale.saleNumber}`,
+        });
+      } catch (payErr) {
+        console.warn('[createCounterSale] Payment sync notice:', payErr);
+      }
+    }
+
+    // Record Daybook SALE entry
+    try {
+      const LOCAL_DAYBOOK_KEY = 'vistaar_local_daybook_db';
+      const localDaybook = safeGetTenantStorage<any>(LOCAL_DAYBOOK_KEY, []);
+      const pStatus = balanceAmount <= 0.01 ? 'PAID' : (amountReceived > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+      localDaybook.unshift({
+        id: `db-sale-${newSale.id}`,
+        workspaceId: '',
+        branchId: newSale.branchId,
+        transactionCode: newSale.saleNumber,
+        transactionDate: saleDate,
+        transactionType: 'SALE',
+        direction: 'IN',
+        amount: amountReceived,
+        totalAmount: finalTotal,
+        remainingAmount: balanceAmount,
+        paymentStatus: pStatus,
+        paymentMode: paymentMethod,
+        partyType: 'customer',
+        partyId: newSale.customerId,
+        partyName: newSale.customerName,
+        referenceType: 'COUNTER_SALE',
+        referenceId: newSale.id,
+        referenceNumber: newSale.invoiceNumber || newSale.saleNumber,
+        description: `Counter Sale #${newSale.invoiceNumber || newSale.saleNumber}`,
+        status: 'COMPLETED',
+        createdAt: now,
+        updatedAt: now,
+      });
+      safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, localDaybook);
+    } catch {}
+
+    // Record Udhari if credit or partial payment with customer
+    if (balanceAmount > 0 && newSale.customerId) {
+      this.syncInvoiceUdhari({
+        invoiceId: newSale.id,
+        invoiceNumber: newSale.invoiceNumber || newSale.saleNumber,
+        customerId: newSale.customerId,
+        customerName: newSale.customerName,
+        customerPhone: newSale.phoneNumber,
+        grandTotal: finalTotal,
+        paidAmount: amountReceived,
+        balanceAmount: balanceAmount,
+        dueDate: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
+      });
+    }
+
     this.saveToStorage();
+    this.notify();
     return newSale;
   }
 
@@ -3277,8 +3442,65 @@ class StoreService {
     sale.status = 'CANCELLED';
     sale.updatedAt = now;
 
+    // Void Daybook entries
+    try {
+      const LOCAL_DAYBOOK_KEY = 'vistaar_local_daybook_db';
+      const localDaybook = safeGetTenantStorage<any>(LOCAL_DAYBOOK_KEY, []);
+      localDaybook.forEach((entry: any) => {
+        if (entry.referenceId === saleId || entry.referenceNumber === sale.invoiceNumber || entry.referenceNumber === sale.saleNumber) {
+          entry.status = 'VOID';
+          entry.paymentStatus = 'CANCELLED';
+        }
+      });
+      safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, localDaybook);
+    } catch {}
+
+    // Reverse Cashbook entries
+    try {
+      const LOCAL_CASHBOOK_KEY = 'vistaar_local_cashbook_entries_db';
+      const localCashbook = safeGetTenantStorage<any>(LOCAL_CASHBOOK_KEY, []);
+      const updatedCb = localCashbook.filter((cb: any) => cb.sourceId !== saleId && cb.referenceNumber !== sale.saleNumber && cb.referenceNumber !== sale.invoiceNumber);
+      safeSaveTenantStorage(LOCAL_CASHBOOK_KEY, updatedCb);
+    } catch {}
+
+    // Update local counter sales db
+    const localCS = safeGetTenantStorage<any>('vistaar_local_counter_sales_db', []);
+    const csIdx = localCS.findIndex((s: any) => s.id === saleId || s.saleNumber === sale.saleNumber);
+    if (csIdx >= 0) {
+      localCS[csIdx].status = 'CANCELLED';
+      localCS[csIdx].updatedAt = now;
+      safeSaveTenantStorage('vistaar_local_counter_sales_db', localCS);
+    }
+
     this.saveToStorage();
+    this.notify();
     return true;
+  }
+
+  public getCounterSales(): CounterSale[] {
+    return Array.isArray(this.state.counterSales) ? this.state.counterSales : [];
+  }
+
+  public addOrUpdateCounterSale(sale: CounterSale): void {
+    if (!this.state.counterSales) this.state.counterSales = [];
+    const idx = this.state.counterSales.findIndex((s) => s.id === sale.id || s.saleNumber === sale.saleNumber);
+    if (idx >= 0) {
+      this.state.counterSales[idx] = sale;
+    } else {
+      this.state.counterSales.unshift(sale);
+    }
+
+    const localCS = safeGetTenantStorage<any>('vistaar_local_counter_sales_db', []);
+    const lIdx = localCS.findIndex((s: any) => s.id === sale.id || s.saleNumber === sale.saleNumber);
+    if (lIdx >= 0) {
+      localCS[lIdx] = sale;
+    } else {
+      localCS.unshift(sale);
+    }
+    safeSaveTenantStorage('vistaar_local_counter_sales_db', localCS);
+
+    this.saveToStorage();
+    this.notify();
   }
 
   public getCounterSaleMetrics() {

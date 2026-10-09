@@ -609,6 +609,7 @@ export interface Payment {
   invoiceId?: string;
   invoiceNumber?: string;
   udhariId?: string;
+  counterSaleId?: string;
   amount: number;
   date: string;
   method: PaymentMethod;

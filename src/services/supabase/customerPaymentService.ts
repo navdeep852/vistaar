@@ -330,6 +330,12 @@ export class CustomerPaymentService {
               reference_no: payload.reference || null,
               notes: payload.notes || null,
             };
+            if (payload.counterSaleId && isValidUuid(payload.counterSaleId)) {
+              dbPayPayload.counter_sale_id = payload.counterSaleId;
+            }
+            if (payload.branchId && isValidUuid(payload.branchId)) {
+              dbPayPayload.branch_id = payload.branchId;
+            }
             if (dbPaymentId) {
               dbPayPayload.id = dbPaymentId;
             }
@@ -359,8 +365,22 @@ export class CustomerPaymentService {
                 .single();
 
               if (payInsertErr) {
-                const errStr = handleSupabaseError(payInsertErr, 'recordCustomerPayment.payments_insert');
-                return { success: false, error: errStr };
+                if (payInsertErr.code === '42703' || payInsertErr.message?.includes('column')) {
+                  delete dbPayPayload.counter_sale_id;
+                  delete dbPayPayload.branch_id;
+                  const retry = await supabase.from('payments').insert([dbPayPayload]).select('id, payment_number').single();
+                  if (!retry.error && retry.data) {
+                    paymentId = retry.data.id;
+                    paymentCode = retry.data.payment_number || paymentCode;
+                    isDbPersisted = true;
+                  } else if (retry.error) {
+                    const errStr = handleSupabaseError(retry.error, 'recordCustomerPayment.payments_insert_retry');
+                    return { success: false, error: errStr };
+                  }
+                } else {
+                  const errStr = handleSupabaseError(payInsertErr, 'recordCustomerPayment.payments_insert');
+                  return { success: false, error: errStr };
+                }
               }
 
               if (payInsertData?.id) {
@@ -576,6 +596,8 @@ export class CustomerPaymentService {
         paymentCode,
         invoiceId: targetInvoice?.id || payload.invoiceId,
         invoiceNumber,
+        counterSaleId: payload.counterSaleId,
+        branchId: payload.branchId,
         udhariId: targetUdhari?.id || payload.udhariId,
         customerId: resolvedCustomerId || targetInvoice?.customerId || targetUdhari?.customerId,
         customerName,

@@ -221,6 +221,88 @@ export class DaybookService {
       // ignore
     }
 
+    // 1b. Collect Counter Sales from Supabase, Store, and Local Storage
+    const counterSaleMap = new Map<string, any>();
+    try {
+      if (isSupabaseConfigured() && isValidUuid(wsId)) {
+        let { data: dbCs, error: csErr } = await supabase
+          .from('counter_sales')
+          .select('id, sale_number, invoice_number, branch_id, customer_id, customer_name, final_total, amount_received, balance_amount, status, payment_method, sale_date, created_at')
+          .eq('workspace_id', wsId);
+
+        if (csErr && csErr.code === '42703') {
+          const fb = await supabase
+            .from('counter_sales')
+            .select('id, sale_number, invoice_number, customer_id, customer_name, final_total, amount_received, balance_amount, status, payment_method, sale_date, created_at')
+            .eq('workspace_id', wsId);
+          dbCs = fb.data;
+        }
+
+        (dbCs || []).forEach((cs: any) => {
+          if (cs.id) counterSaleMap.set(cs.id, cs);
+          if (cs.sale_number) counterSaleMap.set(cs.sale_number, cs);
+          if (cs.invoice_number) counterSaleMap.set(cs.invoice_number, cs);
+        });
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      const { store } = await import('../store');
+      store.getCounterSales().forEach((cs) => {
+        const row = {
+          id: cs.id,
+          sale_number: cs.saleNumber,
+          invoice_number: cs.invoiceNumber,
+          branch_id: cs.branchId,
+          customer_id: cs.customerId,
+          customer_name: cs.customerName,
+          final_total: cs.finalTotal,
+          amount_received: cs.amountReceived !== undefined ? cs.amountReceived : cs.finalTotal,
+          balance_amount: cs.balanceAmount !== undefined ? cs.balanceAmount : 0,
+          status: cs.status,
+          payment_method: cs.paymentMethod,
+          sale_date: cs.saleDate,
+          created_at: cs.createdAt,
+        };
+        if (cs.id && !counterSaleMap.has(cs.id)) counterSaleMap.set(cs.id, row);
+        if (cs.saleNumber && !counterSaleMap.has(cs.saleNumber)) counterSaleMap.set(cs.saleNumber, row);
+        if (cs.invoiceNumber && !counterSaleMap.has(cs.invoiceNumber)) counterSaleMap.set(cs.invoiceNumber, row);
+      });
+    } catch {
+      // ignore
+    }
+
+    try {
+      const localCS = safeGetTenantStorage<any>('vistaar_local_counter_sales_db', []);
+      localCS.forEach((cs: any) => {
+        const row = {
+          id: cs.id,
+          sale_number: cs.saleNumber || cs.sale_number,
+          invoice_number: cs.invoiceNumber || cs.invoice_number,
+          branch_id: cs.branchId || cs.branch_id,
+          customer_id: cs.customerId || cs.customer_id,
+          customer_name: cs.customerName || cs.customer_name,
+          final_total: cs.finalTotal ?? cs.final_total,
+          amount_received: cs.amountReceived ?? cs.amount_received ?? cs.finalTotal ?? cs.final_total,
+          balance_amount: cs.balanceAmount ?? cs.balance_amount ?? 0,
+          status: cs.status,
+          payment_method: cs.paymentMethod || cs.payment_method,
+          sale_date: cs.saleDate || cs.sale_date,
+          created_at: cs.createdAt || cs.created_at,
+        };
+        const sId = cs.id;
+        const sNum = cs.saleNumber || cs.sale_number;
+        const iNum = cs.invoiceNumber || cs.invoice_number;
+        if (sId && !counterSaleMap.has(sId)) counterSaleMap.set(sId, row);
+        if (sNum && !counterSaleMap.has(sNum)) counterSaleMap.set(sNum, row);
+        if (iNum && !counterSaleMap.has(iNum)) counterSaleMap.set(iNum, row);
+      });
+    } catch {
+      // ignore
+    }
+
     // 2. Collect Payments from Supabase and Local Store
     const paymentsList: any[] = [];
     const seenPaymentKeys = new Set<string>();
@@ -458,7 +540,49 @@ export class DaybookService {
       }
     }
 
-    // 7. Deduplicate identical upfront payments recorded as both SALE and PAYMENT on the same invoice & date
+    // 6b. Synthesize any missing Counter Sales
+    for (const [csIdOrNum, cs] of counterSaleMap.entries()) {
+      if (csIdOrNum !== cs.id) continue;
+      if (cs.status === 'Cancelled' || cs.status === 'CANCELLED') continue;
+
+      const csRefKey = `COUNTER_SALE:${cs.id}`;
+      const csNumRefKey = `COUNTER_SALE:${cs.sale_number}`;
+      const hasCsTx = seenTxKeys.has(csRefKey) || seenTxKeys.has(csNumRefKey) || unifiedList.some((t) => t.referenceId === cs.id || t.referenceNumber === cs.sale_number || t.referenceNumber === cs.invoice_number);
+
+      if (!hasCsTx) {
+        const finalTot = Number(cs.final_total) || 0;
+        const isCredit = ['Credit', 'Credit / Udhari', 'Udhari'].includes(cs.payment_method);
+        const recAmt = Number(cs.amount_received !== undefined ? cs.amount_received : (isCredit ? 0 : finalTot)) || 0;
+        const balAmt = Number(cs.balance_amount !== undefined ? cs.balance_amount : (isCredit ? finalTot : 0)) || 0;
+        const pStatus = balAmt <= 0.01 ? 'PAID' : (recAmt > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+
+        unifiedList.push({
+          id: `db-syn-cs-${cs.id}`,
+          workspaceId: wsId,
+          branchId: cs.branch_id,
+          transactionCode: cs.sale_number || cs.invoice_number || `CS-${cs.id.substring(0, 8)}`,
+          transactionDate: (cs.sale_date || '').split('T')[0] || new Date().toISOString().split('T')[0],
+          transactionType: 'SALE',
+          direction: 'IN',
+          amount: recAmt,
+          totalAmount: finalTot,
+          remainingAmount: balAmt,
+          paymentStatus: pStatus as any,
+          paymentMode: (cs.payment_method || 'Cash') as any,
+          partyType: 'customer',
+          partyId: cs.customer_id,
+          partyName: cs.customer_name || 'Walk-in Customer',
+          referenceType: 'COUNTER_SALE',
+          referenceId: cs.id,
+          referenceNumber: cs.invoice_number || cs.sale_number,
+          description: `Counter Sale #${cs.invoice_number || cs.sale_number}`,
+          status: 'COMPLETED',
+          createdAt: cs.created_at,
+        });
+      }
+    }
+
+    // 7. Deduplicate identical upfront payments recorded as both SALE and PAYMENT on the same invoice/sale & date
     const finalFiltered: DaybookTransaction[] = [];
     const seenInflowsByInvoiceAndDate = new Set<string>();
 
@@ -468,12 +592,12 @@ export class DaybookService {
         continue;
       }
 
-      // Check if this transaction represents an invoice payment
-      const isPayOrSale = (tx.referenceType === 'INVOICE' || tx.referenceType === 'PAYMENT') && tx.amount > 0;
+      // Check if this transaction represents an invoice or counter sale payment
+      const isPayOrSale = (tx.referenceType === 'INVOICE' || tx.referenceType === 'PAYMENT' || tx.referenceType === 'COUNTER_SALE') && tx.amount > 0;
       if (isPayOrSale && tx.referenceNumber) {
         const dedupKey = `${tx.referenceNumber}:${tx.transactionDate}:${tx.amount}`;
-        if (seenInflowsByInvoiceAndDate.has(dedupKey) && tx.referenceType === 'INVOICE') {
-          // If a distinct PAYMENT entry already recorded this exact inflow on this date, zero out the invoice SALE inflow
+        if (seenInflowsByInvoiceAndDate.has(dedupKey) && (tx.referenceType === 'INVOICE' || tx.referenceType === 'COUNTER_SALE')) {
+          // If a distinct PAYMENT entry already recorded this exact inflow on this date, zero out the sale row inflow
           tx.amount = 0;
         } else {
           seenInflowsByInvoiceAndDate.add(dedupKey);
@@ -494,7 +618,7 @@ export class DaybookService {
 
       if (options?.transactionType && options.transactionType !== 'ALL') {
         if (options.transactionType === 'SALE') {
-          if (tx.transactionType !== 'SALE' && tx.transactionType !== 'CUSTOMER_PAYMENT' && tx.referenceType !== 'INVOICE' && tx.referenceType !== 'PAYMENT') {
+          if (tx.transactionType !== 'SALE' && tx.transactionType !== 'CUSTOMER_PAYMENT' && tx.referenceType !== 'INVOICE' && tx.referenceType !== 'PAYMENT' && tx.referenceType !== 'COUNTER_SALE') {
             return false;
           }
         } else if (tx.transactionType !== options.transactionType) {
