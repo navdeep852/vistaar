@@ -2,7 +2,7 @@ import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { Branch, UserBranchAccess, BranchInventory, StockTransfer, StockTransferItem, Product, StockReceipt, StockMovement } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
-import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from './safeStorage';
 import { auditLogService } from './auditLogService';
 import { store } from '../store';
 

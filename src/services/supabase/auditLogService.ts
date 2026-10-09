@@ -15,9 +15,13 @@ export type SecurityAuditAction =
   | 'UNAUTHORIZED_SETTINGS_ATTEMPT'
   | 'EMPLOYEE_CREATION'
   | 'EMPLOYEE_STATUS_CHANGE'
-  | 'PASSWORD_CHANGED';
+  | 'PASSWORD_CHANGED'
+  | 'BRANCH_SWITCHED'
+  | 'BRANCH_SWITCH_DENIED'
+  | 'BRANCH_SWITCH_REAUTH_SUCCESS'
+  | 'BRANCH_SWITCH_REAUTH_FAILED';
 
-export type SecurityAuditResult = 'SUCCESS' | 'DENIED' | 'ERROR';
+export type SecurityAuditResult = 'SUCCESS' | 'DENIED' | 'ERROR' | 'ALLOWED';
 
 export interface SecurityAuditEvent {
   id?: string;

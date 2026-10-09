@@ -199,7 +199,8 @@ export class EnterpriseAnalyticsService {
   public async getDashboardKpis(
     dateRange: ResolvedDateRange,
     forceFresh = false,
-    branchId?: string
+    branchId?: string,
+    explicitWsId?: string
   ): Promise<DashboardKPIs> {
     if (!hasCurrentUserPermission('dashboard.view')) {
       await auditLogService.logSecurityEvent({
@@ -210,7 +211,10 @@ export class EnterpriseAnalyticsService {
       throw new AuthorizationError('dashboard.view', 'Permission Denied: Dashboard is restricted.');
     }
 
-    const wsId = await this.getWorkspaceId();
+    const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
+    if (!wsId || !isValidUuid(wsId)) {
+      throw new Error('[WORKSPACE RESOLUTION FAILED] Valid workspace ID is required for getDashboardKpis.');
+    }
     const cacheKey = `${wsId}:${branchId || 'all'}:${dateRange.rangeType}:${dateRange.startDateStr}:${dateRange.endDateStr}`;
     const now = Date.now();
 
@@ -567,7 +571,8 @@ export class EnterpriseAnalyticsService {
   public async getAnalyticsOverview(
     dateRange: ResolvedDateRange,
     forceFresh = false,
-    branchId?: string
+    branchId?: string,
+    explicitWsId?: string
   ): Promise<EnterpriseAnalyticsData> {
     if (!hasCurrentUserPermission('analytics.view')) {
       await auditLogService.logSecurityEvent({
@@ -578,7 +583,10 @@ export class EnterpriseAnalyticsService {
       throw new AuthorizationError('analytics.view', 'Permission Denied: Analytics is strictly restricted to Business Owners.');
     }
 
-    const wsId = await this.getWorkspaceId();
+    const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
+    if (!wsId || !isValidUuid(wsId)) {
+      throw new Error('[WORKSPACE RESOLUTION FAILED] Valid workspace ID is required for getAnalyticsOverview.');
+    }
 
     // 1. Fetch Authoritative Dashboard Sales Metrics & Raw Invoices / Counter Sales (Read-Only)
     const [salesMetricsRes, udhariMetricsRes, quotationsRes, raw] = await Promise.all([

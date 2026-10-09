@@ -511,7 +511,7 @@ class StoreService {
     return () => this.listeners.delete(listener);
   }
 
-  private notify() {
+  public notify() {
     this.listeners.forEach((listener) => listener());
   }
 
@@ -3191,6 +3191,11 @@ class StoreService {
     estimateReference?: string;
     discountType?: 'fixed' | 'percentage';
     discountValue?: number;
+    paymentMethod?: string;
+    amountReceived?: number;
+    balanceAmount?: number;
+    branchId?: string;
+    saleNumber?: string;
     notes?: string;
     items: Array<{
       productId: string;
@@ -3428,7 +3433,7 @@ class StoreService {
         invoiceNumber: newSale.invoiceNumber || newSale.saleNumber,
         customerId: newSale.customerId,
         customerName: newSale.customerName,
-        customerPhone: newSale.phoneNumber,
+        customerPhone: newSale.phoneNumber || '',
         grandTotal: finalTotal,
         paidAmount: amountReceived,
         balanceAmount: balanceAmount,
@@ -3515,10 +3520,6 @@ class StoreService {
     this.saveToStorage();
     this.notify();
     return true;
-  }
-
-  public getCounterSales(): CounterSale[] {
-    return Array.isArray(this.state.counterSales) ? this.state.counterSales : [];
   }
 
   public addOrUpdateCounterSale(sale: CounterSale): void {

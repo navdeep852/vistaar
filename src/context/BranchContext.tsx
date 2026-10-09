@@ -17,6 +17,7 @@ export interface BranchContextType {
   branches: Branch[]; // strictly authorized branches for current user
   allWorkspaceBranches: Branch[]; // complete list for enterprise admin management
   isLoadingBranches: boolean;
+  isBranchReady: boolean; // TRUE once initial authorized branch resolution completes
   isAllBranchesSelected: boolean;
   canAccessAllBranches: boolean;
   activeBranchId: string | undefined;
@@ -36,8 +37,9 @@ const BranchContext = createContext<BranchContextType>({
   currentBranch: null,
   branches: [],
   allWorkspaceBranches: [],
-  isLoadingBranches: false,
-  isAllBranchesSelected: true,
+  isLoadingBranches: true,
+  isBranchReady: false,
+  isAllBranchesSelected: false,
   canAccessAllBranches: true,
   activeBranchId: undefined,
   switchBranch: async () => ({ success: true }),
@@ -52,6 +54,8 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [allWorkspaceBranches, setAllWorkspaceBranches] = useState<Branch[]>([]);
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
   const [isLoadingBranches, setIsLoadingBranches] = useState<boolean>(true);
+  const [isBranchReady, setIsBranchReady] = useState<boolean>(false);
+  const [isAllExplicitlySelected, setIsAllExplicitlySelected] = useState<boolean>(false);
   const [isSwitchModalOpen, setIsSwitchModalOpen] = useState<boolean>(false);
 
   const currentUser = supabaseAuthService.getUser();
@@ -81,23 +85,28 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (isOwnerOrAdmin) {
         if (savedBranchId === 'ALL') {
           setCurrentBranch(null);
+          setIsAllExplicitlySelected(true);
         } else if (savedBranchId) {
           const match = fullList.find((b) => b.id === savedBranchId);
           if (match) {
             setCurrentBranch(match);
+            setIsAllExplicitlySelected(false);
           } else {
             // Default to main branch
             const main = fullList.find((b) => b.isMainBranch) || fullList[0] || null;
             setCurrentBranch(main);
+            setIsAllExplicitlySelected(false);
             if (main) safeSaveTenantItem('active_branch_id', main.id);
           }
         } else {
           // Default to main branch if available
           const main = fullList.find((b) => b.isMainBranch) || fullList[0] || null;
           setCurrentBranch(main);
+          setIsAllExplicitlySelected(false);
           if (main) safeSaveTenantItem('active_branch_id', main.id);
         }
       } else {
+        setIsAllExplicitlySelected(false);
         // Staff member: MUST have an assigned branch. CANNOT view "ALL" or unauthorized branches
         if (authorizedList.length === 1) {
           // Only 1 branch authorized: strictly force that branch
@@ -118,6 +127,7 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           if (defaultB) safeSaveTenantItem('active_branch_id', defaultB.id);
         }
       }
+      setIsBranchReady(true);
     } catch (err) {
       console.warn('Error loading branches:', err);
     } finally {
@@ -161,6 +171,7 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
         const oldBranchId = currentBranch?.id;
         setCurrentBranch(null);
+        setIsAllExplicitlySelected(true);
         safeSaveTenantItem('active_branch_id', 'ALL');
 
         // Audit log branch switch
@@ -205,6 +216,7 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       const oldBranchId = currentBranch?.id;
       setCurrentBranch(selected);
+      setIsAllExplicitlySelected(false);
       safeSaveTenantItem('active_branch_id', selected.id);
 
       // Audit log branch switch
@@ -238,7 +250,7 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const contextValue = useMemo<BranchContextType>(
     () => ({
-      workspaceId: currentUser?.companyId || 'default',
+      workspaceId: supabaseAuthService.getAuthoritativeWorkspaceIdSync() || currentUser?.companyId || 'default',
       branchId: currentBranch?.id,
       branchName: currentBranch ? currentBranch.branchName : 'All Branches',
       branchCode: currentBranch ? currentBranch.branchCode : 'ALL',
@@ -247,7 +259,8 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       branches,
       allWorkspaceBranches,
       isLoadingBranches,
-      isAllBranchesSelected: currentBranch === null,
+      isBranchReady,
+      isAllBranchesSelected: isBranchReady && !isLoadingBranches && currentBranch === null && isAllExplicitlySelected && isOwnerOrAdmin,
       canAccessAllBranches: isOwnerOrAdmin,
       activeBranchId: currentBranch?.id,
       switchBranch,
@@ -263,6 +276,8 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       branches,
       allWorkspaceBranches,
       isLoadingBranches,
+      isBranchReady,
+      isAllExplicitlySelected,
       isOwnerOrAdmin,
       switchBranch,
       requestSwitchBranch,

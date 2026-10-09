@@ -24,7 +24,7 @@ import {
   EnterpriseAnalyticsData,
   DashboardKPIs,
 } from '../services/supabase/enterpriseAnalyticsService';
-import { supabaseAuthService } from '../services/supabaseAuth';
+import { supabaseAuthService, AuthResolutionState } from '../services/supabaseAuth';
 import { useBranch } from '../context/BranchContext';
 import { isValidUuid } from '../lib/supabaseError';
 import { hasCurrentUserPermission } from '../lib/permissions';
@@ -56,9 +56,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   setActiveTab,
   openModal,
 }) => {
-  // Concurrency and race-condition guard
+  // Concurrency and race-condition guard with monotonic request IDs
   const activeRequestIdRef = useRef<number>(0);
-  const isFetchingRef = useRef<boolean>(false);
+
+  // Authoritative Branch Context
+  const { currentBranch, isAllBranchesSelected, isLoadingBranches, isBranchReady } = useBranch();
+
+  // Authoritative Auth Resolution State
+  const [authStatus, setAuthStatus] = useState<AuthResolutionState>(() =>
+    supabaseAuthService.getAuthResolutionState()
+  );
+
+  useEffect(() => {
+    const unsubscribeAuth = supabaseAuthService.subscribe(() => {
+      setAuthStatus(supabaseAuthService.getAuthResolutionState());
+    });
+    return unsubscribeAuth;
+  }, []);
 
   // Filter State initialized from localStorage with robust fallback
   const [rangePreset, setRangePreset] = useState<DatePresetType>(() => {
@@ -90,7 +104,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   });
 
-  // Calculate Authoritative Date Range
+  // Calculate Authoritative Date Range (Explicit Indian Standard Time)
   const dateRange: ResolvedDateRange = useMemo(
     () =>
       resolveDateRange(
@@ -101,7 +115,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     [rangePreset, customStartDate, customEndDate]
   );
 
-  // Sync to localStorage
+  // Sync date filter preferences to localStorage
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY_PRESET, rangePreset);
@@ -112,126 +126,179 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     } catch {}
   }, [rangePreset, customStartDate, customEndDate]);
 
-  // Dashboard Data State
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const [invoices, setInvoices] = useState<Invoice[]>(store.getInvoices());
-  const [followUps, setFollowUps] = useState<FollowUp[]>(store.getFollowUps());
-
-  const [salesMetrics, setSalesMetrics] = useState<SalesMetrics>({
-    totalSales: 0,
-    todaySales: 0,
-    thisMonthSales: 0,
-    invoiceSales: 0,
-    counterSales: 0,
-    paidSales: 0,
-    creditSales: 0,
-    cashSales: 0,
-    bankUpiSales: 0,
-    totalTransactions: 0,
-  });
-
-  const [udhariMetrics, setUdhariMetrics] = useState<{
-    outstanding: number;
-    totalUdhari: number;
-    totalReceived: number;
-    overdue: number;
-    activeCount: number;
-  }>({
-    outstanding: 0,
-    totalUdhari: 0,
-    totalReceived: 0,
-    overdue: 0,
-    activeCount: 0,
-  });
-
-  const [dashboardKpis, setDashboardKpis] = useState<DashboardKPIs | null>(null);
-  const [analyticsData, setAnalyticsData] = useState<EnterpriseAnalyticsData | null>(null);
-
-  const { currentBranch, isAllBranchesSelected } = useBranch();
-
-  // Authoritative Data Fetching Pipeline (Guarded against re-entrant fetches)
-  const loadDashboardData = useCallback(async (forceFresh = false) => {
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
-    const currentRequestId = ++activeRequestIdRef.current;
-    setLoading(true);
-    setError(null);
-
-    try {
-      // 0. Resolve authoritative workspace ID
-      const wsId = await supabaseAuthService.getAuthoritativeWorkspaceId(forceFresh);
-      if (!wsId || !isValidUuid(wsId)) {
-        throw new Error('[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined.');
-      }
-
-      const branchId = currentBranch?.id;
-
-      // 1. Sales Metrics (Invoices + Counter Sales)
-      const salesPromise = salesAnalyticsService.getSalesMetrics(dateRange, forceFresh, wsId, branchId);
-
-      // 2. Outstanding Udhari
-      const udhariPromise = udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId, branchId);
-
-      // 3. Dedicated Dashboard KPIs (strictly authorized by 'dashboard.view')
-      const kpisPromise = enterpriseAnalyticsService.getDashboardKpis(dateRange, forceFresh, branchId);
-
-      // 4. Executive Analytics (strictly restricted to Business Owners with 'analytics.view')
-      const isOwner = hasCurrentUserPermission('analytics.view');
-      const analyticsPromise = isOwner
-        ? enterpriseAnalyticsService.getAnalyticsOverview(dateRange, forceFresh).catch((e) => {
-            console.warn('[DashboardView] Executive summary notice:', e);
-            return null;
-          })
-        : Promise.resolve(null);
-
-      const [smRes, umRes, kpisRes, anRes] = await Promise.all([
-        salesPromise,
-        udhariPromise,
-        kpisPromise,
-        analyticsPromise,
-      ]);
-
-      if (currentRequestId !== activeRequestIdRef.current) return;
-
-      setSalesMetrics(smRes);
-      setUdhariMetrics(umRes);
-      setDashboardKpis(kpisRes);
-      setAnalyticsData(anRes);
-
-      // 4. Invoices & Follow-ups from Store
-      setInvoices(store.getInvoices());
-      setFollowUps(store.getFollowUps());
-    } catch (err: any) {
-      if (currentRequestId !== activeRequestIdRef.current) return;
-      console.error('[DashboardView] Failed to load authoritative metrics:', err);
-      setError(err?.message || 'Unable to load Dashboard metrics. Please verify network and database connectivity.');
-    } finally {
-      isFetchingRef.current = false;
-      if (currentRequestId === activeRequestIdRef.current) {
-        setLoading(false);
-      }
+  // Context Readiness Guard (Ensures Auth, Workspace, Branch, and Date Range are 100% resolved)
+  const isContextReady = useMemo(() => {
+    if (authStatus !== 'ready' || !supabaseAuthService.isAuthenticated()) {
+      return false;
     }
-  }, [dateRange, currentBranch]);
+    const wsId = supabaseAuthService.getAuthoritativeWorkspaceIdSync();
+    if (!wsId || !isValidUuid(wsId)) {
+      return false;
+    }
+    if (isLoadingBranches || !isBranchReady) {
+      return false;
+    }
+    if (!isAllBranchesSelected && !currentBranch?.id) {
+      return false;
+    }
+    if (!dateRange?.startDateStr || !dateRange?.endDateStr) {
+      return false;
+    }
+    return true;
+  }, [
+    authStatus,
+    isLoadingBranches,
+    isBranchReady,
+    isAllBranchesSelected,
+    currentBranch?.id,
+    dateRange?.startDateStr,
+    dateRange?.endDateStr,
+  ]);
+
+  // Authoritative Dashboard KPI State Machine (Never treat uninitialized/loading as ₹0)
+  const [kpiState, setKpiState] = useState<{
+    status: 'loading' | 'success' | 'error';
+    data: DashboardKPIs | null;
+    error: string | null;
+  }>({
+    status: 'loading',
+    data: null,
+    error: null,
+  });
+
+  const isLoading = kpiState.status === 'loading';
+  const [analyticsData, setAnalyticsData] = useState<EnterpriseAnalyticsData | null>(null);
+  const [invoices, setInvoices] = useState<Invoice[]>(() => store.getInvoices());
+  const [followUps, setFollowUps] = useState<FollowUp[]>(() => store.getFollowUps());
+
+  // Single Authoritative Data Fetching Pipeline (Part 8, 9, 10, 12, 38)
+  const loadDashboardData = useCallback(
+    async (forceFresh = false) => {
+      const currentRequestId = ++activeRequestIdRef.current;
+
+      // Always enter loading state when initiating query
+      setKpiState((prev) => ({
+        status: 'loading',
+        data: null, // Clear old branch/date metrics so they never display under new scope
+        error: null,
+      }));
+
+      try {
+        const wsId = await supabaseAuthService.getAuthoritativeWorkspaceId(forceFresh);
+        if (!wsId || !isValidUuid(wsId)) {
+          throw new Error('[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined.');
+        }
+
+        const effectiveBranchId = isAllBranchesSelected ? 'ALL' : currentBranch?.id;
+        if (!effectiveBranchId) {
+          throw new Error('[BRANCH UNRESOLVED] Branch context is not ready.');
+        }
+
+        console.log(
+          `[Dashboard KPI] authReady=true workspaceId=${wsId} branchId=${effectiveBranchId} startDate=${dateRange.startDateStr} endDate=${dateRange.endDateStr} requestId=${currentRequestId} status=loading`
+        );
+
+        // Single authoritative query for all dashboard KPIs
+        const kpis = await enterpriseAnalyticsService.getDashboardKpis(
+          dateRange,
+          forceFresh,
+          effectiveBranchId,
+          wsId
+        );
+
+        // Stale response protection: if a subsequent request was launched, ignore this response
+        if (currentRequestId !== activeRequestIdRef.current) {
+          console.log(`[Dashboard KPI] Discarding stale response for requestId=${currentRequestId}`);
+          return;
+        }
+
+        console.log(
+          `[Dashboard KPI] requestId=${currentRequestId} status=success totalSales=${kpis.totalSales} collections=${kpis.collections} grossProfit=${kpis.grossProfit} outstanding=${kpis.outstandingUdhari}`
+        );
+
+        setKpiState({
+          status: 'success',
+          data: kpis,
+          error: null,
+        });
+
+        // Synchronize local period invoices & followups
+        setInvoices(store.getInvoices());
+        setFollowUps(store.getFollowUps());
+
+        // Optional Executive Analytics if user has analytics.view permission
+        if (hasCurrentUserPermission('analytics.view')) {
+          enterpriseAnalyticsService
+            .getAnalyticsOverview(dateRange, forceFresh, effectiveBranchId, wsId)
+            .then((an) => {
+              if (currentRequestId === activeRequestIdRef.current) {
+                setAnalyticsData(an);
+              }
+            })
+            .catch((e) => console.warn('[DashboardView] Executive summary notice:', e));
+        }
+      } catch (err: any) {
+        if (currentRequestId !== activeRequestIdRef.current) return;
+        console.error(`[Dashboard KPI] requestId=${currentRequestId} status=error error=${err?.message}`);
+        setKpiState({
+          status: 'error',
+          data: null,
+          error: err?.message || 'Unable to load Dashboard metrics. Please verify network and database connectivity.',
+        });
+      }
+    },
+    [dateRange, currentBranch?.id, isAllBranchesSelected]
+  );
+
+  // Authoritative Dashboard Fetch Effect (Executes immediately when context is ready, or on scope changes)
+  useEffect(() => {
+    if (!isContextReady) {
+      console.log(
+        `[Dashboard KPI] authReady=${authStatus === 'ready'} workspaceId=${supabaseAuthService.getAuthoritativeWorkspaceIdSync()} branchReady=${isBranchReady && !isLoadingBranches} branchId=${currentBranch?.id} status=waiting_for_context`
+      );
+      // Ensure loading skeleton displays while context is resolving
+      setKpiState((prev) => (prev.status === 'loading' ? prev : { status: 'loading', data: null, error: null }));
+      return;
+    }
+
+    loadDashboardData(false);
+  }, [
+    isContextReady,
+    currentBranch?.id,
+    isAllBranchesSelected,
+    dateRange.rangeType,
+    dateRange.startDateStr,
+    dateRange.endDateStr,
+    loadDashboardData,
+  ]);
 
   // Listen to branch change events to instantly refetch dashboard data
   useEffect(() => {
     const handleBranchChange = () => {
-      loadDashboardData(true);
+      if (isContextReady) {
+        loadDashboardData(true);
+      }
     };
     window.addEventListener('vistaar:branch_changed', handleBranchChange);
     return () => window.removeEventListener('vistaar:branch_changed', handleBranchChange);
-  }, [loadDashboardData]);
+  }, [isContextReady, loadDashboardData]);
 
-  // Debounced store subscription to prevent cascade loops
+  // Support manual refresh triggered via Header icon or Slicer refresh button
   useEffect(() => {
-    loadDashboardData();
+    const handleManualRefresh = () => {
+      if (isContextReady) {
+        loadDashboardData(true);
+      }
+    };
+    window.addEventListener('vistaar:refresh-dashboard', handleManualRefresh);
+    return () => window.removeEventListener('vistaar:refresh-dashboard', handleManualRefresh);
+  }, [isContextReady, loadDashboardData]);
 
+  // Debounced store subscription to react to new sales/payments created during session
+  useEffect(() => {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const unsubscribe = store.subscribe(() => {
-      // Skip if fetch is currently active to avoid re-entrant loops
-      if (isFetchingRef.current) return;
+      if (!isContextReady) return;
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         loadDashboardData(false);
@@ -242,24 +309,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (debounceTimer) clearTimeout(debounceTimer);
       unsubscribe();
     };
-  }, [loadDashboardData]);
+  }, [isContextReady, loadDashboardData]);
 
-  // Support manual refresh triggered via Header icon
-  useEffect(() => {
-    const handleManualRefresh = () => {
-      loadDashboardData(true);
-    };
-    window.addEventListener('vistaar:refresh-dashboard', handleManualRefresh);
-    return () => window.removeEventListener('vistaar:refresh-dashboard', handleManualRefresh);
-  }, [loadDashboardData]);
-
-  // Filter invoices for the Recent Sales table
+  // Filter invoices for the Recent Sales table strictly scoped by date AND branch
   const periodInvoices = useMemo(() => {
     return invoices.filter((inv) => {
       const invDate = (inv.date || inv.createdAt || '').split('T')[0];
-      return invDate >= dateRange.startDateStr && invDate <= dateRange.endDateStr;
+      const inDate = invDate >= dateRange.startDateStr && invDate <= dateRange.endDateStr;
+      if (!inDate) return false;
+      if (isAllBranchesSelected) return true;
+      const bId = inv.branchId || (inv as any).branch_id;
+      return bId === currentBranch?.id;
     });
-  }, [invoices, dateRange.startDateStr, dateRange.endDateStr]);
+  }, [invoices, dateRange.startDateStr, dateRange.endDateStr, currentBranch?.id, isAllBranchesSelected]);
 
   const pendingFollowups = useMemo(() => {
     return followUps.filter((f) => f.status === 'Pending');
@@ -268,13 +330,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div className="space-y-6 animate-fade-in pb-16">
       {/* Error Alert with Retry */}
-      {error && (
+      {kpiState.status === 'error' && kpiState.error && (
         <div className="p-4 rounded-2xl border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 flex items-center justify-between gap-3 text-rose-800 dark:text-rose-300">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-5 h-5 shrink-0" />
             <div>
               <p className="text-xs font-bold">Unable to load Dashboard KPIs</p>
-              <p className="text-[11px] opacity-90">{error}</p>
+              <p className="text-[11px] opacity-90">{kpiState.error}</p>
             </div>
           </div>
           <button
@@ -293,84 +355,100 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         {/* KPI 1: Total Sales */}
         <KpiCard
           title="Total Sales"
-          value={formatInr(dashboardKpis?.totalSales ?? salesMetrics.totalSales)}
+          value={kpiState.status === 'success' && kpiState.data ? formatInr(kpiState.data.totalSales) : '—'}
           color={PBI_PALETTE[0]}
           icon={<DollarSign className="w-4 h-4" />}
           deltaPercent={12.4}
           deltaLabel="vs prior period"
-          loading={loading}
+          loading={kpiState.status === 'loading'}
           footer={
-            <div className="flex flex-col sm:flex-row sm:justify-between text-[10px] sm:text-[11px] gap-0.5 sm:gap-1">
-              <span className="truncate">
-                Inv: <strong className="text-slate-800 dark:text-slate-200">{formatInr(dashboardKpis?.invoiceSales ?? salesMetrics.invoiceSales)}</strong>
-              </span>
-              <span className="truncate">
-                POS: <strong className="text-slate-800 dark:text-slate-200">{formatInr(dashboardKpis?.counterSales ?? salesMetrics.counterSales)}</strong>
-              </span>
-            </div>
+            kpiState.status === 'loading' ? (
+              <div className="h-3.5 w-32 bg-slate-100 dark:bg-slate-800 animate-pulse rounded" />
+            ) : (
+              <div className="flex flex-col sm:flex-row sm:justify-between text-[10px] sm:text-[11px] gap-0.5 sm:gap-1">
+                <span className="truncate">
+                  Inv: <strong className="text-slate-800 dark:text-slate-200">{formatInr(kpiState.data?.invoiceSales ?? 0)}</strong>
+                </span>
+                <span className="truncate">
+                  POS: <strong className="text-slate-800 dark:text-slate-200">{formatInr(kpiState.data?.counterSales ?? 0)}</strong>
+                </span>
+              </div>
+            )
           }
         />
 
         {/* KPI 2: Collections */}
         <KpiCard
           title="Collections"
-          value={formatInr(dashboardKpis?.collections ?? salesMetrics.paidSales)}
+          value={kpiState.status === 'success' && kpiState.data ? formatInr(kpiState.data.collections) : '—'}
           color={PBI_SEMANTIC.positive}
           icon={<CreditCard className="w-4 h-4" />}
           deltaPercent={8.1}
           deltaLabel="realized inflow"
-          loading={loading}
+          loading={kpiState.status === 'loading'}
           footer={
-            <div className="flex flex-col sm:flex-row sm:justify-between text-[10px] sm:text-[11px] gap-0.5 sm:gap-1">
-              <span className="truncate">
-                Cash: <strong className="text-slate-800 dark:text-slate-200">{formatInr(dashboardKpis?.cashCollections ?? salesMetrics.cashSales ?? 0)}</strong>
-              </span>
-              <span className="truncate">
-                UPI: <strong className="text-slate-800 dark:text-slate-200">{formatInr(dashboardKpis?.upiCollections ?? salesMetrics.bankUpiSales ?? 0)}</strong>
-              </span>
-            </div>
+            kpiState.status === 'loading' ? (
+              <div className="h-3.5 w-32 bg-slate-100 dark:bg-slate-800 animate-pulse rounded" />
+            ) : (
+              <div className="flex flex-col sm:flex-row sm:justify-between text-[10px] sm:text-[11px] gap-0.5 sm:gap-1">
+                <span className="truncate">
+                  Cash: <strong className="text-slate-800 dark:text-slate-200">{formatInr(kpiState.data?.cashCollections ?? 0)}</strong>
+                </span>
+                <span className="truncate">
+                  UPI: <strong className="text-slate-800 dark:text-slate-200">{formatInr(kpiState.data?.upiCollections ?? 0)}</strong>
+                </span>
+              </div>
+            )
           }
         />
 
         {/* KPI 3: Gross Profit */}
         <KpiCard
           title="Gross Profit"
-          value={formatInr(dashboardKpis?.grossProfit ?? 0)}
+          value={kpiState.status === 'success' && kpiState.data ? formatInr(kpiState.data.grossProfit) : '—'}
           color={PBI_PALETTE[5]}
           icon={<TrendingUp className="w-4 h-4" />}
-          deltaPercent={dashboardKpis?.profitMarginPercent ?? 24}
+          deltaPercent={kpiState.data?.profitMarginPercent ?? 24}
           deltaLabel="gross margin"
-          loading={loading}
+          loading={kpiState.status === 'loading'}
           footer={
-            <div className="flex justify-between items-center text-[10px] sm:text-[11px]">
-              <span className="truncate mr-1">Margin</span>
-              <strong className="text-indigo-600 dark:text-indigo-400 shrink-0">
-                {dashboardKpis?.profitMarginPercent ?? 0}%
-              </strong>
-            </div>
+            kpiState.status === 'loading' ? (
+              <div className="h-3.5 w-24 bg-slate-100 dark:bg-slate-800 animate-pulse rounded" />
+            ) : (
+              <div className="flex justify-between items-center text-[10px] sm:text-[11px]">
+                <span className="truncate mr-1">Margin</span>
+                <strong className="text-indigo-600 dark:text-indigo-400 shrink-0">
+                  {kpiState.data?.profitMarginPercent ?? 0}%
+                </strong>
+              </div>
+            )
           }
         />
 
         {/* KPI 4: Outstanding Udhari */}
         <KpiCard
           title="Outstanding Udhari"
-          value={formatInr(dashboardKpis?.outstandingUdhari ?? udhariMetrics.outstanding)}
+          value={kpiState.status === 'success' && kpiState.data ? formatInr(kpiState.data.outstandingUdhari) : '—'}
           color={PBI_PALETTE[2]}
           icon={<Scale className="w-4 h-4" />}
-          loading={loading}
+          loading={kpiState.status === 'loading'}
           footer={
-            <div className="flex justify-between items-center text-[10px] sm:text-[11px] gap-1">
-              <span className={`truncate ${(dashboardKpis?.overdueUdhari ?? udhariMetrics.overdue) > 0 ? 'text-rose-600 dark:text-rose-400 font-bold' : ''}`}>
-                OD: {formatInr(dashboardKpis?.overdueUdhari ?? udhariMetrics.overdue)}
-              </span>
-              <button
-                type="button"
-                onClick={() => setActiveTab('udhari')}
-                className="text-amber-600 dark:text-amber-400 font-bold hover:underline shrink-0"
-              >
-                Ledger →
-              </button>
-            </div>
+            kpiState.status === 'loading' ? (
+              <div className="h-3.5 w-28 bg-slate-100 dark:bg-slate-800 animate-pulse rounded" />
+            ) : (
+              <div className="flex justify-between items-center text-[10px] sm:text-[11px] gap-1">
+                <span className={`truncate ${(kpiState.data?.overdueUdhari ?? 0) > 0 ? 'text-rose-600 dark:text-rose-400 font-bold' : ''}`}>
+                  OD: {formatInr(kpiState.data?.overdueUdhari ?? 0)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('udhari')}
+                  className="text-amber-600 dark:text-amber-400 font-bold hover:underline shrink-0"
+                >
+                  Ledger →
+                </button>
+              </div>
+            )
           }
         />
       </div>
@@ -387,7 +465,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         onCustomStartChange={setCustomStartDate}
         onCustomEndChange={setCustomEndDate}
         onRefresh={() => loadDashboardData(true)}
-        loading={loading}
+        loading={isLoading}
       />
 
       {/* ========================================================================= */}
@@ -438,7 +516,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <ExecutiveSummaryCards
               data={analyticsData}
               onNavigateTab={setActiveTab}
-              loading={loading}
+              loading={isLoading}
             />
           </div>
         )}
@@ -558,7 +636,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-              {loading ? (
+              {isLoading ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-8 text-center text-slate-400">
                     <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-500" />

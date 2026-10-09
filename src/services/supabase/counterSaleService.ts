@@ -6,7 +6,7 @@ import { fromDbCounterSale } from './types';
 import { salesAnalyticsService } from './salesAnalyticsService';
 import { productService } from './productService';
 import { CounterSale } from '../../types';
-import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from './safeStorage';
 
 const LOCAL_SALES_KEY = 'vistaar_local_counter_sales_db';
 

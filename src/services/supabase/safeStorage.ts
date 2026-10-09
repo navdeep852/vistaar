@@ -146,7 +146,7 @@ export function safeSaveTenantStorage<T = any>(key: string, items: T[], branchId
   }
 }
 
-export function safeGetTenantItem<T>(key: string, fallback: T, branchId?: string): T {
+export function safeGetTenantItem<T = any>(key: string, fallback: T = null as unknown as T, branchId?: string): T {
   const tenantKey = buildTenantCacheKey(key, branchId);
   const legacyKey = `${key}_${getActiveCompanyId()}`;
 
