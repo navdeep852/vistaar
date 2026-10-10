@@ -18,6 +18,7 @@ import { lazyWithRetry } from './lib/lazyWithRetry';
 
 // Code-split secondary views with auto-recovery against deployment chunk skew
 const AnalyticsView = lazyWithRetry(() => import('./views/AnalyticsView').then((m) => ({ default: m.AnalyticsView })), 'Analytics');
+const AllBranchesAnalysisView = lazyWithRetry(() => import('./views/AllBranchesAnalysisView').then((m) => ({ default: m.AllBranchesAnalysisView })), 'All Branches Analysis');
 const QuotationsView = lazyWithRetry(() => import('./views/QuotationsView').then((m) => ({ default: m.QuotationsView })), 'Quotations');
 const InvoicesView = lazyWithRetry(() => import('./views/InvoicesView').then((m) => ({ default: m.InvoicesView })), 'Invoices');
 const CustomersView = lazyWithRetry(() => import('./views/CustomersView').then((m) => ({ default: m.CustomersView })), 'Customers');
@@ -228,8 +229,8 @@ function MainAppContent() {
   const handleSafeSetActiveTab = (tab: string) => {
     setModalToOpen(null);
 
-    // Route guard for Analytics
-    if (tab === 'analytics' && !hasCurrentUserPermission('analytics.view')) {
+    // Route guard for Analytics & All Branches Analysis
+    if ((tab === 'analytics' || tab === 'all-branches-analysis') && !hasCurrentUserPermission('analytics.view')) {
       showToast('Access Denied: Analytics is restricted to Workspace Owners.', 'error');
       auditLogService.logSecurityEvent(
         'UNAUTHORIZED_ANALYTICS_ATTEMPT',
@@ -287,6 +288,11 @@ function MainAppContent() {
           return <DashboardView setActiveTab={handleSafeSetActiveTab} openModal={handleOpenQuickModal} />;
         }
         return <AnalyticsView onNavigateTab={handleSafeSetActiveTab} />;
+      case 'all-branches-analysis':
+        if (!hasCurrentUserPermission('analytics.view')) {
+          return <DashboardView setActiveTab={handleSafeSetActiveTab} openModal={handleOpenQuickModal} />;
+        }
+        return <AllBranchesAnalysisView onNavigateTab={handleSafeSetActiveTab} />;
       case 'quotations':
         return (
           <QuotationsView

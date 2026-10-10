@@ -1539,6 +1539,73 @@ export class BranchService {
 
     return 0;
   }
+
+  /**
+   * Retrieves all branches belonging to an organization.
+   * Leverages both public.workspaces (as branch tenants) and public.branches.
+   */
+  public async getOrganizationBranches(organizationId?: string): Promise<{ data: Branch[]; error?: string }> {
+    let orgId = organizationId;
+    if (!orgId || !isValidUuid(orgId)) {
+      try {
+        if (isSupabaseConfigured()) {
+          const { data: rpcOrgId } = await supabase.rpc('current_user_organization_id');
+          if (rpcOrgId && isValidUuid(rpcOrgId)) orgId = rpcOrgId;
+        }
+      } catch {}
+    }
+
+    if (isSupabaseConfigured() && orgId && isValidUuid(orgId)) {
+      try {
+        // Query workspaces belonging to this organization
+        const { data: wsRows, error: wsErr } = await supabase
+          .from('workspaces')
+          .select('id, organization_id, company_name, branch_name, branch_code, is_main_branch, is_active, branch_password_hash, created_at, updated_at')
+          .eq('organization_id', orgId)
+          .eq('is_active', true)
+          .order('is_main_branch', { ascending: false })
+          .order('branch_name', { ascending: true });
+
+        if (!wsErr && wsRows && wsRows.length > 0) {
+          const mapped: Branch[] = wsRows.map((w: any) => ({
+            id: w.id,
+            workspaceId: w.id,
+            organizationId: w.organization_id,
+            branchCode: w.branch_code || (w.is_main_branch ? 'MAIN' : 'BR'),
+            branchName: w.branch_name || w.company_name || 'Branch',
+            branchType: 'Store',
+            status: w.is_active ? 'Active' : 'Inactive',
+            isMainBranch: Boolean(w.is_main_branch),
+            hasPassword: Boolean(w.branch_password_hash),
+            createdAt: w.created_at,
+            updatedAt: w.updated_at,
+          }));
+          return { data: mapped };
+        }
+      } catch (e) {
+        console.warn('Failed to query organization workspaces:', e);
+      }
+    }
+
+    return this.getBranches({ activeOnly: true });
+  }
+
+  /**
+   * Retrieves branches accessible by the current or target user.
+   */
+  public async getAccessibleBranches(userId?: string): Promise<{ data: Branch[]; error?: string }> {
+    return this.getUserAuthorizedBranches(userId);
+  }
+
+  /**
+   * Returns the current active branch object synchronously or from tenant storage.
+   */
+  public getActiveBranch(): Branch | null {
+    const activeId = this.getActiveBranchId();
+    if (!activeId) return null;
+    const branches = safeGetTenantStorage<Branch>(LOCAL_BRANCHES_KEY, []);
+    return branches.find((b) => b.id === activeId) || null;
+  }
 }
 
 export const branchService = new BranchService();

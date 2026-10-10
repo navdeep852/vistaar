@@ -17,9 +17,98 @@ export interface CompanyWorkspace {
 export type BranchType = 'Store' | 'Office' | 'Warehouse' | 'Factory' | 'Other';
 export type BranchStatus = 'Active' | 'Inactive';
 
+export interface Organization {
+  id: string;
+  name: string;
+  ownerUserId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceMembership {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  role: string;
+  status: string;
+  createdAt: string;
+}
+
+export interface BranchDashboardMetrics {
+  workspaceId: string;
+  branchName: string;
+  branchCode: string;
+  startDate: string;
+  endDate: string;
+  totalSales: number;
+  invoiceSales: number;
+  counterSales: number;
+  collections: number;
+  cashCollections: number;
+  upiCollections: number;
+  grossProfit: number;
+  profitMarginPercent: number;
+  outstandingUdhari: number;
+  overdueUdhari: number;
+  totalTransactions: number;
+  invoiceTransactions: number;
+  counterSaleTransactions: number;
+  totalDiscounts: number;
+}
+
+export interface BranchPerformance {
+  workspace_id: string;
+  branch_name: string;
+  branch_code: string;
+  is_main_branch?: boolean;
+  sales: number;
+  invoice_sales: number;
+  pos_sales: number;
+  collections: number;
+  gross_profit: number;
+  outstanding_udhari: number;
+  transactions: number;
+  invoice_count: number;
+  counter_sale_count: number;
+}
+
+export interface SalesTrendPoint {
+  date: string;
+  label: string;
+  sales: number;
+  invoice_sales: number;
+  counter_sales: number;
+  transactions: number;
+}
+
+export interface OrganizationAnalytics {
+  organization_id: string;
+  organization_name: string;
+  start_date: string;
+  end_date: string;
+  total_sales: number;
+  invoice_sales: number;
+  counter_sales: number;
+  collections: number;
+  cash_collections: number;
+  upi_collections: number;
+  gross_profit: number;
+  outstanding_udhari: number;
+  total_transactions: number;
+  total_discounts: number;
+  total_invoices: number;
+  total_counter_sales: number;
+  branch_performance: BranchPerformance[];
+  sales_trend: SalesTrendPoint[];
+  sales_by_branch: Array<{ branch_name: string; branch_code: string; amount: number }>;
+  collections_by_branch: Array<{ branch_name: string; branch_code: string; amount: number }>;
+  outstanding_by_branch: Array<{ branch_name: string; branch_code: string; amount: number }>;
+}
+
 export interface Branch {
   id: string;
   workspaceId: string;
+  organizationId?: string;
   branchCode: string;
   branchName: string;
   branchType: BranchType;

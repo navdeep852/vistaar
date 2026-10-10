@@ -612,6 +612,10 @@ export class CounterSaleService {
           const { enterpriseAnalyticsService } = await import('./enterpriseAnalyticsService');
           enterpriseAnalyticsService.invalidateCache();
         } catch {}
+        try {
+          const { analyticsService } = await import('./analyticsService');
+          analyticsService.invalidateCache();
+        } catch {}
         store.notify();
         if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
 
@@ -798,6 +802,10 @@ export class CounterSaleService {
               try {
                 const { enterpriseAnalyticsService } = await import('./enterpriseAnalyticsService');
                 enterpriseAnalyticsService.invalidateCache();
+              } catch {}
+              try {
+                const { analyticsService } = await import('./analyticsService');
+                analyticsService.invalidateCache();
               } catch {}
               store.notify();
               if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
@@ -1000,6 +1008,10 @@ export class CounterSaleService {
       try {
         const { enterpriseAnalyticsService } = await import('./enterpriseAnalyticsService');
         enterpriseAnalyticsService.invalidateCache();
+      } catch {}
+      try {
+        const { analyticsService } = await import('./analyticsService');
+        analyticsService.invalidateCache();
       } catch {}
       store.notify();
       if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));

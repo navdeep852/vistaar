@@ -22,6 +22,7 @@ import {
   Wallet,
   ShoppingCart,
   Banknote,
+  Globe2,
 } from 'lucide-react';
 
 
@@ -116,6 +117,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       title: 'FINANCE & HR',
       items: [
         { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+        { id: 'all-branches-analysis', label: 'All Branches Analysis', icon: Globe2 },
         { id: 'profit-loss', label: 'Financial Statements', icon: PieChart },
         { id: 'salary-payroll', label: 'Salary & Payroll', icon: Banknote },
         { id: 'expenses', label: 'Expenses', icon: TrendingDown },
@@ -139,7 +141,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => {
-        if (item.id === 'analytics') return hasCurrentUserPermission('analytics.view');
+        if (item.id === 'analytics' || item.id === 'all-branches-analysis') return hasCurrentUserPermission('analytics.view');
         if (item.id === 'profit-loss' || item.id === 'financial-statements') {
           return hasCurrentUserPermission('financial_statements.view');
         }

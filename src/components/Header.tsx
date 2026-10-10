@@ -111,6 +111,7 @@ export const Header: React.FC<HeaderProps> = ({
   const tabTitles: Record<string, { title: string; desc: string }> = {
     dashboard: { title: 'Dashboard', desc: 'Business summary & live metrics' },
     analytics: { title: 'Analytics', desc: 'Business performance & insights' },
+    'all-branches-analysis': { title: 'All Branches Analysis', desc: 'Organization-wide consolidated multi-branch business intelligence' },
     'follow-ups': { title: 'Follow-ups', desc: 'Manage customer task reminders' },
     quotations: { title: 'Quotations', desc: 'Create, edit and track estimates' },
     invoices: { title: 'Invoices', desc: 'Billing, tax invoices & payments' },

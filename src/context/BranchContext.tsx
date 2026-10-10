@@ -6,6 +6,8 @@ import { safeGetTenantItem, safeSaveTenantItem } from '../services/supabase/safe
 import { productService } from '../services/supabase/productService';
 import { salesAnalyticsService } from '../services/supabase/salesAnalyticsService';
 import { auditLogService } from '../services/supabase/auditLogService';
+import { isValidUuid } from '../lib/supabaseError';
+import { store } from '../services/store';
 
 export interface BranchContextType {
   workspaceId: string;
@@ -75,7 +77,7 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     try {
       setIsLoadingBranches(true);
       const [fullListRes, authorizedRes] = await Promise.all([
-        branchService.getBranches({ activeOnly: true }),
+        branchService.getOrganizationBranches(),
         branchService.getUserAuthorizedBranches(currentUser?.id),
       ]);
 
@@ -247,24 +249,37 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setIsAllExplicitlySelected(false);
       safeSaveTenantItem('active_branch_id', selected.id);
 
+      // 1. Authoritative Workspace Switch (PART 2, 5): Switch active workspace to selected branch tenant
+      const targetWorkspaceId = selected.workspaceId || selected.id;
+      if (targetWorkspaceId && isValidUuid(targetWorkspaceId)) {
+        supabaseAuthService.setAuthoritativeWorkspaceId(targetWorkspaceId);
+      }
+
       await auditLogService.logSecurityEvent({
         action: 'BRANCH_ACCESS_GRANTED',
         result: 'ALLOWED',
-        details: { fromBranch: oldBranchId || 'ALL', toBranch: selected.id, branchCode: selected.branchCode },
+        details: { fromBranch: oldBranchId || 'ALL', toBranch: selected.id, branchCode: selected.branchCode, workspaceId: targetWorkspaceId },
       });
 
-      // Invalidate caches immediately
+      // 2. Invalidate all branch-scoped caches immediately
       productService.invalidateCache();
       salesAnalyticsService.invalidateCache();
+      try {
+        const { analyticsService } = await import('../services/supabase/analyticsService');
+        analyticsService.invalidateCache();
+      } catch {}
       try {
         const { enterpriseAnalyticsService } = await import('../services/supabase/enterpriseAnalyticsService');
         enterpriseAnalyticsService.invalidateCache();
       } catch {}
 
-      // Notify all views and components
+      // 3. Clear previous branch in-memory tenant state
+      store.reloadTenantState();
+
+      // 4. Notify all views and components
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
-          new CustomEvent('vistaar:branch_changed', { detail: { branchId: selected.id, branch: selected } })
+          new CustomEvent('vistaar:branch_changed', { detail: { branchId: selected.id, branch: selected, workspaceId: targetWorkspaceId } })
         );
         window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
       }
@@ -278,7 +293,11 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const contextValue = useMemo<BranchContextType>(
     () => ({
-      workspaceId: supabaseAuthService.getAuthoritativeWorkspaceIdSync() || currentUser?.companyId || 'default',
+      workspaceId:
+        (currentBranch && (currentBranch.workspaceId || currentBranch.id)) ||
+        supabaseAuthService.getAuthoritativeWorkspaceIdSync() ||
+        currentUser?.companyId ||
+        'default',
       branchId: currentBranch?.id,
       branchName: currentBranch ? currentBranch.branchName : 'All Branches',
       branchCode: currentBranch ? currentBranch.branchCode : 'ALL',

@@ -11,6 +11,8 @@ import {
   AlertCircle,
   CreditCard,
   TrendingUp,
+  Building2,
+  Globe2,
 } from 'lucide-react';
 import { store } from '../services/store';
 import { Invoice, FollowUp } from '../types';
@@ -347,6 +349,43 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   return (
     <div className="space-y-6 animate-fade-in pb-16">
+      {/* ========================================================================= */}
+      {/* 0. BRANCH SCOPE BANNER (PART 36)                                          */}
+      {/* ========================================================================= */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900/50">
+            <Building2 className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="text-[10px] font-bold tracking-wider uppercase text-slate-400 dark:text-slate-500">
+              CURRENT BRANCH
+            </div>
+            <div className="text-base sm:text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+              <span>{isAllBranchesSelected ? 'All Branches (Consolidated)' : (currentBranch?.branchName || 'Main Branch')}</span>
+              {!isAllBranchesSelected && currentBranch?.isMainBranch && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                  Main Branch
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {hasCurrentUserPermission('analytics.view') && (
+            <button
+              onClick={() => setActiveTab('all-branches-analysis')}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 border border-slate-200 dark:border-slate-700 transition-colors flex items-center gap-2"
+              title="View Consolidated All Branches Analysis"
+            >
+              <Globe2 className="w-4 h-4 text-blue-500" />
+              <span>All Branches Analysis →</span>
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Error Alert with Retry */}
       {kpiState.status === 'error' && kpiState.error && (
         <div className="p-4 rounded-2xl border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 flex items-center justify-between gap-3 text-rose-800 dark:text-rose-300">

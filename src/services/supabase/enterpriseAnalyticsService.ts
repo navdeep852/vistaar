@@ -406,10 +406,10 @@ export class EnterpriseAnalyticsService {
           .lte('expense_date', dateRange.endDateStr);
 
         if (effectiveBranchId && effectiveBranchId !== 'ALL' && isValidUuid(effectiveBranchId)) {
-          invQ = invQ.eq('branch_id', effectiveBranchId);
-          csQ = csQ.eq('branch_id', effectiveBranchId);
-          payQ = payQ.eq('branch_id', effectiveBranchId);
-          expQ = expQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null`);
+          invQ = invQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
+          csQ = csQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
+          payQ = payQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
+          expQ = expQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
         }
 
         let [invRes, csRes, payRes, prodRes, expRes] = await Promise.all([

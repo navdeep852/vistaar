@@ -92,7 +92,7 @@ export class SalesAnalyticsService {
           .lte('sale_date', range.endDateStr);
 
         if (effectiveBranchId && effectiveBranchId !== 'ALL' && isValidUuid(effectiveBranchId)) {
-          csQ = csQ.eq('branch_id', effectiveBranchId);
+          csQ = csQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
         }
 
         let { data: csData, error: csErr } = await csQ;
@@ -110,7 +110,7 @@ export class SalesAnalyticsService {
             csData = retryRes.data.filter((cs: any) => {
               const b = cs.branch_id || cs.branchId;
               if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-                return b ? b === effectiveBranchId : isMainBranch;
+                return b ? (b === effectiveBranchId || b === wsId) : isMainBranch;
               }
               return true;
             });
@@ -132,7 +132,7 @@ export class SalesAnalyticsService {
           .lte('date', range.endDateStr);
 
         if (effectiveBranchId && effectiveBranchId !== 'ALL' && isValidUuid(effectiveBranchId)) {
-          invQ = invQ.eq('branch_id', effectiveBranchId);
+          invQ = invQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
         }
 
         let { data: invData, error: invErr } = await invQ;

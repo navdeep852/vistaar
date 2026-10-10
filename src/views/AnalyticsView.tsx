@@ -35,16 +35,21 @@ import {
   ExpenseAnalysisChart,
 } from '../components/analytics/AnalyticsCharts';
 
+import { AllBranchesAnalysisView } from './AllBranchesAnalysisView';
+import { Building2, Globe2 } from 'lucide-react';
+
 interface AnalyticsViewProps {
   onNavigateTab: (tab: string, extraParam?: string) => void;
+  initialMode?: 'branch' | 'all-branches';
 }
 
 const STORAGE_KEY_ANALYTICS_PRESET = 'vistaar_analytics_filter_preset';
 const STORAGE_KEY_ANALYTICS_START = 'vistaar_analytics_filter_start';
 const STORAGE_KEY_ANALYTICS_END = 'vistaar_analytics_filter_end';
 
-export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateTab }) => {
+export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateTab, initialMode = 'branch' }) => {
   const { currentBranch } = useBranch();
+  const [analyticsMode, setAnalyticsMode] = useState<'branch' | 'all-branches'>(initialMode);
 
   // Global Analytics Date Filter State (reusing centralized Date resolution)
   const [rangePreset, setRangePreset] = useState<DatePresetType>(() => {
@@ -124,8 +129,56 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateTab }) =
     });
   }, [loadAnalytics]);
 
+  if (analyticsMode === 'all-branches') {
+    return (
+      <div className="space-y-6 sm:space-y-7 animate-fade-in pb-16">
+        {/* Navigation tabs between Current Branch and All Branches (PART 12) */}
+        <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs max-w-fit">
+          <button
+            type="button"
+            onClick={() => setAnalyticsMode('branch')}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+          >
+            <Building2 className="w-4 h-4 text-slate-400" />
+            <span>Branch Analysis ({currentBranch?.branchName || 'Active Branch'})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setAnalyticsMode('all-branches')}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white shadow-xs transition-colors cursor-pointer"
+          >
+            <Globe2 className="w-4 h-4" />
+            <span>All Branches Analysis</span>
+          </button>
+        </div>
+
+        <AllBranchesAnalysisView onNavigateTab={onNavigateTab} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 sm:space-y-7 animate-fade-in pb-16">
+      {/* Navigation tabs between Current Branch and All Branches (PART 12) */}
+      <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs max-w-fit">
+        <button
+          type="button"
+          onClick={() => setAnalyticsMode('branch')}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white shadow-xs transition-colors cursor-pointer"
+        >
+          <Building2 className="w-4 h-4" />
+          <span>Branch Analysis ({currentBranch?.branchName || 'Active Branch'})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setAnalyticsMode('all-branches')}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+        >
+          <Globe2 className="w-4 h-4 text-indigo-500" />
+          <span>All Branches Analysis</span>
+        </button>
+      </div>
+
       {/* ========================================================================= */}
       {/* 1. ANALYTICS HEADER & NAVIGATION TOOLBAR                                  */}
       {/* ========================================================================= */}

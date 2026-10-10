@@ -26,3 +26,4 @@ export * from './salesAnalyticsService';
 export * from './customerPaymentService';
 export * from './enterpriseAnalyticsService';
 export * from './branchService';
+export * from './analyticsService';
