@@ -1200,6 +1200,8 @@ export class SupabaseAuthService {
           businessName: profile.workspaces?.company_name || 'VISTAAR Business Solutions',
           mustChangePassword: profile.must_change_password || false,
           avatarUrl: profile.avatar_url || '',
+          branchId: profile.default_branch_id || undefined,
+          defaultBranchId: profile.default_branch_id || undefined,
         };
         this.saveSessionToStorage(this.currentProfile);
       }
@@ -2083,6 +2085,8 @@ export class SupabaseAuthService {
           archivedAt: p.archived_at || undefined,
           avatarUrl: p.avatar_url || '',
           passwordHash: '',
+          branchId: p.default_branch_id || undefined,
+          defaultBranchId: p.default_branch_id || undefined,
           createdAt: p.created_at || new Date().toISOString(),
           updatedAt: p.updated_at || new Date().toISOString(),
         }));
@@ -2438,9 +2442,27 @@ export class SupabaseAuthService {
           isArchived: false,
           avatarUrl: '',
           passwordHash: '',
+          branchId: empData.branchId || empData.defaultBranchId || undefined,
+          defaultBranchId: empData.branchId || empData.defaultBranchId || undefined,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
+
+        const assignedBranchId = empData.branchId || empData.defaultBranchId || null;
+        if (assignedBranchId && isSupabaseConfigured() && isValidUuid(issuedUserId) && isValidUuid(assignedBranchId)) {
+          try {
+            await supabase.from('profiles').update({ default_branch_id: assignedBranchId }).eq('id', issuedUserId);
+            await supabase.from('user_branch_access').upsert({
+              user_id: issuedUserId,
+              branch_id: assignedBranchId,
+              workspace_id: workspaceId,
+              is_default: true,
+              can_switch: false,
+            }, { onConflict: 'user_id,branch_id' });
+          } catch (branchAssignErr) {
+            console.warn('[CreateEmployee] Branch assignment notice:', branchAssignErr);
+          }
+        }
 
         this.employees.push(newEmpObj);
         safeStorageSet(`vistaar_local_employees_db_${workspaceId}`, JSON.stringify(this.employees));
@@ -2516,9 +2538,20 @@ export class SupabaseAuthService {
           designation: (empData.designation || '').trim() || null,
           role: assignedRole,
           status: assignedStatus,
+          default_branch_id: empData.branchId || empData.defaultBranchId || null,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }, { onConflict: 'id' });
+        const fallbackBranchId = empData.branchId || empData.defaultBranchId || null;
+        if (fallbackBranchId && isValidUuid(fallbackBranchId)) {
+          await supabase.from('user_branch_access').upsert({
+            user_id: fallbackId,
+            branch_id: fallbackBranchId,
+            workspace_id: workspaceId,
+            is_default: true,
+            can_switch: false,
+          }, { onConflict: 'user_id,branch_id' });
+        }
       } catch (dbEx: any) {
         console.warn('[CreateEmployee] Payroll profile write notice:', dbEx?.message || dbEx);
       }
@@ -2544,6 +2577,8 @@ export class SupabaseAuthService {
       isArchived: false,
       avatarUrl: '',
       passwordHash: '',
+      branchId: empData.branchId || empData.defaultBranchId || undefined,
+      defaultBranchId: empData.branchId || empData.defaultBranchId || undefined,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };

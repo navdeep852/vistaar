@@ -14,6 +14,8 @@ const LOCAL_PRODUCTS_KEY = 'vistaar_local_products_db';
 const LOCAL_RECEIPTS_KEY = 'vistaar_local_stock_receipts_db';
 const LOCAL_MOVEMENTS_KEY = 'vistaar_local_stock_movements_db';
 
+const LOCAL_BRANCH_PASSWORDS_KEY = 'vistaar_local_branch_passwords_db';
+
 export function generateUuid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -23,6 +25,42 @@ export function generateUuid(): string {
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
+}
+
+/**
+ * Hashes a branch access password using a cryptographic salt and SHA-256 via Web Crypto API.
+ * Never stores or returns plaintext passwords.
+ * Format: "v1:${salt}:${hexHash}"
+ */
+export async function hashBranchPassword(password: string, customSalt?: string): Promise<string> {
+  const clean = password.trim();
+  const salt = customSalt || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Math.random().toString(36).substring(2, 18));
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(`${salt}:${clean}:vistaar_branch_security_v1`);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+    return `v1:${salt}:${hashHex}`;
+  }
+  let simpleHash = 0;
+  for (let i = 0; i < clean.length; i++) {
+    simpleHash = ((simpleHash << 5) - simpleHash) + clean.charCodeAt(i);
+    simpleHash |= 0;
+  }
+  return `v1:${salt}:${Math.abs(simpleHash).toString(16)}`;
+}
+
+/**
+ * Verifies a branch access password against the stored cryptographic hash.
+ */
+export async function verifyBranchPasswordHash(password: string, storedHash: string): Promise<boolean> {
+  if (!storedHash || !password) return false;
+  const parts = storedHash.split(':');
+  if (parts.length !== 3 || parts[0] !== 'v1') return false;
+  const salt = parts[1];
+  const expectedHash = await hashBranchPassword(password, salt);
+  return storedHash === expectedHash;
 }
 
 export class BranchService {
@@ -125,6 +163,7 @@ export class BranchService {
 
         const { data, error } = await query;
         if (!error && data && data.length > 0) {
+          const passMap = safeGetTenantItem<Record<string, string>>(LOCAL_BRANCH_PASSWORDS_KEY, {});
           const mapped: Branch[] = data.map((b: any) => ({
             id: b.id,
             workspaceId: b.workspace_id,
@@ -142,6 +181,7 @@ export class BranchService {
             stateCode: b.state_code,
             status: b.status || 'Active',
             isMainBranch: Boolean(b.is_main_branch),
+            hasPassword: Boolean(b.branch_password_hash || passMap[b.id]),
             createdAt: b.created_at,
             updatedAt: b.updated_at,
           }));
@@ -159,9 +199,14 @@ export class BranchService {
     // Local tenant storage fallback
     const local = safeGetTenantStorage<Branch>(LOCAL_BRANCHES_KEY, []);
     const guaranteed = this.getOrCreateDefaultMainBranch(local, wsId);
-    const mbFallback = guaranteed.find((b) => b.isMainBranch) || guaranteed[0];
+    const passMap = safeGetTenantItem<Record<string, string>>(LOCAL_BRANCH_PASSWORDS_KEY, {});
+    const mappedWithPass = guaranteed.map((b) => ({
+      ...b,
+      hasPassword: Boolean(passMap[b.id] || b.hasPassword),
+    }));
+    const mbFallback = mappedWithPass.find((b) => b.isMainBranch) || mappedWithPass[0];
     if (mbFallback) safeSaveTenantItem('main_branch_id', mbFallback.id);
-    const filtered = options?.activeOnly !== false ? guaranteed.filter((b) => b.status === 'Active') : guaranteed;
+    const filtered = options?.activeOnly !== false ? mappedWithPass.filter((b) => b.status === 'Active') : mappedWithPass;
     return { data: filtered };
   }
 
@@ -178,8 +223,8 @@ export class BranchService {
 
   /**
    * Get authorized branches for a given user or current logged-in user.
-   * - OWNER / ADMIN: authorized for all workspace branches.
-   * - STAFF / EMPLOYEE: authorized ONLY for explicitly assigned branches (via user_branch_access or profile).
+   * - OWNER: authorized for all workspace branches (accesses individual branches via branch password).
+   * - STAFF / EMPLOYEE: strictly authorized ONLY for their SINGLE assigned operating branch.
    */
   public async getUserAuthorizedBranches(targetUserId?: string): Promise<{ data: Branch[]; error?: string }> {
     const { data: allBranches = [], error } = await this.getBranches({ activeOnly: true });
@@ -188,19 +233,18 @@ export class BranchService {
     const currentUser = supabaseAuthService.getUser();
     const userId = targetUserId || currentUser?.id;
 
-    // Check if target user has explicit branch access records
-    if (userId) {
-      const { data: accesses = [] } = await this.getUserBranchAccessList(userId);
-      if (accesses.length > 0) {
-        const assignedIds = new Set(accesses.map((a) => a.branchId));
-        const authorized = allBranches.filter((b) => assignedIds.has(b.id));
-        return { data: authorized };
+    // Role check from currentUser or session storage or employee list
+    let role = (currentUser?.role || '').toLowerCase();
+    let defaultBranchId = (currentUser as any)?.defaultBranchId || (currentUser as any)?.branchId;
+
+    if (targetUserId && targetUserId !== currentUser?.id) {
+      const allEmps = supabaseAuthService.getEmployees();
+      const emp = allEmps.find((e) => e.id === targetUserId);
+      if (emp) {
+        role = (emp.role || '').toLowerCase();
+        defaultBranchId = emp.defaultBranchId || emp.branchId;
       }
     }
-
-    // Role check from currentUser or session storage
-    let role = (currentUser?.role || '').toLowerCase();
-    let defaultBranchId = (currentUser as any)?.defaultBranchId;
 
     if (typeof localStorage !== 'undefined') {
       try {
@@ -210,28 +254,37 @@ export class BranchService {
           if (parsed && (!targetUserId || parsed.id === targetUserId)) {
             if (parsed.role) role = parsed.role.toLowerCase();
             if (parsed.defaultBranchId) defaultBranchId = parsed.defaultBranchId;
+            if (parsed.branchId && !defaultBranchId) defaultBranchId = parsed.branchId;
           }
         }
       } catch {}
     }
 
-    const isOwnerOrAdmin = role === 'owner' || role === 'admin' || role === 'super_admin';
+    const isOwner = role === 'owner';
 
-    if (isOwnerOrAdmin) {
+    // Business Owner sees all branches for multi-location switching & administration
+    if (isOwner) {
       return { data: allBranches };
     }
 
-    // Branch staff / manager: strictly query assigned branches
+    // CRITICAL: Employee / Staff Member is permanently restricted to their SINGLE assigned branch
     if (defaultBranchId) {
-      const authorized = allBranches.filter((b) => b.id === defaultBranchId);
-      return { data: authorized };
+      const match = allBranches.find((b) => b.id === defaultBranchId);
+      if (match) return { data: [match] };
     }
 
-    if (!userId) {
-      return { data: allBranches.filter((b) => b.isMainBranch) };
+    if (userId) {
+      const { data: accesses = [] } = await this.getUserBranchAccessList(userId);
+      if (accesses.length > 0) {
+        const assignedId = accesses[0].branchId;
+        const match = allBranches.find((b) => b.id === assignedId);
+        if (match) return { data: [match] };
+      }
     }
 
-    return { data: [] };
+    // Default fallback: single main branch
+    const fallback = allBranches.find((b) => b.isMainBranch) || allBranches[0];
+    return { data: fallback ? [fallback] : [] };
   }
 
   public async getBranchById(id: string): Promise<{ data?: Branch; error?: string }> {
@@ -244,7 +297,7 @@ export class BranchService {
   /**
    * Create a new business location / branch (Owner / Admin only)
    */
-  public async createBranch(branch: Partial<Branch>): Promise<{ success: boolean; data?: Branch; error?: string }> {
+  public async createBranch(branch: Partial<Branch>, branchPassword?: string): Promise<{ success: boolean; data?: Branch; error?: string }> {
     const wsId = await this.getWorkspaceId();
     if (!branch.branchCode || !branch.branchName) {
       return { success: false, error: 'Branch code and branch name are required.' };
@@ -261,6 +314,10 @@ export class BranchService {
     }
 
     const branchId = branch.id && isValidUuid(branch.id) ? branch.id : generateUuid();
+    let passwordHash: string | null = null;
+    if (branchPassword && branchPassword.trim()) {
+      passwordHash = await hashBranchPassword(branchPassword.trim());
+    }
 
     const newBranch: Branch = {
       id: branchId,
@@ -279,6 +336,7 @@ export class BranchService {
       stateCode: branch.stateCode || null,
       status: 'Active',
       isMainBranch: Boolean(branch.isMainBranch) || existingList.length === 0,
+      hasPassword: Boolean(passwordHash),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -297,7 +355,7 @@ export class BranchService {
           await supabase.from('branches').update({ is_main_branch: false }).eq('workspace_id', wsId);
         }
 
-        const payload = {
+        const payload: any = {
           id: newBranch.id,
           workspace_id: wsId,
           branch_code: cleanCode,
@@ -315,6 +373,9 @@ export class BranchService {
           status: 'Active',
           is_main_branch: newBranch.isMainBranch,
         };
+        if (passwordHash) {
+          payload.branch_password_hash = passwordHash;
+        }
 
         const { data: sbData, error: sbError } = await supabase.from('branches').insert([payload]).select().single();
         if (!sbError && sbData) {
@@ -334,6 +395,13 @@ export class BranchService {
       } catch (err) {
         console.warn('[createBranch] Supabase exception note:', err);
       }
+    }
+
+    // Save branch password in isolated storage if configured
+    if (passwordHash) {
+      const passMap = safeGetTenantItem<Record<string, string>>(LOCAL_BRANCH_PASSWORDS_KEY, {});
+      passMap[newBranch.id] = passwordHash;
+      safeSaveTenantItem(LOCAL_BRANCH_PASSWORDS_KEY, passMap);
     }
 
     // ALWAYS persist to local storage
@@ -381,6 +449,213 @@ export class BranchService {
     }
 
     return { success: true, data: newBranch };
+  }
+
+  /**
+   * Verifies a branch access password.
+   * STRICT ACCESS RULES:
+   * - Employees/staff are rejected immediately (cannot switch branches).
+   * - Verified against server-side bcrypt hash via RPC or cryptographic SHA-256 fallback.
+   * - Never exposes password or hash.
+   */
+  public async verifyBranchPassword(
+    branchId: string,
+    password: string
+  ): Promise<{ success: boolean; authorized: boolean; requiresSetup?: boolean; error?: string }> {
+    if (!password || !password.trim()) {
+      return { success: false, authorized: false, error: 'Please enter the branch access password.' };
+    }
+
+    const cleanPass = password.trim();
+    const currentUser = supabaseAuthService.getUser();
+    const role = (currentUser?.role || '').toLowerCase();
+    const isOwner = role === 'owner';
+
+    // CRITICAL SECURITY RULE: Employees CANNOT switch branches, even if they know the branch password!
+    if (!isOwner) {
+      return {
+        success: false,
+        authorized: false,
+        error: 'Permission denied: Employees cannot switch branches. You are restricted to your assigned operating location.',
+      };
+    }
+
+    const wsId = await this.getWorkspaceId();
+
+    // 1. Try Supabase RPC if configured
+    if (isSupabaseConfigured() && isValidUuid(wsId) && isValidUuid(branchId)) {
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('verify_branch_password', {
+          p_branch_id: branchId,
+          p_password: cleanPass,
+        });
+
+        if (!rpcErr && rpcRes) {
+          if (rpcRes.authorized) {
+            return { success: true, authorized: true };
+          }
+          if (rpcRes.requires_setup) {
+            return { success: false, authorized: false, requiresSetup: true, error: rpcRes.error };
+          }
+          return { success: false, authorized: false, error: rpcRes.error || 'Incorrect branch access password.' };
+        }
+      } catch (err) {
+        // Fall through to local verification
+      }
+    }
+
+    // 2. Local cryptographic verification fallback
+    const passMap = safeGetTenantItem<Record<string, string>>(LOCAL_BRANCH_PASSWORDS_KEY, {});
+    const storedHash = passMap[branchId];
+
+    if (!storedHash) {
+      return {
+        success: false,
+        authorized: false,
+        requiresSetup: true,
+        error: 'Branch access password has not been configured for this branch. Please set a password in Settings or setup now.',
+      };
+    }
+
+    const isValid = await verifyBranchPasswordHash(cleanPass, storedHash);
+    if (isValid) {
+      return { success: true, authorized: true };
+    }
+
+    return { success: false, authorized: false, error: 'Incorrect branch access password.' };
+  }
+
+  /**
+   * Sets or changes a branch access password (OWNER only).
+   */
+  public async setBranchPassword(
+    branchId: string,
+    newPassword: string
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!newPassword || newPassword.trim().length < 4) {
+      return { success: false, error: 'Branch access password must be at least 4 characters long.' };
+    }
+
+    const cleanPass = newPassword.trim();
+    const currentUser = supabaseAuthService.getUser();
+    const role = (currentUser?.role || '').toLowerCase();
+    const isOwner = role === 'owner';
+
+    if (!isOwner) {
+      return {
+        success: false,
+        error: 'Permission denied: Only the Business Owner can configure branch access passwords.',
+      };
+    }
+
+    const wsId = await this.getWorkspaceId();
+
+    // 1. Try Supabase RPC if configured
+    if (isSupabaseConfigured() && isValidUuid(wsId) && isValidUuid(branchId)) {
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('set_branch_password', {
+          p_branch_id: branchId,
+          p_new_password: cleanPass,
+        });
+
+        if (rpcErr || (rpcRes && !rpcRes.success)) {
+          console.warn('[setBranchPassword] Server note:', rpcErr?.message || rpcRes?.error);
+        }
+      } catch (err) {
+        // Fall through to local
+      }
+    }
+
+    // 2. Save cryptographic hash locally
+    const hash = await hashBranchPassword(cleanPass);
+    const passMap = safeGetTenantItem<Record<string, string>>(LOCAL_BRANCH_PASSWORDS_KEY, {});
+    passMap[branchId] = hash;
+    safeSaveTenantItem(LOCAL_BRANCH_PASSWORDS_KEY, passMap);
+
+    // Update hasPassword on cached branches
+    const local = safeGetTenantStorage<Branch>(LOCAL_BRANCHES_KEY, []);
+    const target = local.find((b) => b.id === branchId);
+    if (target) {
+      target.hasPassword = true;
+      safeSaveTenantStorage(LOCAL_BRANCHES_KEY, local);
+    }
+
+    await auditLogService.logSecurityEvent({
+      action: 'BRANCH_PASSWORD_CHANGED',
+      result: 'ALLOWED',
+      details: { branchId },
+    });
+
+    return { success: true };
+  }
+
+  /**
+   * Resets a branch access password (OWNER only).
+   */
+  public async resetBranchPassword(
+    branchId: string,
+    newPassword: string
+  ): Promise<{ success: boolean; error?: string }> {
+    return this.setBranchPassword(branchId, newPassword);
+  }
+
+  /**
+   * Transfers an employee to a new branch (OWNER only).
+   */
+  public async transferEmployeeBranch(
+    userId: string,
+    targetBranchId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const currentUser = supabaseAuthService.getUser();
+    const role = (currentUser?.role || '').toLowerCase();
+    const isOwner = role === 'owner';
+
+    if (!isOwner) {
+      return {
+        success: false,
+        error: 'Permission denied: Only the Business Owner can transfer employees between branches.',
+      };
+    }
+
+    const wsId = await this.getWorkspaceId();
+
+    // 1. Try Supabase RPC if configured
+    if (isSupabaseConfigured() && isValidUuid(wsId) && isValidUuid(userId) && isValidUuid(targetBranchId)) {
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('transfer_employee_branch', {
+          p_employee_id: userId,
+          p_new_branch_id: targetBranchId,
+        });
+
+        if (rpcErr || (rpcRes && !rpcRes.success)) {
+          console.warn('[transferEmployeeBranch] Server note:', rpcErr?.message || rpcRes?.error);
+        }
+      } catch (err) {
+        // Fall through to local
+      }
+    }
+
+    // 2. Update local accesses
+    await this.setUserBranchAccesses(userId, [targetBranchId]);
+
+    // Update profile in local employee cache
+    try {
+      const employees = supabaseAuthService.getEmployees();
+      const emp = employees.find((e) => e.id === userId);
+      if (emp) {
+        emp.branchId = targetBranchId;
+        emp.defaultBranchId = targetBranchId;
+        safeSaveTenantItem(`vistaar_local_employees_db_${wsId}`, employees);
+      }
+    } catch {}
+
+    await auditLogService.logSecurityEvent({
+      action: 'EMPLOYEE_BRANCH_TRANSFERRED',
+      result: 'ALLOWED',
+      details: { userId, targetBranchId },
+    });
+
+    return { success: true };
   }
 
   /**

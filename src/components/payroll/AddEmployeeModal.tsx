@@ -17,7 +17,8 @@ import {
 } from 'lucide-react';
 import { Modal } from '../Modal';
 import { supabaseAuthService } from '../../services/supabaseAuth';
-import { UserAccount, EmployeeStatus, EmploymentType } from '../../types';
+import { UserAccount, EmployeeStatus, EmploymentType, Branch } from '../../types';
+import { branchService } from '../../services/supabase/branchService';
 import { showToast } from '../Toast';
 import { formatInr } from '../../services/payrollExportService';
 import { validateEmployeeId } from '../../lib/employeeIdValidation';
@@ -86,6 +87,8 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
   const [joiningDate, setJoiningDate] = useState<string>(todayStr);
   const [employmentType, setEmploymentType] = useState<EmploymentType>('Full Time');
   const [status, setStatus] = useState<EmployeeStatus>('Active');
+  const [branchId, setBranchId] = useState<string>('');
+  const [availableBranches, setAvailableBranches] = useState<Branch[]>([]);
 
   // Optional Salary Setup
   const [configureSalaryNow, setConfigureSalaryNow] = useState<boolean>(false);
@@ -106,13 +109,22 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
   const [validationError, setValidationError] = useState<string | null>(null);
   const [createdEmpData, setCreatedEmpData] = useState<{ emp: UserAccount; salaryConfigured: boolean } | null>(null);
 
-  // Initialize sequential Employee ID when opening
+  // Initialize sequential Employee ID & load branches when opening
   useEffect(() => {
     if (isOpen && !createdEmpData) {
       setValidationError(null);
       supabaseAuthService.generateNextEmployeeId().then((generatedId) => {
         if (!isCustomId) {
           setEmployeeId(generatedId);
+        }
+      });
+      branchService.getBranches({ activeOnly: true }).then((res) => {
+        if (res.data && res.data.length > 0) {
+          setAvailableBranches(res.data);
+          if (!branchId) {
+            const main = res.data.find((b) => b.isMainBranch) || res.data[0];
+            setBranchId(main.id);
+          }
         }
       });
     }
@@ -258,11 +270,17 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
       };
     }
 
+    if (!branchId) {
+      setValidationError('Operating Branch is mandatory. Please select an authorized branch.');
+      return;
+    }
+
     setSaving(true);
     try {
       const res = await supabaseAuthService.createEmployee({
         name: name.trim(),
         employeeId: customEmpIdPayload,
+        branchId,
         phone: cleanPhone,
         email: cleanEmail,
         department: resolvedDept,
@@ -288,6 +306,8 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
           designation: designation.trim() || 'Staff',
           role: 'employee',
           status,
+          branchId,
+          defaultBranchId: branchId,
           joiningDate,
           employmentType,
           dateOfBirth: dob || undefined,
@@ -646,6 +666,26 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
                   {EMPLOYMENT_TYPES.map((type) => (
                     <option key={type} value={type}>
                       {type}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Operating Branch (MANDATORY) */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-1">
+                  Operating Branch <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={branchId}
+                  onChange={(e) => setBranchId(e.target.value)}
+                  required
+                  className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50/50 dark:bg-blue-950/30 text-blue-900 dark:text-blue-100 outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Select Branch...</option>
+                  {availableBranches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.branchName} ({b.branchCode}) {b.isMainBranch ? '— HQ' : ''}
                     </option>
                   ))}
                 </select>

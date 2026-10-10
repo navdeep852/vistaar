@@ -41,7 +41,8 @@ import { ThemeToggle } from '../components/ThemeToggle';
 import { useTheme } from '../context/ThemeContext';
 import { validatePassword } from '../lib/passwordPolicy';
 import { Modal } from '../components/Modal';
-import { UserAccount, UserRole, EmployeeStatus, BusinessSettings } from '../types';
+import { UserAccount, UserRole, EmployeeStatus, BusinessSettings, Branch } from '../types';
+import { branchService } from '../services/supabase/branchService';
 import { PasswordRequirementsWidget } from './LoginView';
 import { PasswordInput } from '../components/PasswordInput';
 import { UserAvatar } from '../components/UserAvatar';
@@ -369,14 +370,25 @@ export const SettingsView: React.FC = () => {
   const [newEmpDept, setNewEmpDept] = useState('Sales & Billing');
   const [newEmpDesig, setNewEmpDesig] = useState('Billing Associate');
   const [newEmpRole, setNewEmpRole] = useState<UserRole>('employee');
+  const [newEmpBranchId, setNewEmpBranchId] = useState('');
+  const [settingBranches, setSettingBranches] = useState<Branch[]>([]);
 
-  // Load suggested auto Employee ID when opening Add Employee Modal
+  // Load suggested auto Employee ID and branches when opening Add Employee Modal
   useEffect(() => {
     if (addEmpModalOpen) {
       setEmpIdMode('auto');
       setCustomEmpId('');
       setEmpIdValidationError(null);
       auth.generateNextEmployeeId().then(setSuggestedEmpId).catch(() => {});
+      branchService.getBranches({ activeOnly: true }).then((res) => {
+        if (res.data && res.data.length > 0) {
+          setSettingBranches(res.data);
+          if (!newEmpBranchId) {
+            const main = res.data.find((b) => b.isMainBranch) || res.data[0];
+            setNewEmpBranchId(main.id);
+          }
+        }
+      });
     }
   }, [addEmpModalOpen]);
 
@@ -711,6 +723,11 @@ export const SettingsView: React.FC = () => {
       customEmpIdPayload = val.normalized;
     }
 
+    if (!newEmpBranchId) {
+      showToast('Operating branch is required. Please assign a branch.', 'error');
+      return;
+    }
+
     const res = await auth.createEmployee({
       name: newEmpName,
       email: newEmpEmail,
@@ -719,6 +736,7 @@ export const SettingsView: React.FC = () => {
       designation: newEmpDesig,
       role: newEmpRole,
       employeeId: customEmpIdPayload,
+      branchId: newEmpBranchId,
     });
 
     if (res.success && res.empId && res.tempPass) {
@@ -2645,6 +2663,25 @@ export const SettingsView: React.FC = () => {
                 <option value="admin">Admin</option>
                 <option value="manager">Manager</option>
                 <option value="employee">Employee / Staff</option>
+              </select>
+            </div>
+
+            <div className="space-y-1 sm:col-span-3">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 uppercase">
+                Operating Branch *
+              </label>
+              <select
+                required
+                value={newEmpBranchId}
+                onChange={(e) => setNewEmpBranchId(e.target.value)}
+                className="w-full px-3.5 py-2.5 bg-blue-50/50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-xl font-bold text-blue-900 dark:text-blue-100"
+              >
+                <option value="">Select Branch...</option>
+                {settingBranches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.branchName} ({b.branchCode}) {b.isMainBranch ? '— HQ' : ''}
+                  </option>
+                ))}
               </select>
             </div>
           </div>

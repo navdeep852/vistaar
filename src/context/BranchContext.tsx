@@ -21,8 +21,10 @@ export interface BranchContextType {
   isAllBranchesSelected: boolean;
   canAccessAllBranches: boolean;
   activeBranchId: string | undefined;
-  switchBranch: (branchId: string | 'ALL', bypassPasswordCheck?: boolean) => Promise<{ success: boolean; error?: string }>;
-  requestSwitchBranch: () => void;
+  isOwner: boolean;
+  targetSwitchBranch: Branch | null;
+  switchBranch: (branchId: string | 'ALL', branchPassword?: string) => Promise<{ success: boolean; requiresSetup?: boolean; error?: string }>;
+  requestSwitchBranch: (targetBranch?: Branch) => void;
   isSwitchModalOpen: boolean;
   closeSwitchModal: () => void;
   refreshBranches: () => Promise<void>;
@@ -42,6 +44,8 @@ const BranchContext = createContext<BranchContextType>({
   isAllBranchesSelected: false,
   canAccessAllBranches: true,
   activeBranchId: undefined,
+  isOwner: true,
+  targetSwitchBranch: null,
   switchBranch: async () => ({ success: true }),
   requestSwitchBranch: () => {},
   isSwitchModalOpen: false,
@@ -58,11 +62,13 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isAllExplicitlySelected, setIsAllExplicitlySelected] = useState<boolean>(false);
   const [isSwitchModalOpen, setIsSwitchModalOpen] = useState<boolean>(false);
 
+  const [targetSwitchBranch, setTargetSwitchBranch] = useState<Branch | null>(null);
+
   const currentUser = supabaseAuthService.getUser();
-  const isOwnerOrAdmin = useMemo(() => {
-    if (!currentUser) return true;
+  const isOwner = useMemo(() => {
+    if (!currentUser) return false;
     const role = (currentUser.role || '').toLowerCase();
-    return role === 'owner' || role === 'admin' || role === 'super_admin' || !role;
+    return role === 'owner';
   }, [currentUser]);
 
   const loadBranches = useCallback(async () => {
@@ -74,7 +80,7 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       ]);
 
       const fullList = fullListRes.data || [];
-      const authorizedList = isOwnerOrAdmin ? fullList : (authorizedRes.data || []);
+      const authorizedList = isOwner ? fullList : (authorizedRes.data || []);
 
       setAllWorkspaceBranches(fullList);
       setBranches(authorizedList);
@@ -88,7 +94,7 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       // Determine initial / restored branch
       const savedBranchId = safeGetTenantItem<string | null>('active_branch_id', null);
 
-      if (isOwnerOrAdmin) {
+      if (isOwner) {
         if (savedBranchId === 'ALL') {
           setCurrentBranch(null);
           setIsAllExplicitlySelected(true);
@@ -119,24 +125,11 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       } else {
         setIsAllExplicitlySelected(false);
-        // Staff member: MUST have an assigned branch. CANNOT view "ALL" or unauthorized branches
-        if (authorizedList.length === 1) {
-          // Only 1 branch authorized: strictly force that branch
-          setCurrentBranch(authorizedList[0]);
-          safeSaveTenantItem('active_branch_id', authorizedList[0].id);
-        } else if (authorizedList.length > 1) {
-          const match = authorizedList.find((b) => b.id === savedBranchId);
-          if (match) {
-            setCurrentBranch(match);
-          } else {
-            setCurrentBranch(authorizedList[0]);
-            safeSaveTenantItem('active_branch_id', authorizedList[0].id);
-          }
-        } else {
-          // If no specific branch access assigned, check default non-main or fallback
-          const defaultB = fullList.find((b) => !b.isMainBranch) || fullList[0] || null;
-          setCurrentBranch(defaultB);
-          if (defaultB) safeSaveTenantItem('active_branch_id', defaultB.id);
+        // CRITICAL EMPLOYEE RULE: Employee is permanently locked to their SINGLE assigned branch
+        const assignedBranch = authorizedList[0] || fullList.find((b) => b.id === (currentUser as any)?.defaultBranchId) || mainBranchObj;
+        setCurrentBranch(assignedBranch);
+        if (assignedBranch) {
+          safeSaveTenantItem('active_branch_id', assignedBranch.id);
         }
       }
       setIsBranchReady(true);
@@ -145,7 +138,7 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } finally {
       setIsLoadingBranches(false);
     }
-  }, [currentUser?.id, isOwnerOrAdmin]);
+  }, [currentUser?.id, currentUser?.defaultBranchId, isOwner]);
 
   useEffect(() => {
     loadBranches();
@@ -160,40 +153,42 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, [loadBranches]);
 
-  const requestSwitchBranch = useCallback(() => {
+  const requestSwitchBranch = useCallback((targetBranch?: Branch) => {
+    setTargetSwitchBranch(targetBranch || null);
     setIsSwitchModalOpen(true);
   }, []);
 
   const closeSwitchModal = useCallback(() => {
+    setTargetSwitchBranch(null);
     setIsSwitchModalOpen(false);
   }, []);
 
   const switchBranch = useCallback(
-    async (branchId: string | 'ALL', bypassPasswordCheck = false): Promise<{ success: boolean; error?: string }> => {
-      // 1. Authorization validation
-      if (branchId === 'ALL') {
-        if (!isOwnerOrAdmin) {
-          await auditLogService.logSecurityEvent({
-            action: 'BRANCH_SWITCH_DENIED',
-            result: 'DENIED',
-            details: { reason: 'Unauthorized attempt to switch to All Branches', target: 'ALL' },
-          });
-          return { success: false, error: 'Unauthorized: Staff members cannot view consolidated enterprise data.' };
-        }
+    async (branchId: string | 'ALL', branchPassword?: string): Promise<{ success: boolean; requiresSetup?: boolean; error?: string }> => {
+      // 1. Employee restriction: non-owners can NEVER switch branches
+      if (!isOwner) {
+        await auditLogService.logSecurityEvent({
+          action: 'BRANCH_SWITCH_DENIED',
+          result: 'DENIED',
+          details: { reason: 'Employees are restricted to their assigned operating location', targetBranchId: branchId },
+        });
+        return { success: false, error: 'Unauthorized: Employees cannot switch branches. You are restricted to your assigned operating location.' };
+      }
 
+      // 2. All Branches (Consolidated enterprise view)
+      if (branchId === 'ALL') {
         const oldBranchId = currentBranch?.id;
         setCurrentBranch(null);
         setIsAllExplicitlySelected(true);
         safeSaveTenantItem('active_branch_id', 'ALL');
 
-        // Audit log branch switch
         await auditLogService.logSecurityEvent({
           action: 'BRANCH_SWITCHED',
           result: 'ALLOWED',
           details: { fromBranch: oldBranchId || 'ALL', toBranch: 'ALL' },
         });
 
-        // 2. Clear branch-specific cached data
+        // Clear branch-specific cached data
         productService.invalidateCache();
         salesAnalyticsService.invalidateCache();
         try {
@@ -201,7 +196,6 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           enterpriseAnalyticsService.invalidateCache();
         } catch {}
 
-        // 3. Dispatch global events
         if (typeof window !== 'undefined') {
           window.dispatchEvent(
             new CustomEvent('vistaar:branch_changed', { detail: { branchId: 'ALL', branch: null } })
@@ -210,35 +204,56 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
 
         setIsSwitchModalOpen(false);
+        setTargetSwitchBranch(null);
         return { success: true };
       }
 
-      // Check if target branch is in authorized list
-      const targetList = isOwnerOrAdmin ? allWorkspaceBranches : branches;
-      const selected = targetList.find((b) => b.id === branchId);
-
+      // 3. Specific Branch
+      const selected = allWorkspaceBranches.find((b) => b.id === branchId);
       if (!selected) {
         await auditLogService.logSecurityEvent({
           action: 'BRANCH_SWITCH_DENIED',
           result: 'DENIED',
-          details: { reason: 'Branch not found or unauthorized for this user', targetBranchId: branchId },
+          details: { reason: 'Branch not found in business workspace', targetBranchId: branchId },
         });
-        return { success: false, error: 'You are not authorized to access this branch.' };
+        return { success: false, error: 'Branch not found in your business.' };
       }
 
+      // If already on this branch, just close modal
+      if (currentBranch?.id === branchId) {
+        setIsSwitchModalOpen(false);
+        setTargetSwitchBranch(null);
+        return { success: true };
+      }
+
+      // VERIFY TARGET BRANCH ACCESS PASSWORD (NOT USER'S ACCOUNT PASSWORD!)
+      const verifyRes = await branchService.verifyBranchPassword(branchId, branchPassword || '');
+      if (!verifyRes.success || !verifyRes.authorized) {
+        await auditLogService.logSecurityEvent({
+          action: 'BRANCH_ACCESS_DENIED',
+          result: 'DENIED',
+          details: { targetBranchId: branchId, reason: verifyRes.error || 'Incorrect branch access password' },
+        });
+        return {
+          success: false,
+          requiresSetup: verifyRes.requiresSetup,
+          error: verifyRes.error || 'Incorrect branch access password.',
+        };
+      }
+
+      // Branch password verified! Activate target branch
       const oldBranchId = currentBranch?.id;
       setCurrentBranch(selected);
       setIsAllExplicitlySelected(false);
       safeSaveTenantItem('active_branch_id', selected.id);
 
-      // Audit log branch switch
       await auditLogService.logSecurityEvent({
-        action: 'BRANCH_SWITCHED',
+        action: 'BRANCH_ACCESS_GRANTED',
         result: 'ALLOWED',
         details: { fromBranch: oldBranchId || 'ALL', toBranch: selected.id, branchCode: selected.branchCode },
       });
 
-      // 4. Invalidate caches immediately
+      // Invalidate caches immediately
       productService.invalidateCache();
       salesAnalyticsService.invalidateCache();
       try {
@@ -246,7 +261,7 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         enterpriseAnalyticsService.invalidateCache();
       } catch {}
 
-      // 5. Notify all views and components
+      // Notify all views and components
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
           new CustomEvent('vistaar:branch_changed', { detail: { branchId: selected.id, branch: selected } })
@@ -255,9 +270,10 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
 
       setIsSwitchModalOpen(false);
+      setTargetSwitchBranch(null);
       return { success: true };
     },
-    [allWorkspaceBranches, branches, currentBranch?.id, isOwnerOrAdmin]
+    [allWorkspaceBranches, currentBranch?.id, isOwner]
   );
 
   const contextValue = useMemo<BranchContextType>(
@@ -272,9 +288,11 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       allWorkspaceBranches,
       isLoadingBranches,
       isBranchReady,
-      isAllBranchesSelected: isBranchReady && !isLoadingBranches && currentBranch === null && isAllExplicitlySelected && isOwnerOrAdmin,
-      canAccessAllBranches: isOwnerOrAdmin,
+      isAllBranchesSelected: isBranchReady && !isLoadingBranches && currentBranch === null && isAllExplicitlySelected && isOwner,
+      canAccessAllBranches: isOwner,
       activeBranchId: currentBranch?.id,
+      isOwner,
+      targetSwitchBranch,
       switchBranch,
       requestSwitchBranch,
       isSwitchModalOpen,
@@ -290,7 +308,8 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       isLoadingBranches,
       isBranchReady,
       isAllExplicitlySelected,
-      isOwnerOrAdmin,
+      isOwner,
+      targetSwitchBranch,
       switchBranch,
       requestSwitchBranch,
       isSwitchModalOpen,

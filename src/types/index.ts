@@ -34,6 +34,7 @@ export interface Branch {
   stateCode?: string | null;
   status: BranchStatus;
   isMainBranch: boolean;
+  hasPassword?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -112,6 +113,8 @@ export interface UserAccount {
   designation?: string;
   role: UserRole;
   status: EmployeeStatus;
+  branchId?: string;
+  defaultBranchId?: string;
   joiningDate?: string;
   employmentType?: EmploymentType;
   dateOfBirth?: string;
@@ -175,6 +178,7 @@ export interface UserProfile {
   businessName: string;
   mustChangePassword?: boolean;
   defaultBranchId?: string;
+  branchId?: string;
   permittedBranchIds?: string[];
 }
 
