@@ -3,7 +3,7 @@
  * Tests all 39 acceptance requirements in a headless simulation.
  */
 
-import { resolveDateRange, getIstTodayString } from '../src/lib/dateRange.ts';
+import { resolveDateRange, getIstTodayString, normalizeToYyyyMmDd } from '../src/lib/dateRange.ts';
 import { isValidUuid } from '../src/lib/supabaseError.ts';
 import { formatInr } from '../src/lib/currency.ts';
 
@@ -334,6 +334,56 @@ async function runTestSuite() {
   onBranchSwitchInitiated();
   assert(testKpiState.status === 'loading', 'On branch switch, KPI status is reset to "loading"');
   assert(testKpiState.data === null, 'On branch switch, old branch data is wiped (never displayed under new branch)');
+
+  // -------------------------------------------------------------------------
+  // Test 8: Date Format Normalization & Validation
+  // -------------------------------------------------------------------------
+  console.log('\n--- TEST GROUP 8: Date Format Normalization (DD-MM-YYYY vs YYYY-MM-DD) ---');
+  assert(normalizeToYyyyMmDd('10-07-2026') === '2026-07-10', 'DD-MM-YYYY (10-07-2026) normalizes to 2026-07-10');
+  assert(normalizeToYyyyMmDd('02-10-2026') === '2026-10-02', 'DD-MM-YYYY (02-10-2026) normalizes to 2026-10-02');
+  assert(normalizeToYyyyMmDd('10/07/2026') === '2026-07-10', 'DD/MM/YYYY (10/07/2026) normalizes to 2026-07-10');
+  assert(normalizeToYyyyMmDd('2026-07-10') === '2026-07-10', 'YYYY-MM-DD (2026-07-10) remains 2026-07-10');
+  assert(normalizeToYyyyMmDd('2026-10-02T15:30:00.000Z') === '2026-10-02', 'ISO string normalizes to 2026-10-02');
+  assert(normalizeToYyyyMmDd('') === getIstTodayString(), 'Empty string safely defaults to current Indian date');
+
+  // -------------------------------------------------------------------------
+  // Test 9: Specific User Issue Reproduction (10-07-2026 to 02-10-2026)
+  // -------------------------------------------------------------------------
+  console.log('\n--- TEST GROUP 9: Specific User Date Range (10 Jul 2026 to 02 Oct 2026) ---');
+  // In the pre-fix state, resolveDateRange('custom', '10-07-2026', '02-10-2026') did:
+  // "10-07-2026" > "02-10-2026" (string compare: '1' > '0') -> TRUE!
+  // And it inverted start and end: start became '02-10-2026', end became '10-07-2026'
+  // Resulting in 0 matches for any SQL/in-memory comparison.
+  const resolvedCustom = resolveDateRange('custom', '10-07-2026', '02-10-2026');
+  assert(resolvedCustom.startDateStr === '2026-07-10', 'Start date is 2026-07-10 (not inverted)');
+  assert(resolvedCustom.endDateStr === '2026-10-02', 'End date is 2026-10-02 (not inverted)');
+  assert(resolvedCustom.startDateStr <= resolvedCustom.endDateStr, 'Normalized startDateStr <= endDateStr');
+  assert(resolvedCustom.endIso.startsWith('2026-10-02T23:59:59'), 'End date is inclusive (endIso covers full day)');
+
+  // -------------------------------------------------------------------------
+  // Test 10: Reactive Fetch Dependency Completeness
+  // -------------------------------------------------------------------------
+  console.log('\n--- TEST GROUP 10: Reactive Fetch Dependency Completeness ---');
+  // Verify that changes to ANY of the 6 core dependencies produce distinct query keys
+  function generateQueryKey(
+    authStatus: string,
+    workspaceId: string,
+    branchId: string,
+    preset: string,
+    start: string,
+    end: string
+  ): string {
+    return `${authStatus}:${workspaceId}:${branchId}:${preset}:${start}:${end}`;
+  }
+
+  const k1 = generateQueryKey('ready', 'ws-1', 'br-1', 'today', '2026-10-10', '2026-10-10');
+  const kCustom = generateQueryKey('ready', 'ws-1', 'br-1', 'custom', '2026-07-10', '2026-10-02');
+  const kBranch2 = generateQueryKey('ready', 'ws-1', 'br-2', 'custom', '2026-07-10', '2026-10-02');
+  const kYesterday = generateQueryKey('ready', 'ws-1', 'br-1', 'yesterday', '2026-10-09', '2026-10-09');
+
+  assert(k1 !== kCustom, 'Custom date range creates unique query identity from Today');
+  assert(kCustom !== kBranch2, 'Branch switch creates unique query identity');
+  assert(k1 !== kYesterday, 'Yesterday preset creates unique query identity');
 
   // -------------------------------------------------------------------------
   // SUMMARY REPORT

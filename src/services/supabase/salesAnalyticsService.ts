@@ -58,9 +58,16 @@ export class SalesAnalyticsService {
   public async getSalesMetrics(dateRange?: ResolvedDateRange, forceFresh = false, explicitWsId?: string, branchId?: string): Promise<SalesMetrics> {
     const range = dateRange || resolveDateRange('today');
     const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
-    const effectiveBranchId = branchId !== undefined ? branchId : (safeGetTenantItem('active_branch_id') || undefined);
-    const mainBranchId = safeGetTenantItem('main_branch_id');
-    const isMainBranch = !effectiveBranchId || effectiveBranchId === 'ALL' || effectiveBranchId === mainBranchId || String(effectiveBranchId).toLowerCase().includes('main');
+    const effectiveBranchId = branchId;
+    let mainBranchId = safeGetTenantItem('main_branch_id');
+    if (!mainBranchId) {
+      try {
+        const storedBranches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+        const mb = storedBranches.find((b: any) => b.isMainBranch || b.branchCode === 'MAIN') || storedBranches[0];
+        if (mb?.id) mainBranchId = mb.id;
+      } catch {}
+    }
+    const isMainBranch = !effectiveBranchId || effectiveBranchId === 'ALL' || (mainBranchId && effectiveBranchId === mainBranchId) || String(effectiveBranchId).toLowerCase().includes('main');
 
     const cacheKey = `${wsId}:${effectiveBranchId || 'all'}:${range.rangeType}:${range.startDateStr}:${range.endDateStr}`;
 

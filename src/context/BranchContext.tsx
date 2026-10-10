@@ -79,6 +79,12 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setAllWorkspaceBranches(fullList);
       setBranches(authorizedList);
 
+      // Persist authoritative Main Branch ID
+      const mainBranchObj = fullList.find((b) => b.isMainBranch) || fullList[0] || null;
+      if (mainBranchObj) {
+        safeSaveTenantItem('main_branch_id', mainBranchObj.id);
+      }
+
       // Determine initial / restored branch
       const savedBranchId = safeGetTenantItem<string | null>('active_branch_id', null);
 
@@ -93,17 +99,23 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             setIsAllExplicitlySelected(false);
           } else {
             // Default to main branch
-            const main = fullList.find((b) => b.isMainBranch) || fullList[0] || null;
+            const main = mainBranchObj;
             setCurrentBranch(main);
             setIsAllExplicitlySelected(false);
-            if (main) safeSaveTenantItem('active_branch_id', main.id);
+            if (main) {
+              safeSaveTenantItem('active_branch_id', main.id);
+              safeSaveTenantItem('main_branch_id', main.id);
+            }
           }
         } else {
           // Default to main branch if available
-          const main = fullList.find((b) => b.isMainBranch) || fullList[0] || null;
+          const main = mainBranchObj;
           setCurrentBranch(main);
           setIsAllExplicitlySelected(false);
-          if (main) safeSaveTenantItem('active_branch_id', main.id);
+          if (main) {
+            safeSaveTenantItem('active_branch_id', main.id);
+            safeSaveTenantItem('main_branch_id', main.id);
+          }
         }
       } else {
         setIsAllExplicitlySelected(false);

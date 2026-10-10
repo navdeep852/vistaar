@@ -41,6 +41,65 @@ export interface ResolvedDateRange {
 const IST_OFFSET_HOURS = 5.5; // UTC+5:30
 
 /**
+ * Normalizes any date representation into an unambiguous YYYY-MM-DD string in IST.
+ * Accurately parses:
+ * - YYYY-MM-DD (e.g. "2026-07-10")
+ * - DD-MM-YYYY (e.g. "10-07-2026" -> "2026-07-10", preserving 10 July without US month/day transposition)
+ * - DD/MM/YYYY (e.g. "10/07/2026" -> "2026-07-10")
+ * - YYYY/MM/DD (e.g. "2026/07/10" -> "2026-07-10")
+ * - ISO strings (e.g. "2026-07-10T...")
+ * - Date objects
+ */
+export function normalizeToYyyyMmDd(input?: string | Date | null): string {
+  if (!input) return getIstTodayString();
+
+  if (input instanceof Date) {
+    if (isNaN(input.getTime())) return getIstTodayString();
+    const y = input.getFullYear();
+    const m = String(input.getMonth() + 1).padStart(2, '0');
+    const d = String(input.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  const str = String(input).trim();
+  if (!str) return getIstTodayString();
+
+  // If ISO string with T
+  const datePart = str.split('T')[0].trim();
+
+  // Pattern 1: YYYY-MM-DD or YYYY/MM/DD
+  const ymdMatch = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(datePart);
+  if (ymdMatch) {
+    const y = ymdMatch[1];
+    const m = ymdMatch[2].padStart(2, '0');
+    const d = ymdMatch[3].padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  // Pattern 2: DD-MM-YYYY or DD/MM/YYYY (Indian Standard Format)
+  const dmyMatch = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/.exec(datePart);
+  if (dmyMatch) {
+    const d = dmyMatch[1].padStart(2, '0');
+    const m = dmyMatch[2].padStart(2, '0');
+    const y = dmyMatch[3];
+    return `${y}-${m}-${d}`;
+  }
+
+  // Fallback try Date.parse
+  try {
+    const parsed = new Date(str);
+    if (!isNaN(parsed.getTime())) {
+      const y = parsed.getFullYear();
+      const m = String(parsed.getMonth() + 1).padStart(2, '0');
+      const d = String(parsed.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+  } catch {}
+
+  return getIstTodayString();
+}
+
+/**
  * Returns current date string in Indian Standard Time (YYYY-MM-DD)
  */
 export function getIstTodayString(): string {
@@ -65,7 +124,8 @@ export function getIstTodayString(): string {
  */
 export function formatIndianDate(dateStr: string): string {
   if (!dateStr) return '';
-  const parts = dateStr.split('-');
+  const normalized = normalizeToYyyyMmDd(dateStr);
+  const parts = normalized.split('-');
   if (parts.length === 3) {
     return `${parts[2]}/${parts[1]}/${parts[0]}`;
   }
@@ -78,7 +138,8 @@ export function formatIndianDate(dateStr: string): string {
 export function formatFriendlyDate(dateStr: string): string {
   if (!dateStr) return '';
   try {
-    const [year, month, day] = dateStr.split('-').map(Number);
+    const normalized = normalizeToYyyyMmDd(dateStr);
+    const [year, month, day] = normalized.split('-').map(Number);
     const date = new Date(year, month - 1, day);
     return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   } catch {
@@ -110,14 +171,16 @@ export function formatReportingPeriodSubtitle(dateRange: ResolvedDateRange): str
  * Constructs an ISO string for an IST date at given time.
  */
 function toIstIso(dateStr: string, timeStr: '00:00:00.000' | '23:59:59.999'): string {
-  return `${dateStr}T${timeStr}+05:30`;
+  const normalized = normalizeToYyyyMmDd(dateStr);
+  return `${normalized}T${timeStr}+05:30`;
 }
 
 /**
  * Computes date string offset by N days from a base YYYY-MM-DD string
  */
 export function addDays(dateStr: string, days: number): string {
-  const [year, month, day] = dateStr.split('-').map(Number);
+  const normalized = normalizeToYyyyMmDd(dateStr);
+  const [year, month, day] = normalized.split('-').map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().split('T')[0];
@@ -205,13 +268,15 @@ export function resolveDateRange(
     }
 
     case 'custom': {
-      startDateStr = customStart || today;
-      endDateStr = customEnd || today;
-      // Ensure chronological ordering
-      if (startDateStr > endDateStr) {
-        const tmp = startDateStr;
-        startDateStr = endDateStr;
-        endDateStr = tmp;
+      const normStart = normalizeToYyyyMmDd(customStart || today);
+      const normEnd = normalizeToYyyyMmDd(customEnd || today);
+      // Ensure chronological ordering with normalized YYYY-MM-DD
+      if (normStart <= normEnd) {
+        startDateStr = normStart;
+        endDateStr = normEnd;
+      } else {
+        startDateStr = normEnd;
+        endDateStr = normStart;
       }
       break;
     }

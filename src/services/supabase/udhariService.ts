@@ -2,7 +2,7 @@ import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { UdhariRecord, UdhariPaymentRecord } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
-import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from './safeStorage';
 import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
 import { calculateUdhariFinancials } from '../financialCalculationService';
 import { getActiveBranchId } from './branchService';
@@ -43,6 +43,56 @@ export class UdhariService {
         const { data, error } = await query.order('created_at', { ascending: false });
 
         if (error) {
+          if (error.code === '42703' || error.message?.includes('branch_id')) {
+            const retryRes = await supabase
+              .from('udhari_records')
+              .select('*, udhari_payments(*)')
+              .eq('workspace_id', wsId)
+              .order('created_at', { ascending: false });
+
+            if (!retryRes.error && retryRes.data) {
+              let mainBranchId = safeGetTenantItem('main_branch_id');
+              if (!mainBranchId) {
+                try {
+                  const storedBranches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+                  const mb = storedBranches.find((b: any) => b.isMainBranch || b.branchCode === 'MAIN') || storedBranches[0];
+                  if (mb?.id) mainBranchId = mb.id;
+                } catch {}
+              }
+              const isMainBranch = !effectiveBId || effectiveBId === 'ALL' || (mainBranchId && effectiveBId === mainBranchId) || String(effectiveBId).toLowerCase().includes('main');
+
+              const filtered = retryRes.data.filter((r: any) => {
+                const b = r.branch_id || r.branchId;
+                if (effectiveBId && effectiveBId !== 'ALL') {
+                  return b ? b === effectiveBId : isMainBranch;
+                }
+                return true;
+              });
+
+              const mapped = filtered.map((r: any) => ({
+                id: r.udhari_code || r.id,
+                dbId: r.id,
+                branchId: r.branch_id,
+                customerId: r.customer_id,
+                invoiceId: r.invoice_id,
+                counterSaleId: r.counter_sale_id,
+                customerNameSnapshot: r.customer_name_snapshot || 'Customer',
+                phoneSnapshot: r.phone_snapshot || '',
+                originalAmount: Number(r.original_amount) || 0,
+                totalReceived: Number(r.total_received) || 0,
+                outstandingAmount: Number(r.outstanding_amount) || 0,
+                dueDate: r.due_date,
+                status: r.status,
+                notes: r.notes,
+                createdAt: r.created_at,
+                updatedAt: r.updated_at,
+                payments: r.udhari_payments,
+              }));
+
+              return { data: mapped };
+            }
+          }
+
           const errStr = handleSupabaseError(error, 'getUdhariRecords');
           let fallback = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
           if (effectiveBId && effectiveBId !== 'ALL') {

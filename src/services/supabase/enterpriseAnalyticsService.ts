@@ -363,8 +363,15 @@ export class EnterpriseAnalyticsService {
     let expensesList: any[] = [];
 
     const effectiveBranchId = branchId !== undefined ? branchId : (safeGetTenantItem('active_branch_id') || undefined);
-    const mainBranchId = safeGetTenantItem('main_branch_id');
-    const isMainBranch = !effectiveBranchId || effectiveBranchId === 'ALL' || effectiveBranchId === mainBranchId || String(effectiveBranchId).toLowerCase().includes('main');
+    let mainBranchId = safeGetTenantItem('main_branch_id');
+    if (!mainBranchId) {
+      try {
+        const storedBranches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+        const mb = storedBranches.find((b: any) => b.isMainBranch || b.branchCode === 'MAIN') || storedBranches[0];
+        if (mb?.id) mainBranchId = mb.id;
+      } catch {}
+    }
+    const isMainBranch = !effectiveBranchId || effectiveBranchId === 'ALL' || (mainBranchId && effectiveBranchId === mainBranchId) || String(effectiveBranchId).toLowerCase().includes('main');
 
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
       try {

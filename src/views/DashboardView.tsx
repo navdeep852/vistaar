@@ -33,6 +33,7 @@ import {
   ResolvedDateRange,
   resolveDateRange,
   getIstTodayString,
+  normalizeToYyyyMmDd,
 } from '../lib/dateRange';
 import { formatInr } from '../lib/currency';
 import {
@@ -60,21 +61,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const activeRequestIdRef = useRef<number>(0);
 
   // Authoritative Branch Context
-  const { currentBranch, isAllBranchesSelected, isLoadingBranches, isBranchReady } = useBranch();
+  const { currentBranch, isAllBranchesSelected, isLoadingBranches, isBranchReady, workspaceId: branchWsId } = useBranch();
 
-  // Authoritative Auth Resolution State
+  // Authoritative Auth Resolution State & Workspace ID
   const [authStatus, setAuthStatus] = useState<AuthResolutionState>(() =>
     supabaseAuthService.getAuthResolutionState()
+  );
+  const [authWsId, setAuthWsId] = useState<string | null>(() =>
+    supabaseAuthService.getAuthoritativeWorkspaceIdSync()
   );
 
   useEffect(() => {
     const unsubscribeAuth = supabaseAuthService.subscribe(() => {
       setAuthStatus(supabaseAuthService.getAuthResolutionState());
+      setAuthWsId(supabaseAuthService.getAuthoritativeWorkspaceIdSync());
     });
     return unsubscribeAuth;
   }, []);
 
-  // Filter State initialized from localStorage with robust fallback
+  const effectiveWorkspaceId = useMemo(() => {
+    if (authWsId && isValidUuid(authWsId)) return authWsId;
+    if (branchWsId && isValidUuid(branchWsId)) return branchWsId;
+    const cid = supabaseAuthService.getCurrentCompanyId();
+    if (cid && isValidUuid(cid)) return cid;
+    return null;
+  }, [authWsId, branchWsId]);
+
+  // Filter State initialized from localStorage with robust fallback & normalization
   const [rangePreset, setRangePreset] = useState<DatePresetType>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_PRESET);
@@ -90,7 +103,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const [customStartDate, setCustomStartDate] = useState<string>(() => {
     try {
-      return localStorage.getItem(STORAGE_KEY_START) || getIstTodayString();
+      const saved = localStorage.getItem(STORAGE_KEY_START);
+      return saved ? normalizeToYyyyMmDd(saved) : getIstTodayString();
     } catch {
       return getIstTodayString();
     }
@@ -98,19 +112,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const [customEndDate, setCustomEndDate] = useState<string>(() => {
     try {
-      return localStorage.getItem(STORAGE_KEY_END) || getIstTodayString();
+      const saved = localStorage.getItem(STORAGE_KEY_END);
+      return saved ? normalizeToYyyyMmDd(saved) : getIstTodayString();
     } catch {
       return getIstTodayString();
     }
   });
 
-  // Calculate Authoritative Date Range (Explicit Indian Standard Time)
+  // Calculate Authoritative Date Range (Explicit Indian Standard Time, Normalized)
   const dateRange: ResolvedDateRange = useMemo(
     () =>
       resolveDateRange(
         rangePreset,
-        rangePreset === 'custom' ? customStartDate : undefined,
-        rangePreset === 'custom' ? customEndDate : undefined
+        rangePreset === 'custom' ? normalizeToYyyyMmDd(customStartDate) : undefined,
+        rangePreset === 'custom' ? normalizeToYyyyMmDd(customEndDate) : undefined
       ),
     [rangePreset, customStartDate, customEndDate]
   );
@@ -120,19 +135,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     try {
       localStorage.setItem(STORAGE_KEY_PRESET, rangePreset);
       if (rangePreset === 'custom') {
-        localStorage.setItem(STORAGE_KEY_START, customStartDate);
-        localStorage.setItem(STORAGE_KEY_END, customEndDate);
+        localStorage.setItem(STORAGE_KEY_START, normalizeToYyyyMmDd(customStartDate));
+        localStorage.setItem(STORAGE_KEY_END, normalizeToYyyyMmDd(customEndDate));
       }
     } catch {}
   }, [rangePreset, customStartDate, customEndDate]);
+
+  const effectiveBranchId = isAllBranchesSelected ? 'ALL' : currentBranch?.id;
 
   // Context Readiness Guard (Ensures Auth, Workspace, Branch, and Date Range are 100% resolved)
   const isContextReady = useMemo(() => {
     if (authStatus !== 'ready' || !supabaseAuthService.isAuthenticated()) {
       return false;
     }
-    const wsId = supabaseAuthService.getAuthoritativeWorkspaceIdSync();
-    if (!wsId || !isValidUuid(wsId)) {
+    if (!effectiveWorkspaceId || !isValidUuid(effectiveWorkspaceId)) {
       return false;
     }
     if (isLoadingBranches || !isBranchReady) {
@@ -147,6 +163,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return true;
   }, [
     authStatus,
+    effectiveWorkspaceId,
     isLoadingBranches,
     isBranchReady,
     isAllBranchesSelected,
@@ -171,38 +188,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [invoices, setInvoices] = useState<Invoice[]>(() => store.getInvoices());
   const [followUps, setFollowUps] = useState<FollowUp[]>(() => store.getFollowUps());
 
-  // Single Authoritative Data Fetching Pipeline (Part 8, 9, 10, 12, 38)
+  // Single Authoritative Data Fetching Pipeline
   const loadDashboardData = useCallback(
     async (forceFresh = false) => {
       const currentRequestId = ++activeRequestIdRef.current;
 
-      // Always enter loading state when initiating query
+      // Always enter loading state when initiating query (clears old scope metrics)
       setKpiState((prev) => ({
         status: 'loading',
-        data: null, // Clear old branch/date metrics so they never display under new scope
+        data: null,
         error: null,
       }));
 
       try {
-        const wsId = await supabaseAuthService.getAuthoritativeWorkspaceId(forceFresh);
+        const wsId = effectiveWorkspaceId || (await supabaseAuthService.getAuthoritativeWorkspaceId(forceFresh));
         if (!wsId || !isValidUuid(wsId)) {
           throw new Error('[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined.');
         }
 
-        const effectiveBranchId = isAllBranchesSelected ? 'ALL' : currentBranch?.id;
-        if (!effectiveBranchId) {
+        const bId = isAllBranchesSelected ? 'ALL' : currentBranch?.id;
+        if (!bId) {
           throw new Error('[BRANCH UNRESOLVED] Branch context is not ready.');
         }
 
         console.log(
-          `[Dashboard KPI] authReady=true workspaceId=${wsId} branchId=${effectiveBranchId} startDate=${dateRange.startDateStr} endDate=${dateRange.endDateStr} requestId=${currentRequestId} status=loading`
+          `[Dashboard KPI]\nauthReady: true\nworkspaceId: ${wsId}\nbranchId: ${bId}\nfilter: ${rangePreset}\nstartDate: ${dateRange.startDateStr}\nendDate: ${dateRange.endDateStr}\nqueryStarted: true`
         );
 
         // Single authoritative query for all dashboard KPIs
         const kpis = await enterpriseAnalyticsService.getDashboardKpis(
           dateRange,
           forceFresh,
-          effectiveBranchId,
+          bId,
           wsId
         );
 
@@ -213,7 +230,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         }
 
         console.log(
-          `[Dashboard KPI] requestId=${currentRequestId} status=success totalSales=${kpis.totalSales} collections=${kpis.collections} grossProfit=${kpis.grossProfit} outstanding=${kpis.outstandingUdhari}`
+          `[Dashboard KPI]\nqueryCompleted: true\ninvoiceSales: ${kpis.invoiceSales}\ncounterSales: ${kpis.counterSales}\ncollections: ${kpis.collections}\ngrossProfit: ${kpis.grossProfit}\noutstanding: ${kpis.outstandingUdhari}`
         );
 
         setKpiState({
@@ -229,7 +246,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         // Optional Executive Analytics if user has analytics.view permission
         if (hasCurrentUserPermission('analytics.view')) {
           enterpriseAnalyticsService
-            .getAnalyticsOverview(dateRange, forceFresh, effectiveBranchId, wsId)
+            .getAnalyticsOverview(dateRange, forceFresh, bId, wsId)
             .then((an) => {
               if (currentRequestId === activeRequestIdRef.current) {
                 setAnalyticsData(an);
@@ -239,7 +256,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         }
       } catch (err: any) {
         if (currentRequestId !== activeRequestIdRef.current) return;
-        console.error(`[Dashboard KPI] requestId=${currentRequestId} status=error error=${err?.message}`);
+        console.error(`[Dashboard KPI]\nQUERY FAILED\nerror: ${err?.message || err}`);
         setKpiState({
           status: 'error',
           data: null,
@@ -247,16 +264,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         });
       }
     },
-    [dateRange, currentBranch?.id, isAllBranchesSelected]
+    [effectiveWorkspaceId, isAllBranchesSelected, currentBranch?.id, rangePreset, dateRange]
   );
 
-  // Authoritative Dashboard Fetch Effect (Executes immediately when context is ready, or on scope changes)
+  // Authoritative Dashboard Fetch Effect (Executes automatically when context is ready or on any scope change)
   useEffect(() => {
     if (!isContextReady) {
       console.log(
-        `[Dashboard KPI] authReady=${authStatus === 'ready'} workspaceId=${supabaseAuthService.getAuthoritativeWorkspaceIdSync()} branchReady=${isBranchReady && !isLoadingBranches} branchId=${currentBranch?.id} status=waiting_for_context`
+        `[Dashboard KPI]\nQUERY SKIPPED\nreason: waiting for context (auth=${authStatus === 'ready'}, ws=${Boolean(effectiveWorkspaceId)}, branch=${isBranchReady && !isLoadingBranches && Boolean(isAllBranchesSelected || currentBranch?.id)})`
       );
-      // Ensure loading skeleton displays while context is resolving
       setKpiState((prev) => (prev.status === 'loading' ? prev : { status: 'loading', data: null, error: null }));
       return;
     }
@@ -264,9 +280,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     loadDashboardData(false);
   }, [
     isContextReady,
+    authStatus,
+    effectiveWorkspaceId,
     currentBranch?.id,
     isAllBranchesSelected,
-    dateRange.rangeType,
+    rangePreset,
     dateRange.startDateStr,
     dateRange.endDateStr,
     loadDashboardData,
@@ -364,15 +382,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           footer={
             kpiState.status === 'loading' ? (
               <div className="h-3.5 w-32 bg-slate-100 dark:bg-slate-800 animate-pulse rounded" />
-            ) : (
+            ) : kpiState.status === 'success' && kpiState.data ? (
               <div className="flex flex-col sm:flex-row sm:justify-between text-[10px] sm:text-[11px] gap-0.5 sm:gap-1">
                 <span className="truncate">
-                  Inv: <strong className="text-slate-800 dark:text-slate-200">{formatInr(kpiState.data?.invoiceSales ?? 0)}</strong>
+                  Inv: <strong className="text-slate-800 dark:text-slate-200">{formatInr(kpiState.data.invoiceSales)}</strong>
                 </span>
                 <span className="truncate">
-                  POS: <strong className="text-slate-800 dark:text-slate-200">{formatInr(kpiState.data?.counterSales ?? 0)}</strong>
+                  POS: <strong className="text-slate-800 dark:text-slate-200">{formatInr(kpiState.data.counterSales)}</strong>
                 </span>
               </div>
+            ) : (
+              <div className="text-[10px] sm:text-[11px] text-slate-400">—</div>
             )
           }
         />
@@ -389,15 +409,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           footer={
             kpiState.status === 'loading' ? (
               <div className="h-3.5 w-32 bg-slate-100 dark:bg-slate-800 animate-pulse rounded" />
-            ) : (
+            ) : kpiState.status === 'success' && kpiState.data ? (
               <div className="flex flex-col sm:flex-row sm:justify-between text-[10px] sm:text-[11px] gap-0.5 sm:gap-1">
                 <span className="truncate">
-                  Cash: <strong className="text-slate-800 dark:text-slate-200">{formatInr(kpiState.data?.cashCollections ?? 0)}</strong>
+                  Cash: <strong className="text-slate-800 dark:text-slate-200">{formatInr(kpiState.data.cashCollections)}</strong>
                 </span>
                 <span className="truncate">
-                  UPI: <strong className="text-slate-800 dark:text-slate-200">{formatInr(kpiState.data?.upiCollections ?? 0)}</strong>
+                  UPI: <strong className="text-slate-800 dark:text-slate-200">{formatInr(kpiState.data.upiCollections)}</strong>
                 </span>
               </div>
+            ) : (
+              <div className="text-[10px] sm:text-[11px] text-slate-400">—</div>
             )
           }
         />
@@ -414,13 +436,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           footer={
             kpiState.status === 'loading' ? (
               <div className="h-3.5 w-24 bg-slate-100 dark:bg-slate-800 animate-pulse rounded" />
-            ) : (
+            ) : kpiState.status === 'success' && kpiState.data ? (
               <div className="flex justify-between items-center text-[10px] sm:text-[11px]">
                 <span className="truncate mr-1">Margin</span>
                 <strong className="text-indigo-600 dark:text-indigo-400 shrink-0">
-                  {kpiState.data?.profitMarginPercent ?? 0}%
+                  {kpiState.data.profitMarginPercent}%
                 </strong>
               </div>
+            ) : (
+              <div className="text-[10px] sm:text-[11px] text-slate-400">—</div>
             )
           }
         />
@@ -435,10 +459,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           footer={
             kpiState.status === 'loading' ? (
               <div className="h-3.5 w-28 bg-slate-100 dark:bg-slate-800 animate-pulse rounded" />
-            ) : (
+            ) : kpiState.status === 'success' && kpiState.data ? (
               <div className="flex justify-between items-center text-[10px] sm:text-[11px] gap-1">
-                <span className={`truncate ${(kpiState.data?.overdueUdhari ?? 0) > 0 ? 'text-rose-600 dark:text-rose-400 font-bold' : ''}`}>
-                  OD: {formatInr(kpiState.data?.overdueUdhari ?? 0)}
+                <span className={`truncate ${kpiState.data.overdueUdhari > 0 ? 'text-rose-600 dark:text-rose-400 font-bold' : ''}`}>
+                  OD: {formatInr(kpiState.data.overdueUdhari)}
                 </span>
                 <button
                   type="button"
@@ -448,6 +472,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   Ledger →
                 </button>
               </div>
+            ) : (
+              <div className="text-[10px] sm:text-[11px] text-slate-400">—</div>
             )
           }
         />

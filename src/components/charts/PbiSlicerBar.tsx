@@ -1,6 +1,6 @@
 import React from 'react';
 import { Calendar, RefreshCw } from 'lucide-react';
-import { DatePresetType, ResolvedDateRange, formatReportingPeriodSubtitle } from '../../lib/dateRange';
+import { DatePresetType, ResolvedDateRange, formatReportingPeriodSubtitle, normalizeToYyyyMmDd } from '../../lib/dateRange';
 
 interface PbiSlicerBarProps {
   rangePreset: DatePresetType;
@@ -102,9 +102,9 @@ export const PbiSlicerBar: React.FC<PbiSlicerBarProps> = ({
             <span className="text-slate-500 dark:text-slate-400 font-medium">From:</span>
             <input
               type="date"
-              value={customStartDate}
-              max={customEndDate || undefined}
-              onChange={(e) => onCustomStartChange(e.target.value)}
+              value={normalizeToYyyyMmDd(customStartDate)}
+              max={customEndDate ? normalizeToYyyyMmDd(customEndDate) : undefined}
+              onChange={(e) => onCustomStartChange(normalizeToYyyyMmDd(e.target.value))}
               className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium focus:ring-1 focus:ring-blue-500 outline-none text-xs"
             />
           </div>
@@ -112,9 +112,9 @@ export const PbiSlicerBar: React.FC<PbiSlicerBarProps> = ({
             <span className="text-slate-500 dark:text-slate-400 font-medium">To:</span>
             <input
               type="date"
-              value={customEndDate}
-              min={customStartDate || undefined}
-              onChange={(e) => onCustomEndChange(e.target.value)}
+              value={normalizeToYyyyMmDd(customEndDate)}
+              min={customStartDate ? normalizeToYyyyMmDd(customStartDate) : undefined}
+              onChange={(e) => onCustomEndChange(normalizeToYyyyMmDd(e.target.value))}
               className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium focus:ring-1 focus:ring-blue-500 outline-none text-xs"
             />
           </div>

@@ -2,7 +2,7 @@ import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { Branch, UserBranchAccess, BranchInventory, StockTransfer, StockTransferItem, Product, StockReceipt, StockMovement } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
-import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from './safeStorage';
+import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem, safeSaveTenantItem } from './safeStorage';
 import { auditLogService } from './auditLogService';
 import { store } from '../store';
 
@@ -58,6 +58,7 @@ export class BranchService {
       updatedAt: new Date().toISOString(),
     };
     safeSaveTenantStorage(LOCAL_BRANCHES_KEY, [defaultBranch]);
+    safeSaveTenantItem('main_branch_id', defaultBranch.id);
 
     // Auto-assign owner to Main Branch
     if (user?.id) {
@@ -146,6 +147,8 @@ export class BranchService {
           }));
 
           safeSaveTenantStorage(LOCAL_BRANCHES_KEY, mapped);
+          const mb = mapped.find((b) => b.isMainBranch) || mapped[0];
+          if (mb) safeSaveTenantItem('main_branch_id', mb.id);
           return { data: mapped };
         }
       } catch (e: any) {
@@ -156,6 +159,8 @@ export class BranchService {
     // Local tenant storage fallback
     const local = safeGetTenantStorage<Branch>(LOCAL_BRANCHES_KEY, []);
     const guaranteed = this.getOrCreateDefaultMainBranch(local, wsId);
+    const mbFallback = guaranteed.find((b) => b.isMainBranch) || guaranteed[0];
+    if (mbFallback) safeSaveTenantItem('main_branch_id', mbFallback.id);
     const filtered = options?.activeOnly !== false ? guaranteed.filter((b) => b.status === 'Active') : guaranteed;
     return { data: filtered };
   }
