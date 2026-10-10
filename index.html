@@ -30,6 +30,18 @@
         } catch (e) {}
 
         window.addEventListener('error', function (e) {
+          var msg = (e.message || (e.error && e.error.message) || '').toLowerCase();
+          if (msg.includes('failed to fetch dynamically imported module') || msg.includes('importing a module script failed')) {
+            try {
+              var last = sessionStorage.getItem('vistaar_chunk_reload_attempted');
+              var now = Date.now();
+              if (!last || (now - Number(last)) > 20000) {
+                sessionStorage.setItem('vistaar_chunk_reload_attempted', String(now));
+                window.location.reload();
+                return;
+              }
+            } catch (err) {}
+          }
           console.error('[VISTAAR Global Error]', e.error || e.message);
           var root = document.getElementById('root');
           if (root && !root.hasChildNodes()) {
