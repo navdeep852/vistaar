@@ -18,10 +18,13 @@ import {
   Edit2,
   FileText,
   X,
+  Printer,
+  Download,
+  ExternalLink,
 } from 'lucide-react';
 import { store } from '../services/store';
 import { udhariService } from '../services/supabase/udhariService';
-import { UdhariRecord, UdhariPaymentRecord, PaymentMethod, Customer } from '../types';
+import { UdhariRecord, UdhariPaymentRecord, PaymentMethod, Customer, Invoice } from '../types';
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { PhoneInput } from '../components/PhoneInput';
@@ -29,6 +32,13 @@ import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPho
 import { shareService } from '../platform';
 import { useBranch } from '../context/BranchContext';
 import { validatePaymentAmount } from '../services/financialCalculationService';
+import { DocumentRenderer } from '../components/DocumentRenderer';
+import { printDocument } from '../services/printService';
+import {
+  normalizeInvoiceToDocument,
+  documentDataToRendererProps,
+  saveDocumentPdf,
+} from '../services/document';
 
 type ViewTab = 'udharis' | 'payments' | 'customers';
 type StatusFilter = 'ALL' | 'UNPAID' | 'PARTIALLY PAID' | 'PAID' | 'OVERDUE';
@@ -95,8 +105,70 @@ export const UdhariView: React.FC = () => {
   const [editNameError, setEditNameError] = useState<string>('');
   const [editPhoneError, setEditPhoneError] = useState<string>('');
 
+  // Invoice Preview & Download Modal State
+  const [previewInvoice, setPreviewInvoice] = useState<Invoice | null>(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
   const settings = store.getSettings();
   const metrics = store.getUdhariMetrics();
+
+  const resolveInvoiceForUdhari = (u: UdhariRecord): Invoice | undefined => {
+    const allInvoices = store.getInvoices();
+    if (u.invoiceId) {
+      const byId = allInvoices.find((i) => i.id === u.invoiceId || i.invoiceNumber === u.invoiceId);
+      if (byId) return byId;
+    }
+    if (u.notes) {
+      const match = u.notes.match(/INV-[\w-]+/i);
+      if (match) {
+        const byNum = allInvoices.find((i) => i.invoiceNumber.toLowerCase() === match[0].toLowerCase());
+        if (byNum) return byNum;
+      }
+    }
+    if (u.id.startsWith('UD-')) {
+      const rawInvNum = u.id.replace('UD-', '');
+      const byIdOrNum = allInvoices.find((i) => i.invoiceNumber.toLowerCase() === rawInvNum.toLowerCase());
+      if (byIdOrNum) return byIdOrNum;
+    }
+    return undefined;
+  };
+
+  const handleViewInvoice = (invOrUdhari: Invoice | UdhariRecord) => {
+    let targetInv: Invoice | undefined;
+    if ('invoiceNumber' in invOrUdhari) {
+      targetInv = invOrUdhari as Invoice;
+    } else {
+      targetInv = resolveInvoiceForUdhari(invOrUdhari as UdhariRecord);
+    }
+
+    if (!targetInv) {
+      showToast('Original invoice record could not be found.', 'error');
+      return;
+    }
+
+    const fullInv = store.getInvoice(targetInv.id || targetInv.invoiceNumber) || targetInv;
+    setPreviewInvoice(fullInv);
+  };
+
+  const handleSavePdf = async (inv: Invoice) => {
+    setIsGeneratingPdf(true);
+    try {
+      const docData = normalizeInvoiceToDocument(inv, settings);
+      const props = documentDataToRendererProps(docData);
+      await saveDocumentPdf(props);
+      showToast('Invoice downloaded successfully!', 'success');
+    } catch (e: any) {
+      showToast('Failed to generate PDF.', 'error');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
+  const handlePrintInvoice = (inv: Invoice) => {
+    const docData = normalizeInvoiceToDocument(inv, settings);
+    const props = documentDataToRendererProps(docData);
+    printDocument(props);
+  };
 
   const refreshData = () => {
     const all = store.getUdharis();
@@ -760,6 +832,7 @@ export const UdhariView: React.FC = () => {
                 const isPaid = u.status === 'PAID';
                 const isOverdue = u.status === 'OVERDUE';
                 const isPartial = u.status === 'PARTIALLY PAID';
+                const linkedInvoice = resolveInvoiceForUdhari(u);
 
                 return (
                   <div
@@ -778,9 +851,22 @@ export const UdhariView: React.FC = () => {
                     <div className="p-5 space-y-3">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">
-                            {u.id}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">
+                              {u.id}
+                            </span>
+                            {linkedInvoice && (
+                              <button
+                                type="button"
+                                onClick={() => handleViewInvoice(linkedInvoice)}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900/60 text-[10px] font-bold text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors cursor-pointer"
+                                title="View & Download Invoice with Complete Payment History"
+                              >
+                                <FileText className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+                                <span>{linkedInvoice.invoiceNumber}</span>
+                              </button>
+                            )}
+                          </div>
                           <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100 truncate mt-0.5">
                             {u.customerNameSnapshot}
                           </h3>
@@ -887,6 +973,18 @@ export const UdhariView: React.FC = () => {
                           <span>View History</span>
                         </button>
 
+                        {linkedInvoice && (
+                          <button
+                            type="button"
+                            onClick={() => handleViewInvoice(linkedInvoice)}
+                            className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900/60 text-blue-700 dark:text-blue-300 text-xs font-bold hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors min-h-[40px] cursor-pointer"
+                            title="View & Download Invoice"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            <span>Invoice</span>
+                          </button>
+                        )}
+
                         <button
                           onClick={() => handleWhatsAppShare(u)}
                           className="flex items-center justify-center w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-900/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 transition-colors shrink-0 cursor-pointer"
@@ -971,7 +1069,26 @@ export const UdhariView: React.FC = () => {
                         <td className="p-4 font-bold text-slate-900 dark:text-slate-100">
                           {linkedUdhari?.customerNameSnapshot || 'Customer'}
                         </td>
-                        <td className="p-4 font-mono text-slate-500 dark:text-slate-400">{p.udhariId}</td>
+                        <td className="p-4 font-mono text-slate-500 dark:text-slate-400">
+                          <div className="space-y-1">
+                            <div>{p.udhariId}</div>
+                            {(() => {
+                              const pInv = linkedUdhari ? resolveInvoiceForUdhari(linkedUdhari) : undefined;
+                              if (!pInv) return null;
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => handleViewInvoice(pInv)}
+                                  className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                                  title="View Original Invoice"
+                                >
+                                  <FileText className="w-3 h-3" />
+                                  <span>{pInv.invoiceNumber}</span>
+                                </button>
+                              );
+                            })()}
+                          </div>
+                        </td>
                         <td className="p-4 text-right font-extrabold text-emerald-600 dark:text-emerald-400 text-sm">
                           {formatCurrency(p.amount)}
                         </td>
@@ -1116,7 +1233,24 @@ export const UdhariView: React.FC = () => {
                               className="p-4 rounded-2xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/60 flex items-center justify-between gap-4"
                             >
                               <div>
-                                <span className="font-bold text-xs text-blue-600 dark:text-blue-400">{u.id}</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-xs text-blue-600 dark:text-blue-400">{u.id}</span>
+                                  {(() => {
+                                    const linkedInv = resolveInvoiceForUdhari(u);
+                                    if (!linkedInv) return null;
+                                    return (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleViewInvoice(linkedInv)}
+                                        className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900/60 px-1.5 py-0.5 rounded hover:bg-blue-100 transition-colors cursor-pointer"
+                                        title="View & Download Invoice"
+                                      >
+                                        <FileText className="w-3 h-3" />
+                                        <span>{linkedInv.invoiceNumber}</span>
+                                      </button>
+                                    );
+                                  })()}
+                                </div>
                                 <p className="text-xs font-medium text-slate-700 dark:text-slate-300 mt-0.5">
                                   Due: {formatDate(u.dueDate)}
                                 </p>
@@ -1590,6 +1724,32 @@ export const UdhariView: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Linked Invoice Banner */}
+                {(() => {
+                  const linkedInv = resolveInvoiceForUdhari(udhari);
+                  if (!linkedInv) return null;
+                  return (
+                    <div className="flex items-center justify-between bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 p-3.5 rounded-2xl">
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-blue-600 dark:text-blue-400 block">
+                          Original Invoice
+                        </span>
+                        <strong className="text-slate-900 dark:text-slate-100 font-mono text-sm">
+                          {linkedInv.invoiceNumber}
+                        </strong>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleViewInvoice(linkedInv)}
+                        className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-sm cursor-pointer transition-colors"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>View / Download Invoice</span>
+                      </button>
+                    </div>
+                  );
+                })()}
+
                 {/* Chronological Timeline (Newest First) (Section 23) */}
                 <div className="space-y-4 relative pl-4 before:absolute before:left-1.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200 dark:before:bg-slate-800">
                   {/* Payments Nodes */}
@@ -1746,6 +1906,53 @@ export const UdhariView: React.FC = () => {
               </button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {/* 6. INVOICE PREVIEW & DOWNLOAD MODAL WITH COMPLETE PAYMENT HISTORY (SECTIONS 11, 12, 13) */}
+      {previewInvoice && (
+        <Modal
+          isOpen={!!previewInvoice}
+          onClose={() => setPreviewInvoice(null)}
+          title={`Invoice ${previewInvoice.invoiceNumber} — Complete Payment History`}
+          maxWidth="4xl"
+        >
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+                  Invoice #{previewInvoice.invoiceNumber}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Customer: <strong className="text-slate-800 dark:text-slate-200">{previewInvoice.customerName}</strong> • Date: {formatDate(previewInvoice.date)}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handlePrintInvoice(previewInvoice)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSavePdf(previewInvoice)}
+                  disabled={isGeneratingPdf}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-md shadow-blue-600/20 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{isGeneratingPdf ? 'Generating PDF...' : 'Download Invoice (PDF)'}</span>
+                </button>
+              </div>
+            </div>
+
+            <DocumentRenderer
+              {...documentDataToRendererProps(normalizeInvoiceToDocument(previewInvoice, settings))}
+            />
+          </div>
         </Modal>
       )}
     </div>

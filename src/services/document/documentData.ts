@@ -11,9 +11,20 @@
  * 4. Zero accounting side-effects (read/render operation only).
  */
 
-import { Invoice, Quotation, InvoiceItem, QuotationItem } from '../../types';
+import { Invoice, Quotation, InvoiceItem, QuotationItem, Payment } from '../../types';
 import { BrandingConfig, ThemeConfig, DocumentCustomization } from '../../types/template';
 import { DocumentRendererProps } from '../../components/DocumentRenderer';
+import { calculateInvoiceFinancials, PAYMENT_TOLERANCE, roundTo2 } from '../financialCalculationService';
+
+export interface NormalizedPaymentHistoryItem {
+  id: string;
+  paymentNumber?: string;
+  date: string;
+  amount: number;
+  method: string;
+  reference?: string;
+  notes?: string;
+}
 
 export interface NormalizedLineItem {
   id?: string;
@@ -97,6 +108,7 @@ export interface NormalizedDocumentData {
   notes?: string;
   terms?: string;
   footerText?: string;
+  paymentHistory?: NormalizedPaymentHistoryItem[];
 }
 
 /**
@@ -105,17 +117,16 @@ export interface NormalizedDocumentData {
 export function normalizeInvoiceToDocument(
   invoice: Invoice,
   settings: any,
-  overrideCustomization?: DocumentCustomization
+  overrideCustomization?: DocumentCustomization,
+  paymentsOverride?: Payment[]
 ): NormalizedDocumentData {
-  const grandTotal = Number(invoice.grandTotal || 0);
-  const paidAmount = Number(invoice.paidAmount || 0);
-  // Invariant: remaining_amount = MAX(grand_total - cumulative_paid_amount, 0)
-  const balanceAmount = invoice.balanceAmount !== undefined && invoice.balanceAmount !== null
-    ? Number(invoice.balanceAmount)
-    : Math.max(0, grandTotal - paidAmount);
+  const fin = calculateInvoiceFinancials(invoice.grandTotal, invoice.paidAmount, invoice.status);
+  const grandTotal = fin.grandTotal;
+  const paidAmount = fin.paidAmount;
+  const balanceAmount = fin.balanceAmount;
 
   let paymentStatus: NormalizedFinancialSummary['paymentStatus'] = 'UNPAID';
-  if (paidAmount >= grandTotal && grandTotal > 0) {
+  if (balanceAmount <= 0.01 && grandTotal > 0) {
     paymentStatus = 'PAID';
   } else if (paidAmount > 0) {
     paymentStatus = 'PARTIALLY_PAID';
@@ -123,6 +134,39 @@ export function normalizeInvoiceToDocument(
     paymentStatus = 'DRAFT';
   } else if (invoice.status === 'Issued') {
     paymentStatus = 'UNPAID';
+  }
+
+  // Assemble complete payment history
+  let rawPayments: any[] = paymentsOverride || invoice.payments || [];
+  if (rawPayments.length === 0 && typeof window !== 'undefined') {
+    try {
+      const { store } = require('../store');
+      rawPayments = store.getPaymentsForInvoice(invoice.id || invoice.invoiceNumber);
+    } catch {
+      // ignore
+    }
+  }
+
+  let paymentHistory: NormalizedPaymentHistoryItem[] = [];
+  if (rawPayments.length > 0) {
+    paymentHistory = rawPayments.map((p: any, idx: number) => ({
+      id: p.id || `pay-${idx + 1}`,
+      paymentNumber: p.paymentNumber || p.id,
+      date: p.date || p.paymentDate || invoice.date,
+      amount: roundTo2(Number(p.amount) || 0),
+      method: p.method || p.paymentMethod || 'Cash',
+      reference: p.referenceNo || p.reference || p.transactionId,
+      notes: p.notes,
+    }));
+  } else if (paidAmount > 0) {
+    paymentHistory = [{
+      id: `init-${invoice.invoiceNumber}`,
+      paymentNumber: `INIT-${invoice.invoiceNumber}`,
+      date: invoice.date,
+      amount: paidAmount,
+      method: 'Direct / Cash',
+      notes: 'Initial Payment',
+    }];
   }
 
   const items: NormalizedLineItem[] = (invoice.items || []).map((item) => ({
@@ -201,6 +245,7 @@ export function normalizeInvoiceToDocument(
     notes: invoice.notes,
     terms: invoice.terms,
     footerText: invoice.footerText || 'Thank you for doing business with us!',
+    paymentHistory,
   };
 }
 
@@ -352,5 +397,6 @@ export function documentDataToRendererProps(data: NormalizedDocumentData, isPrin
     theme: data.theme,
     customization: data.customization,
     isPrintMode,
+    paymentHistory: data.paymentHistory,
   };
 }

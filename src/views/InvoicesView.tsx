@@ -687,40 +687,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
 
             {/* Document Snapshot Renderer */}
             <DocumentRenderer
-              templateId={selectedInvoice.templateId}
-              documentType="invoice"
-              documentNumber={selectedInvoice.invoiceNumber}
-              date={selectedInvoice.date}
-              dueDateOrValidUntil={selectedInvoice.dueDate}
-              businessName={selectedInvoice.snapshot?.businessName || settings.businessName}
-              phone={selectedInvoice.snapshot?.phone || settings.phone}
-              email={selectedInvoice.snapshot?.email || settings.email}
-              address={selectedInvoice.snapshot?.address || settings.address}
-              city={selectedInvoice.snapshot?.city || settings.city}
-              state={selectedInvoice.snapshot?.state || settings.state}
-              pincode={selectedInvoice.snapshot?.pincode || settings.pincode}
-              gstin={selectedInvoice.snapshot?.gstin || settings.gstin}
-              bankDetails={selectedInvoice.snapshot?.bankDetails || settings.bankDetails}
-              customerName={selectedInvoice.customerName}
-              customerPhone={selectedInvoice.customerPhone}
-              customerWhatsapp={selectedInvoice.customerWhatsapp}
-              customerEmail={selectedInvoice.customerEmail}
-              customerAddress={selectedInvoice.customerAddress}
-              customerGstin={selectedInvoice.customerGstin}
-              items={selectedInvoice.items}
-              subtotal={selectedInvoice.subtotal}
-              discountTotal={selectedInvoice.discountTotal}
-              taxTotal={selectedInvoice.taxTotal}
-              grandTotal={selectedInvoice.grandTotal}
-              paidAmount={selectedInvoice.paidAmount}
-              balanceAmount={selectedInvoice.balanceAmount}
-              currency={settings.currency}
-              notes={selectedInvoice.notes}
-              terms={selectedInvoice.terms}
-              footerText={selectedInvoice.footerText}
-              branding={selectedInvoice.branding}
-              theme={selectedInvoice.theme}
-              customization={selectedInvoice.customization}
+              {...getInvoiceRendererProps(selectedInvoice)}
             />
           </div>
         </Modal>

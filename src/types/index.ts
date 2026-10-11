@@ -679,7 +679,7 @@ export interface Invoice {
   customization?: DocumentCustomization;
   snapshot?: DocumentSnapshot;
   isSnapshotFinalized?: boolean;
-
+  payments?: Payment[];
   createdAt: string;
   updatedAt: string;
 }

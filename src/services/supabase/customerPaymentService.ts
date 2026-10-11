@@ -7,6 +7,7 @@ import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
 import {
   calculateInvoiceFinancials,
   calculateUdhariFinancials,
+  calculateAuthoritativeInvoiceOutstanding,
   validatePaymentAmount,
 } from '../financialCalculationService';
 
@@ -325,7 +326,7 @@ export class CustomerPaymentService {
             }
 
             const authoritativeTotal = dbInvRow ? Number(dbInvRow.grand_total) : Number(dbUdhariRow?.original_amount || 0);
-            const authoritativeOutstanding = Math.max(0, Number((authoritativeTotal - authoritativePaid).toFixed(2)));
+            const authoritativeOutstanding = calculateAuthoritativeInvoiceOutstanding(authoritativeTotal, authoritativePaid);
 
             if (!payload.isUpfrontInvoicePayment) {
               const overpaymentCheck = validatePaymentAmount(authoritativeOutstanding, amount);

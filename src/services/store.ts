@@ -42,7 +42,9 @@ import {
   calculateInvoiceFinancials,
   calculateUdhariFinancials,
   calculateDaybookFinancials,
+  calculateAuthoritativeInvoiceOutstanding,
   validatePaymentAmount,
+  PAYMENT_TOLERANCE,
 } from './financialCalculationService';
 import { filterValidLineItems } from '../lib/productHelpers';
 
@@ -415,9 +417,45 @@ class StoreService {
           sumPaid += Number(p.amount) || 0;
         }
       }
-      return Math.max(0, Number((inv.grandTotal - sumPaid).toFixed(2)));
+      return calculateAuthoritativeInvoiceOutstanding(inv.grandTotal, sumPaid);
     }
-    return inv.balanceAmount !== undefined ? inv.balanceAmount : inv.grandTotal;
+    return calculateAuthoritativeInvoiceOutstanding(inv.grandTotal, inv.paidAmount);
+  }
+
+  public getPaymentsForInvoice(invoiceIdOrNumber: string): Payment[] {
+    if (!invoiceIdOrNumber) return [];
+    const inv = this.state.invoices?.find(
+      (i) => i.id === invoiceIdOrNumber || i.invoiceNumber === invoiceIdOrNumber
+    );
+    const id = inv ? inv.id : invoiceIdOrNumber;
+    const invNum = inv ? inv.invoiceNumber : invoiceIdOrNumber;
+
+    const matched = (this.state.payments || []).filter(
+      (p) => (p.invoiceId && (p.invoiceId === id || p.invoiceId === invNum)) ||
+             (p.invoiceNumber && (p.invoiceNumber === invNum || p.invoiceNumber === id))
+    );
+
+    const seen = new Set<string>();
+    const deduplicated: Payment[] = [];
+    for (const p of matched) {
+      const key = p.paymentNumber || p.id || `${p.date}-${p.amount}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        deduplicated.push(p);
+      }
+    }
+    return deduplicated.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }
+
+  public getInvoice(invoiceIdOrNumber: string): Invoice | undefined {
+    const inv = this.state.invoices?.find(
+      (i) => i.id === invoiceIdOrNumber || i.invoiceNumber === invoiceIdOrNumber
+    );
+    if (!inv) return undefined;
+    return {
+      ...inv,
+      payments: this.getPaymentsForInvoice(inv.id || inv.invoiceNumber),
+    };
   }
 
   public syncRemoteInvoices(remoteInvoices: any[]) {
@@ -1062,6 +1100,8 @@ class StoreService {
         inv.status = fin.status;
         stateChanged = true;
       }
+
+      inv.payments = this.getPaymentsForInvoice(inv.id || inv.invoiceNumber);
     }
 
     if (stateChanged) {
@@ -1414,9 +1454,9 @@ class StoreService {
 
     // Overpayment protection
     const maxPayable = inv
-      ? inv.balanceAmount
+      ? this.getAuthoritativeInvoiceOutstanding(inv.id)
       : (udhari
-      ? udhari.outstandingAmount
+      ? (udhari.invoiceId ? this.getAuthoritativeInvoiceOutstanding(udhari.invoiceId) : udhari.outstandingAmount)
       : (cs
       ? (cs.balanceAmount ?? cs.finalTotal ?? amount)
       : (data.counterSaleId ? amount : 0)));

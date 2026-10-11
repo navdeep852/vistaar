@@ -5,6 +5,8 @@ import { getInvoiceTemplateById } from './registry';
 import { defaultInvoiceThemes } from './themes';
 import { PaymentQrProvider, EnginePaymentQrSlot } from '../../components/DocumentPaymentQr';
 
+import { InvoicePaymentHistory } from './InvoicePaymentHistory';
+
 export interface InvoiceTemplateEngineRendererProps {
   templateId?: string;
   invoice: InvoiceData;
@@ -51,6 +53,10 @@ export const InvoiceTemplateEngineRenderer: React.FC<InvoiceTemplateEngineRender
           theme={activeTheme}
           customization={customization}
           isPrintMode={isPrintMode}
+        />
+        <InvoicePaymentHistory
+          invoice={invoice}
+          currency={invoice.currency}
         />
         <EnginePaymentQrSlot
           upiQrCodeUrl={upiQrCodeUrl}

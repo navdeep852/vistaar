@@ -6,6 +6,7 @@ import { QUOTATION_TEMPLATES } from '../templates/quotationTemplates';
 import { QuotationTemplateEngineRenderer } from '../templates/quotations/renderer';
 import { InvoiceTemplateEngineRenderer } from '../templates/invoices/InvoiceTemplateEngineRenderer';
 import { DocumentPaymentQr } from './DocumentPaymentQr';
+import { PAYMENT_TOLERANCE } from '../services/financialCalculationService';
 
 export interface DocumentRendererProps {
   templateId: string;
@@ -63,6 +64,9 @@ export interface DocumentRendererProps {
 
   // Print Mode Override
   isPrintMode?: boolean;
+
+  // Complete Payment History
+  paymentHistory?: any[];
 }
 export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
   templateId,
@@ -100,6 +104,7 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
   theme,
   customization,
   isPrintMode = false,
+  paymentHistory,
 }) => {
   const normalizedBankDetails = bankDetails
     ? {
@@ -171,8 +176,11 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
   if (documentType === 'invoice') {
     const sGrand = Number(grandTotal || 0);
     const sPaid = Number(paidAmount || 0);
-    const sBalance = Number(balanceAmount || (sGrand - sPaid));
-    const calculatedStatus = (sPaid >= sGrand && sGrand > 0) ? 'PAID' : sPaid > 0 ? 'PARTIAL' : 'UNPAID';
+    const rawBalance = balanceAmount !== undefined && balanceAmount !== null
+      ? Number(balanceAmount)
+      : Math.max(0, Number((sGrand - sPaid).toFixed(2)));
+    const sBalance = (rawBalance >= 0 && rawBalance < PAYMENT_TOLERANCE) ? 0 : rawBalance;
+    const calculatedStatus = (sBalance <= 0.01 && sGrand > 0) ? 'PAID' : sPaid > 0 ? 'PARTIALLY PAID' : 'UNPAID';
 
     return (
       <InvoiceTemplateEngineRenderer
@@ -193,6 +201,7 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
           currency: currency,
           notes: notes,
           terms: terms,
+          payments: paymentHistory,
         }}
         business={{
           businessName: businessName || 'Business Name',

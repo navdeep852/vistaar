@@ -79,6 +79,16 @@ export interface CustomerData {
   gstin?: string;
 }
 
+export interface InvoicePaymentRecord {
+  id: string;
+  paymentNumber?: string;
+  date: string;
+  amount: number;
+  method: string;
+  reference?: string;
+  notes?: string;
+}
+
 export interface InvoiceData {
   id?: string;
   invoiceNumber: string;
@@ -97,6 +107,7 @@ export interface InvoiceData {
   notes?: string;
   terms?: string;
   footerText?: string;
+  payments?: InvoicePaymentRecord[];
 }
 
 export interface InvoiceTemplateTheme {
