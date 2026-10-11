@@ -191,9 +191,9 @@ export class CustomerService {
         handleSupabaseError(error, 'getCustomerLedger');
       }
       const invList = invoices || [];
-      const totalDebit = invList.reduce((acc: number, inv: { total_amount?: number | null }) => acc + (inv.total_amount || 0), 0);
-      const totalCredit = invList.reduce((acc: number, inv: { paid_amount?: number | null }) => acc + (inv.paid_amount || 0), 0);
-      const outstanding = totalDebit - totalCredit;
+      const totalDebit = Number(invList.reduce((acc: number, inv: { total_amount?: number | null; grand_total?: number | null }) => acc + (Number(inv.grand_total ?? inv.total_amount) || 0), 0).toFixed(2));
+      const totalCredit = Number(invList.reduce((acc: number, inv: { paid_amount?: number | null }) => acc + (Number(inv.paid_amount) || 0), 0).toFixed(2));
+      const outstanding = Math.max(0, Number((totalDebit - totalCredit).toFixed(2)));
 
       return {
         success: true,

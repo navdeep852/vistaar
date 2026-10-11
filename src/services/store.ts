@@ -248,119 +248,17 @@ class StoreService {
     payments.length = 0;
     payments.push(...cleanedPayments);
 
-    // 1. Audit & reconcile Hardik (INV-2026-0007) if present in state
-    let hardikInv = invoices.find((i) => i.id === 'inv-hardik-7' || (i.customerName?.toLowerCase().includes('hardik') && i.invoiceNumber === 'INV-2026-0007'));
-    if (hardikInv) {
-      hardikInv.grandTotal = 5900;
-      const hardikPays = payments.filter((p) => p.invoiceId === hardikInv.id || p.invoiceNumber === 'INV-2026-0007' || p.customerName.toLowerCase().includes('hardik'));
-      if (hardikPays.length === 0 && hardikInv.paidAmount !== 5900) {
-        // Ensure the initial ₹1,900 payment is present
-        const initPay: Payment = {
-          id: 'pay-hardik-init',
-          paymentNumber: 'PAY-2026-0007-01',
-          customerId: hardikInv.customerId || '',
-          customerName: hardikInv.customerName,
-          invoiceId: hardikInv.id,
-          invoiceNumber: 'INV-2026-0007',
-          amount: 1900,
-          date: '2026-09-01',
-          method: 'Cash',
-          notes: 'Initial payment for Invoice #INV-2026-0007',
-          createdAt: new Date('2026-09-01T10:00:00Z').toISOString(),
-        };
-        payments.push(initPay);
-      }
-      const sumHardik = payments.filter((p) => p.invoiceId === hardikInv.id || (p.customerName.toLowerCase().includes('hardik') && p.invoiceNumber === 'INV-2026-0007')).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-      hardikInv.paidAmount = sumHardik;
-      hardikInv.balanceAmount = Math.max(0, Number((5900 - sumHardik).toFixed(2)));
-      hardikInv.status = hardikInv.balanceAmount <= 0.01 ? 'Paid' : (sumHardik > 0 ? 'Partially Paid' : 'Issued');
-
-      // Ensure linked Udhari for Hardik
-      let hardikUdhari = udharis.find((u) => u.invoiceId === hardikInv.id || (u.customerNameSnapshot.toLowerCase().includes('hardik') && u.id === 'UD-INV-2026-0007'));
-      if (hardikUdhari) {
-        hardikUdhari.invoiceId = hardikInv.id;
-        hardikUdhari.originalAmount = 5900;
-        hardikUdhari.totalReceived = sumHardik;
-        hardikUdhari.outstandingAmount = hardikInv.balanceAmount;
-        hardikUdhari.status = hardikInv.balanceAmount <= 0.01 ? 'PAID' : (sumHardik > 0 ? 'PARTIALLY PAID' : 'UNPAID');
-      } else {
-        udharis.unshift({
-          id: 'UD-INV-2026-0007',
-          invoiceId: hardikInv.id,
-          customerId: hardikInv.customerId,
-          customerNameSnapshot: hardikInv.customerName,
-          phoneSnapshot: hardikInv.customerPhone || '9999999999',
-          originalAmount: 5900,
-          totalReceived: sumHardik,
-          outstandingAmount: hardikInv.balanceAmount,
-          dueDate: '2026-09-15',
-          status: hardikInv.balanceAmount <= 0.01 ? 'PAID' : (sumHardik > 0 ? 'PARTIALLY PAID' : 'UNPAID'),
-          notes: 'Invoice #INV-2026-0007',
-          createdAt: hardikInv.createdAt,
-          updatedAt: new Date().toISOString(),
-        });
-      }
-    }
-
-    // 2. Audit & reconcile Vaishali (INV-2026-0006) if present in state
-    let vaishaliInv = invoices.find((i) => i.id === 'inv-vaishali-6' || (i.customerName?.toLowerCase().includes('vaishali') && i.invoiceNumber === 'INV-2026-0006'));
-    if (vaishaliInv) {
-      vaishaliInv.grandTotal = 2950;
-      const vaishaliPays = payments.filter((p) => p.invoiceId === vaishaliInv.id || (p.customerName.toLowerCase().includes('vaishali') && p.invoiceNumber === 'INV-2026-0006'));
-      if (vaishaliPays.length === 0 && vaishaliInv.paidAmount !== 2950) {
-        const initPay: Payment = {
-          id: 'pay-vaishali-init',
-          paymentNumber: 'PAY-2026-0006-01',
-          customerId: vaishaliInv.customerId || '',
-          customerName: vaishaliInv.customerName,
-          invoiceId: vaishaliInv.id,
-          invoiceNumber: 'INV-2026-0006',
-          amount: 1400,
-          date: '2026-09-01',
-          method: 'Cash',
-          notes: 'Initial payment for Invoice #INV-2026-0006',
-          createdAt: new Date('2026-09-01T10:00:00Z').toISOString(),
-        };
-        payments.push(initPay);
-      }
-      const sumVaishali = payments.filter((p) => p.invoiceId === vaishaliInv.id || (p.customerName.toLowerCase().includes('vaishali') && p.invoiceNumber === 'INV-2026-0006')).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-      vaishaliInv.paidAmount = sumVaishali;
-      vaishaliInv.balanceAmount = Math.max(0, Number((2950 - sumVaishali).toFixed(2)));
-      vaishaliInv.status = vaishaliInv.balanceAmount <= 0.01 ? 'Paid' : (sumVaishali > 0 ? 'Partially Paid' : 'Issued');
-
-      let vaishaliUdhari = udharis.find((u) => u.invoiceId === vaishaliInv.id || (u.customerNameSnapshot.toLowerCase().includes('vaishali') && u.id === 'UD-INV-2026-0006'));
-      if (vaishaliUdhari) {
-        vaishaliUdhari.invoiceId = vaishaliInv.id;
-        vaishaliUdhari.originalAmount = 2950;
-        vaishaliUdhari.totalReceived = sumVaishali;
-        vaishaliUdhari.outstandingAmount = vaishaliInv.balanceAmount;
-        vaishaliUdhari.status = vaishaliInv.balanceAmount <= 0.01 ? 'PAID' : (sumVaishali > 0 ? 'PARTIALLY PAID' : 'UNPAID');
-      } else {
-        udharis.unshift({
-          id: 'UD-INV-2026-0006',
-          invoiceId: vaishaliInv.id,
-          customerId: vaishaliInv.customerId,
-          customerNameSnapshot: vaishaliInv.customerName,
-          phoneSnapshot: vaishaliInv.customerPhone || '9999999999',
-          originalAmount: 2950,
-          totalReceived: sumVaishali,
-          outstandingAmount: vaishaliInv.balanceAmount,
-          dueDate: '2026-09-15',
-          status: vaishaliInv.balanceAmount <= 0.01 ? 'PAID' : (sumVaishali > 0 ? 'PARTIALLY PAID' : 'UNPAID'),
-          notes: 'Invoice #INV-2026-0006',
-          createdAt: vaishaliInv.createdAt,
-          updatedAt: new Date().toISOString(),
-        });
-      }
-    }
-
-    // 3. General mathematical reconciliation across all invoices & linked udharis
+    // Authoritative General Mathematical Reconciliation across ALL invoices & linked udharis
     for (const inv of invoices) {
       if (inv.status === 'Draft' || inv.status === 'Cancelled') continue;
-      const invPays = payments.filter((p) => p.invoiceId === inv.id || (p.invoiceNumber && p.invoiceNumber === inv.invoiceNumber));
+
+      const invPays = payments.filter(
+        (p) => (p.invoiceId && p.invoiceId === inv.id) || (p.invoiceNumber && p.invoiceNumber === inv.invoiceNumber)
+      );
+
+      let sumPaid = 0;
       if (invPays.length > 0) {
         const seenKeys = new Set<string>();
-        let sumPaid = 0;
         for (const p of invPays) {
           const key = p.paymentNumber || p.id || `${p.date}-${p.amount}`;
           if (!seenKeys.has(key)) {
@@ -369,20 +267,44 @@ class StoreService {
           }
         }
         sumPaid = Number(sumPaid.toFixed(2));
-        const balance = Math.max(0, Number((inv.grandTotal - sumPaid).toFixed(2)));
-        inv.paidAmount = sumPaid;
-        inv.balanceAmount = balance;
-        inv.status = balance <= 0.01 ? 'Paid' : (sumPaid > 0 ? 'Partially Paid' : 'Issued');
+      } else {
+        // If payments array does not contain explicit transaction records, preserve existing confirmed paidAmount
+        sumPaid = Math.min(inv.grandTotal, Number(inv.paidAmount) || 0);
       }
 
+      inv.paidAmount = sumPaid;
+      inv.balanceAmount = Math.max(0, Number((inv.grandTotal - sumPaid).toFixed(2)));
+      inv.status = inv.balanceAmount <= 0.01 ? 'Paid' : (sumPaid > 0 ? 'Partially Paid' : 'Issued');
+
       // Sync linked Udhari
-      const linkedU = udharis.find((u) => u.invoiceId === inv.id || u.id === `UD-${inv.invoiceNumber}`);
+      const linkedU = udharis.find(
+        (u) => (u.invoiceId && u.invoiceId === inv.id) ||
+               u.id === `UD-${inv.invoiceNumber}` ||
+               (u.udhariCode && u.udhariCode === `UD-${inv.invoiceNumber}`)
+      );
       if (linkedU) {
         linkedU.invoiceId = inv.id;
         linkedU.originalAmount = inv.grandTotal;
-        linkedU.totalReceived = inv.paidAmount;
-        linkedU.outstandingAmount = inv.balanceAmount;
-        linkedU.status = inv.balanceAmount <= 0.01 ? 'PAID' : (inv.paidAmount > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+        // Prioritize the highest confirmed received amount between invoice and udhari
+        const effectiveRec = Math.max(Number(linkedU.totalReceived) || 0, inv.paidAmount);
+        linkedU.totalReceived = Math.min(linkedU.originalAmount, effectiveRec);
+        linkedU.outstandingAmount = Math.max(0, Number((linkedU.originalAmount - linkedU.totalReceived).toFixed(2)));
+        linkedU.status = linkedU.outstandingAmount <= 0.01 ? 'PAID' : (linkedU.totalReceived > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+
+        // Ensure invoice matches linked Udhari strictly
+        inv.paidAmount = linkedU.totalReceived;
+        inv.balanceAmount = linkedU.outstandingAmount;
+        inv.status = inv.balanceAmount <= 0.01 ? 'Paid' : (inv.paidAmount > 0 ? 'Partially Paid' : 'Issued');
+      }
+    }
+
+    // Reconcile unlinked (manual) udharis
+    for (const u of udharis) {
+      if (!u.invoiceId) {
+        const orig = Number(u.originalAmount) || 0;
+        const rec = Number(u.totalReceived) || 0;
+        u.outstandingAmount = Math.max(0, Number((orig - rec).toFixed(2)));
+        u.status = u.outstandingAmount <= 0.01 ? 'PAID' : (rec > 0 ? 'PARTIALLY PAID' : 'UNPAID');
       }
     }
 
@@ -423,17 +345,79 @@ class StoreService {
   public syncRemoteUdharis(remoteRecords: any[]) {
     if (!this.state.udharis) this.state.udharis = [];
     for (const remote of remoteRecords) {
-      const found = this.state.udharis.find((l) => l.id === remote.id || (remote.invoiceId && l.invoiceId === remote.invoiceId));
+      const found = this.state.udharis.find(
+        (l) => l.id === remote.id ||
+               (l.dbId && remote.dbId && l.dbId === remote.dbId) ||
+               (remote.invoiceId && l.invoiceId === remote.invoiceId) ||
+               (remote.udhari_code && (l.id === remote.udhari_code || l.udhariCode === remote.udhari_code))
+      );
       if (found) {
-        found.totalReceived = remote.totalReceived;
-        found.outstandingAmount = remote.outstandingAmount;
-        found.status = remote.status;
-        found.originalAmount = remote.originalAmount;
+        found.totalReceived = Number(remote.totalReceived ?? remote.total_received ?? found.totalReceived) || 0;
+        found.outstandingAmount = Number(remote.outstandingAmount ?? remote.outstanding_amount ?? found.outstandingAmount) || 0;
+        found.status = remote.status || found.status;
+        found.originalAmount = Number(remote.originalAmount ?? remote.original_amount ?? found.originalAmount) || 0;
+        if (remote.dbId) found.dbId = remote.dbId;
       } else {
         this.state.udharis.push(remote);
       }
     }
+    this.reconcileStateLedgers(this.state);
     this.saveToStorage();
+  }
+
+  public syncRemotePayments(remotePayments: any[]) {
+    if (!Array.isArray(this.state.payments)) this.state.payments = [];
+    let changed = false;
+    for (const r of remotePayments) {
+      const pId = r.id;
+      const pNum = r.payment_number || r.paymentNumber;
+      const found = this.state.payments.find(
+        (p) => (pId && p.id === pId) || (pNum && p.paymentNumber === pNum)
+      );
+      if (!found) {
+        this.state.payments.push({
+          id: pId || `PAY-${Date.now()}`,
+          paymentNumber: pNum || `PAY-${Date.now()}`,
+          customerId: r.customer_id || r.customerId || '',
+          customerName: r.customer_name || r.customerName || 'Customer',
+          invoiceId: r.invoice_id || r.invoiceId || '',
+          invoiceNumber: r.invoice_number || r.invoiceNumber || '',
+          amount: Number(r.amount) || 0,
+          date: r.payment_date || r.date || new Date().toISOString().split('T')[0],
+          method: r.method || 'Cash',
+          notes: r.notes || '',
+          createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+        });
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.reconcileStateLedgers(this.state);
+      this.saveToStorage();
+    }
+  }
+
+  public getAuthoritativeInvoiceOutstanding(invoiceIdOrNumber: string): number {
+    const inv = this.state.invoices?.find(
+      (i) => i.id === invoiceIdOrNumber || i.invoiceNumber === invoiceIdOrNumber
+    );
+    if (!inv) return 0;
+    const invPays = (this.state.payments || []).filter(
+      (p) => (p.invoiceId && p.invoiceId === inv.id) || (p.invoiceNumber && p.invoiceNumber === inv.invoiceNumber)
+    );
+    if (invPays.length > 0) {
+      const seen = new Set<string>();
+      let sumPaid = 0;
+      for (const p of invPays) {
+        const key = p.paymentNumber || p.id || `${p.date}-${p.amount}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          sumPaid += Number(p.amount) || 0;
+        }
+      }
+      return Math.max(0, Number((inv.grandTotal - sumPaid).toFixed(2)));
+    }
+    return inv.balanceAmount !== undefined ? inv.balanceAmount : inv.grandTotal;
   }
 
   public syncRemoteInvoices(remoteInvoices: any[]) {
@@ -1118,7 +1102,7 @@ class StoreService {
     const newInvoice: Invoice = {
       ...invoiceData,
       items: filterValidLineItems(invoiceData.items) as InvoiceItem[],
-      id: (invoiceData as any).id || `inv-${Date.now()}`,
+      id: (invoiceData as any).id || `inv-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
       invoiceNumber,
       grandTotal,
       paidAmount,
@@ -1401,19 +1385,23 @@ class StoreService {
     const now = new Date().toISOString();
     const payDate = data.paymentDate || now.split('T')[0];
 
-    // 1. Resolve target invoice
-    let inv = data.invoiceId
-      ? this.state.invoices.find((i) => i.id === data.invoiceId)
-      : data.invoiceNumber
+    // 1. Resolve target invoice (prioritize unique invoiceNumber when available, then ID)
+    let inv = data.invoiceNumber
       ? this.state.invoices.find((i) => i.invoiceNumber === data.invoiceNumber)
-      : undefined;
+      : (data.invoiceId
+      ? this.state.invoices.find((i) => i.id === data.invoiceId)
+      : undefined);
+
+    if (!inv && data.invoiceId) {
+      inv = this.state.invoices.find((i) => i.id === data.invoiceId);
+    }
 
     // 2. Resolve target Udhari
     let udhari = data.udhariId
-      ? this.state.udharis.find((u) => u.id === data.udhariId)
-      : inv
-      ? this.state.udharis.find((u) => u.invoiceId === inv?.id || u.id === `UD-${inv?.invoiceNumber}`)
-      : undefined;
+      ? this.state.udharis.find((u) => u.id === data.udhariId || (u as any).udhariCode === data.udhariId)
+      : (inv
+      ? this.state.udharis.find((u) => (u.invoiceId && u.invoiceId === inv?.id) || u.id === `UD-${inv?.invoiceNumber}` || (u as any).udhariCode === `UD-${inv?.invoiceNumber}`)
+      : undefined);
 
     if (!inv && udhari?.invoiceId) {
       inv = this.state.invoices.find((i) => i.id === udhari?.invoiceId);

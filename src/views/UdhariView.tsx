@@ -28,6 +28,7 @@ import { PhoneInput } from '../components/PhoneInput';
 import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 import { shareService } from '../platform';
 import { useBranch } from '../context/BranchContext';
+import { validatePaymentAmount } from '../services/financialCalculationService';
 
 type ViewTab = 'udharis' | 'payments' | 'customers';
 type StatusFilter = 'ALL' | 'UNPAID' | 'PARTIALLY PAID' | 'PAID' | 'OVERDUE';
@@ -228,8 +229,14 @@ export const UdhariView: React.FC = () => {
   };
 
   const handleOpenPayModal = (u: UdhariRecord) => {
-    setActiveUdhari(u);
-    setPayAmount(String(u.outstandingAmount));
+    // Resolve authoritative invoice outstanding directly from store single source of truth
+    const authoritativeOut = u.invoiceId
+      ? store.getAuthoritativeInvoiceOutstanding(u.invoiceId)
+      : u.outstandingAmount;
+
+    const normalizedU = { ...u, outstandingAmount: authoritativeOut };
+    setActiveUdhari(normalizedU);
+    setPayAmount(String(authoritativeOut));
     setPayMethod('UPI');
     setPayDate(new Date().toISOString().split('T')[0]);
     setPayPhone(u.phoneSnapshot);
@@ -324,10 +331,13 @@ export const UdhariView: React.FC = () => {
     const num = parseFloat(val);
     if (isNaN(num) || num <= 0) {
       setPayError('Please enter an amount greater than ₹0');
-    } else if (num > activeUdhari.outstandingAmount) {
-      setPayError('Amount received cannot be greater than the outstanding balance.');
     } else {
-      setPayError('');
+      const check = validatePaymentAmount(activeUdhari.outstandingAmount, num);
+      if (!check.valid) {
+        setPayError(check.error || 'Amount received cannot exceed the outstanding balance.');
+      } else {
+        setPayError('');
+      }
     }
   };
 
@@ -346,8 +356,9 @@ export const UdhariView: React.FC = () => {
       return;
     }
 
-    if (numAmount > (activeUdhari.outstandingAmount + 0.05)) {
-      setPayError('Amount received cannot be greater than the outstanding balance.');
+    const check = validatePaymentAmount(activeUdhari.outstandingAmount, numAmount);
+    if (!check.valid) {
+      setPayError(check.error || 'Amount received cannot be greater than the outstanding balance.');
       return;
     }
 
@@ -393,6 +404,14 @@ export const UdhariView: React.FC = () => {
           store.syncRemoteUdharis(res.data);
           refreshData();
         }
+      }).catch(() => {});
+      import('../services/supabase/paymentService').then(({ paymentService }) => {
+        paymentService.getPayments().then((pRes) => {
+          if (pRes.data && Array.isArray(pRes.data)) {
+            store.syncRemotePayments(pRes.data);
+            refreshData();
+          }
+        }).catch(() => {});
       }).catch(() => {});
     } catch (err: any) {
       setPayError(err.message || 'Failed to record payment');
@@ -1110,17 +1129,28 @@ export const UdhariView: React.FC = () => {
                                   Outstanding: {formatCurrency(u.outstandingAmount)}
                                 </p>
                               </div>
-                              <span
-                                className={`px-2.5 py-1 rounded-md text-[9px] font-bold uppercase ${
-                                  u.status === 'PAID'
-                                    ? 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300'
-                                    : u.status === 'OVERDUE'
-                                    ? 'bg-rose-100 dark:bg-rose-950/80 text-rose-800 dark:text-rose-300'
-                                    : 'bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300'
-                                }`}
-                              >
-                                {u.status}
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`px-2.5 py-1 rounded-md text-[9px] font-bold uppercase ${
+                                    u.status === 'PAID'
+                                      ? 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300'
+                                      : u.status === 'OVERDUE'
+                                      ? 'bg-rose-100 dark:bg-rose-950/80 text-rose-800 dark:text-rose-300'
+                                      : 'bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300'
+                                  }`}
+                                >
+                                  {u.status}
+                                </span>
+                                {u.status !== 'PAID' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenPayModal(u)}
+                                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer"
+                                  >
+                                    Pay
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -1327,7 +1357,7 @@ export const UdhariView: React.FC = () => {
               </div>
               <p className="text-sm font-extrabold text-white">{activeUdhari.customerNameSnapshot}</p>
               <div className="flex justify-between items-center pt-2 border-t border-slate-800 text-xs">
-                <span className="text-slate-400">Current Outstanding:</span>
+                <span className="text-slate-400">Invoice Outstanding:</span>
                 <span className="text-base font-black text-amber-400">
                   {formatCurrency(activeUdhari.outstandingAmount)}
                 </span>

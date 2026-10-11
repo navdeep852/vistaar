@@ -339,7 +339,9 @@ export class SupabaseAuthService {
           this.authResolutionState = 'unauthenticated';
           this.resolutionError = null;
           this.saveSessionToStorage(null);
-          store.reloadTenantState();
+          try {
+            store?.reloadTenantState?.();
+          } catch {}
           this.notify();
           return;
         }

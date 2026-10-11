@@ -715,6 +715,8 @@ export type UdhariStatus = 'UNPAID' | 'PARTIALLY PAID' | 'PAID' | 'OVERDUE';
 
 export interface UdhariRecord {
   id: string; // e.g. UD-2026-0001
+  dbId?: string;
+  udhariCode?: string;
   branchId?: string;
   branchName?: string;
   customerId?: string;

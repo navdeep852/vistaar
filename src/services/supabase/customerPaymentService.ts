@@ -207,9 +207,11 @@ export class CustomerPaymentService {
           isDbPersisted = true;
           paymentId = rpcData.payment_id || paymentId;
           paymentCode = rpcData.payment_code || paymentCode;
+        } else if (rpcData && !rpcData.success) {
+          return { success: false, error: rpcData.error || rpcData.message || 'Payment validation rejected.' };
         } else if (rpcErr) {
           // If the error was explicitly a validation rejection from the database, bubble up immediately
-          if (rpcErr.message?.includes('Overpayment rejected') || rpcErr.message?.includes('greater than zero')) {
+          if (rpcErr.message?.includes('Payment exceeds') || rpcErr.message?.includes('Overpayment') || rpcErr.message?.includes('greater than zero')) {
             return { success: false, error: rpcErr.message };
           }
 
@@ -293,23 +295,51 @@ export class CustomerPaymentService {
               }
             }
 
-            // Check database-level overpayment
+            // Authoritative Single-Source-of-Truth Payment Validation
+            let authoritativePaid = 0;
+            if (dbInvRow?.id || resolvedInvoiceId || invoiceNumber) {
+              const targetInvId = dbInvRow?.id || resolvedInvoiceId;
+              let invPayQuery = supabase.from('payments').select('amount').eq('workspace_id', wsId);
+              if (targetInvId) {
+                invPayQuery = invPayQuery.eq('invoice_id', targetInvId);
+              } else if (invoiceNumber) {
+                invPayQuery = invPayQuery.eq('invoice_number', invoiceNumber);
+              }
+              const { data: existingPays } = await invPayQuery;
+              if (existingPays && existingPays.length > 0) {
+                authoritativePaid = existingPays.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
+              } else {
+                authoritativePaid = Number(dbInvRow?.paid_amount ?? dbUdhariRow?.total_received ?? 0);
+              }
+            } else if (dbUdhariRow?.id) {
+              const { data: existingUpPays } = await supabase
+                .from('udhari_payments')
+                .select('amount')
+                .eq('workspace_id', wsId)
+                .eq('udhari_id', dbUdhariRow.id);
+              if (existingUpPays && existingUpPays.length > 0) {
+                authoritativePaid = existingUpPays.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
+              } else {
+                authoritativePaid = Number(dbUdhariRow.total_received || 0);
+              }
+            }
+
+            const authoritativeTotal = dbInvRow ? Number(dbInvRow.grand_total) : Number(dbUdhariRow?.original_amount || 0);
+            const authoritativeOutstanding = Math.max(0, Number((authoritativeTotal - authoritativePaid).toFixed(2)));
+
             if (!payload.isUpfrontInvoicePayment) {
-              if (dbUdhariRow && amount > (Number(dbUdhariRow.outstanding_amount) + 0.05)) {
+              const overpaymentCheck = validatePaymentAmount(authoritativeOutstanding, amount);
+              if (!overpaymentCheck.valid) {
                 return {
                   success: false,
-                  error: `Overpayment rejected: Amount (₹${amount.toLocaleString('en-IN')}) exceeds database outstanding balance (₹${Number(dbUdhariRow.outstanding_amount).toLocaleString('en-IN')}).`,
-                };
-              } else if (dbInvRow && !dbUdhariRow && amount > (Number(dbInvRow.balance_amount) + 0.05)) {
-                return {
-                  success: false,
-                  error: `Overpayment rejected: Amount (₹${amount.toLocaleString('en-IN')}) exceeds database invoice balance (₹${Number(dbInvRow.balance_amount).toLocaleString('en-IN')}).`,
+                  error: overpaymentCheck.error,
                 };
               }
-            } else if (dbInvRow && amount > (Number(dbInvRow.grand_total) + 0.05)) {
+            } else if (authoritativeTotal > 0 && amount > (authoritativeTotal + 0.05)) {
+              const excess = Math.max(0, Number((amount - authoritativeTotal).toFixed(2)));
               return {
                 success: false,
-                error: `Upfront payment rejected: Amount (₹${amount.toLocaleString('en-IN')}) exceeds database invoice grand total (₹${Number(dbInvRow.grand_total).toLocaleString('en-IN')}).`,
+                error: `Upfront payment exceeds invoice total.\nInvoice Total: ₹${authoritativeTotal.toLocaleString('en-IN')}\nAmount Entered: ₹${amount.toLocaleString('en-IN')}\nExcess: ₹${excess.toLocaleString('en-IN')}`,
               };
             }
 
@@ -417,10 +447,11 @@ export class CustomerPaymentService {
               }
 
               // Update public.udhari_records using calculateUdhariFinancials
-              const curRec = Number(dbUdhariRow.total_received || 0);
+              const finalCumulativePaid = Number((authoritativePaid + amount).toFixed(2));
+              const origUdhariAmt = Number(dbUdhariRow.original_amount) || authoritativeTotal;
               const { originalAmount, totalReceived: newRec, outstandingAmount: newOut, status: newStatus } = calculateUdhariFinancials(
-                Number(dbUdhariRow.original_amount),
-                curRec + amount
+                origUdhariAmt,
+                finalCumulativePaid
               );
               await supabase
                 .from('udhari_records')
@@ -439,10 +470,10 @@ export class CustomerPaymentService {
             let updatedInvBal = 0;
             let updatedInvTotal = 0;
             if (dbInvRow) {
-              const curInvPaid = Number(dbInvRow.paid_amount || 0);
+              const finalCumulativePaid = Number((authoritativePaid + amount).toFixed(2));
               const { grandTotal, paidAmount: newPaid, balanceAmount: newBal } = calculateInvoiceFinancials(
-                Number(dbInvRow.grand_total),
-                curInvPaid + amount
+                authoritativeTotal,
+                finalCumulativePaid
               );
               updatedInvPaid = newPaid;
               updatedInvBal = newBal;

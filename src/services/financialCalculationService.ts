@@ -139,26 +139,69 @@ export function calculateDaybookFinancials(
 }
 
 /**
+ * Calculates authoritative invoice outstanding balance from total and valid posted payments.
+ * Authoritative Formula: Outstanding = Math.max(0, Invoice Total - Sum of Valid Payments)
+ */
+export function calculateAuthoritativeInvoiceOutstanding(
+  grandTotalInput?: number | null,
+  validPaymentsInput?: number | { amount: number | null | undefined }[] | null
+): number {
+  const grandTotal = Math.max(0, Number((Number(grandTotalInput) || 0).toFixed(2)));
+  let sumPaid = 0;
+  if (Array.isArray(validPaymentsInput)) {
+    sumPaid = validPaymentsInput.reduce((acc, p) => acc + Math.max(0, Number(p?.amount) || 0), 0);
+  } else if (typeof validPaymentsInput === 'number') {
+    sumPaid = Math.max(0, validPaymentsInput);
+  }
+  sumPaid = Number(sumPaid.toFixed(2));
+  return Math.max(0, Number((grandTotal - sumPaid).toFixed(2)));
+}
+
+/**
+ * Calculates total customer outstanding across multiple invoices.
+ * Customer Outstanding = Sum of outstanding balance of all unpaid / partially-paid invoices.
+ */
+export function calculateCustomerOutstanding(
+  invoices: { balanceAmount?: number | null; grandTotal?: number | null; paidAmount?: number | null; status?: string }[]
+): number {
+  if (!Array.isArray(invoices)) return 0;
+  const total = invoices.reduce((acc, inv) => {
+    if (inv.status === 'Cancelled' || inv.status === 'Draft') return acc;
+    const bal = inv.balanceAmount !== undefined && inv.balanceAmount !== null
+      ? Number(inv.balanceAmount)
+      : Math.max(0, (Number(inv.grandTotal) || 0) - (Number(inv.paidAmount) || 0));
+    return acc + Math.max(0, bal);
+  }, 0);
+  return Number(total.toFixed(2));
+}
+
+/**
  * Validates whether an incoming payment amount would cause an overpayment.
+ * Enforces decimal-safe monetary arithmetic and user-friendly error formatting.
  */
 export function validatePaymentAmount(
   outstandingBalance: number,
   paymentAmount: number
-): { valid: boolean; error?: string } {
-  const amount = Number(paymentAmount) || 0;
-  const balance = Number(outstandingBalance) || 0;
+): { valid: boolean; error?: string; outstanding?: number; amount?: number; excess?: number } {
+  const amount = Number(Number(paymentAmount || 0).toFixed(2));
+  const balance = Number(Number(outstandingBalance || 0).toFixed(2));
 
   if (isNaN(amount) || amount <= 0) {
-    return { valid: false, error: 'Payment amount must be greater than ₹0.' };
+    return { valid: false, error: 'Payment amount must be greater than ₹0.', outstanding: balance, amount: 0, excess: 0 };
   }
 
   // Allow up to 0.05 margin for currency rounding
   if (amount > balance + 0.05) {
+    const excess = Math.max(0, Number((amount - balance).toFixed(2)));
     return {
       valid: false,
-      error: `Payment amount (₹${amount.toLocaleString('en-IN')}) exceeds outstanding balance (₹${balance.toLocaleString('en-IN')}). Overpayment rejected.`,
+      error: `Payment exceeds this invoice's outstanding balance.\nInvoice Outstanding: ₹${balance.toLocaleString('en-IN')}\nAmount Entered: ₹${amount.toLocaleString('en-IN')}\nExcess: ₹${excess.toLocaleString('en-IN')}`,
+      outstanding: balance,
+      amount,
+      excess,
     };
   }
 
-  return { valid: true };
+  return { valid: true, outstanding: balance, amount, excess: 0 };
 }
+
