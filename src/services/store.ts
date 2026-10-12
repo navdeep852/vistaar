@@ -1159,7 +1159,8 @@ class StoreService {
     // When Supabase is configured with an authenticated user, stock validation and atomic deduction are authoritatively handled by Supabase RPC
     const isFinalized = newInvoice.status === 'Issued' || newInvoice.status === 'Paid' || newInvoice.status === 'Partially Paid';
     const isRemoteAuthenticated = isSupabaseConfigured() && Boolean(supabaseAuthService.getUser());
-    if (isFinalized && !isRemoteAuthenticated) {
+    const shouldSkipStock = Boolean((invoiceData as any).skipStockDeduction);
+    if (isFinalized && !isRemoteAuthenticated && !shouldSkipStock) {
       // Validate stock for ALL items before deducting stock for any item (offline/local mode only)
       for (const item of newInvoice.items) {
         if (item.productId) {
@@ -1324,7 +1325,8 @@ class StoreService {
 
     // When Supabase is configured with an authenticated user, stock validation and atomic deduction are authoritatively handled by Supabase RPC
     const isRemoteAuth = isSupabaseConfigured() && Boolean(supabaseAuthService.getUser());
-    if (isFinalized && !wasFinalized && !isRemoteAuth) {
+    const shouldSkipStock = Boolean((updatedData as any).skipStockDeduction);
+    if (isFinalized && !wasFinalized && !isRemoteAuth && !shouldSkipStock) {
       for (const item of updatedInvoice.items) {
         if (item.productId) {
           const avail = this.getProductAvailableStock(item.productId);

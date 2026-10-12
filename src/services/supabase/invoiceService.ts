@@ -161,31 +161,55 @@ export class InvoiceService {
         invoice.paidAmount
       );
 
-      const { data: parent, error: parentErr } = await supabase
+      const invInsertPayload: Record<string, any> = {
+        workspace_id: wsId,
+        customer_id: (invoice.customerId && isValidUuid(invoice.customerId)) ? invoice.customerId : null,
+        invoice_number: invNumber,
+        customer_name: invoice.customerName || 'Walk-in Customer',
+        customer_phone: invoice.customerPhone || '',
+        customer_email: invoice.customerEmail || '',
+        quotation_id: ((invoice as any).quotationId && isValidUuid((invoice as any).quotationId)) ? (invoice as any).quotationId : (((invoice as any).quotation_id && isValidUuid((invoice as any).quotation_id)) ? (invoice as any).quotation_id : null),
+        status: initialStatus,
+        date: invoice.date || new Date().toISOString().split('T')[0],
+        due_date: invoice.dueDate || new Date().toISOString().split('T')[0],
+        subtotal: invoice.subtotal || 0,
+        discount_total: invoice.discountTotal || 0,
+        tax_total: invoice.taxTotal || 0,
+        grand_total: normGrandTotal,
+        paid_amount: normPaidAmount,
+        balance_amount: normBalanceAmount,
+      };
+
+      if (invoice.branchId && isValidUuid(invoice.branchId)) {
+        invInsertPayload.branch_id = invoice.branchId;
+      }
+
+      let { data: parent, error: parentErr } = await supabase
         .from('invoices')
-        .insert([{
-          workspace_id: wsId,
-          customer_id: (invoice.customerId && isValidUuid(invoice.customerId)) ? invoice.customerId : null,
-          invoice_number: invNumber,
-          customer_name: invoice.customerName || 'Walk-in Customer',
-          customer_phone: invoice.customerPhone || '',
-          customer_email: invoice.customerEmail || '',
-          quotation_id: ((invoice as any).quotationId && isValidUuid((invoice as any).quotationId)) ? (invoice as any).quotationId : (((invoice as any).quotation_id && isValidUuid((invoice as any).quotation_id)) ? (invoice as any).quotation_id : null),
-          status: initialStatus,
-          date: invoice.date || new Date().toISOString().split('T')[0],
-          due_date: invoice.dueDate || new Date().toISOString().split('T')[0],
-          subtotal: invoice.subtotal || 0,
-          discount_total: invoice.discountTotal || 0,
-          tax_total: invoice.taxTotal || 0,
-          grand_total: normGrandTotal,
-          paid_amount: normPaidAmount,
-          balance_amount: normBalanceAmount,
-          branch_id: invoice.branchId && isValidUuid(invoice.branchId) ? invoice.branchId : null,
-        }])
+        .insert([invInsertPayload])
         .select('id')
         .single();
 
+      // Resilience against unmigrated schema: if branch_id does not exist, strip and retry
+      if (parentErr && (parentErr.code === 'PGRST204' || parentErr.code === '42703') && invInsertPayload.branch_id !== undefined) {
+        console.warn('[createInvoice] invoices.branch_id not found in schema cache (PGRST204); retrying without branch_id');
+        delete invInsertPayload.branch_id;
+        const retryRes = await supabase
+          .from('invoices')
+          .insert([invInsertPayload])
+          .select('id')
+          .single();
+        parent = retryRes.data;
+        parentErr = retryRes.error;
+      }
+
       if (parentErr) {
+        console.error('[createInvoice] Invoices insert failed:', {
+          code: parentErr.code,
+          message: parentErr.message,
+          details: parentErr.details,
+          hint: parentErr.hint,
+        });
         const errStr = handleSupabaseError(parentErr, 'createInvoice');
         if (errStr.startsWith('Network Error')) {
           const newId = `inv-${Date.now()}`;
@@ -202,24 +226,59 @@ export class InvoiceService {
 
       // Step 2: Insert Child Invoice Items
       if (items && items.length > 0) {
-        const itemRows = items.map((item) => ({
-          workspace_id: wsId,
-          invoice_id: invoiceId,
-          branch_id: invoice.branchId && isValidUuid(invoice.branchId) ? invoice.branchId : null,
-          product_id: item.productId || null,
-          product_name: item.productName || item.name,
-          sku: item.sku || '',
-          unit: item.unit || 'Pcs',
-          quantity: item.quantity,
-          buy_price: item.buyPrice || 0,
-          selling_price: item.sellingPrice || item.price || 0,
-          tax_percent: item.taxPercent || 0,
-          tax_amount: item.taxAmount || 0,
-          total: item.total || (item.quantity * (item.sellingPrice || item.price || 0)),
-        }));
+        const itemRows = items.map((item) => {
+          const row: Record<string, any> = {
+            workspace_id: wsId,
+            invoice_id: invoiceId,
+            product_id: (item.productId && isValidUuid(item.productId)) ? item.productId : null,
+            product_name: item.productName || item.name || 'Item',
+            sku: item.sku || '',
+            unit: item.unit || 'Pcs',
+            quantity: item.quantity,
+            buy_price: item.buyPrice || 0,
+            selling_price: item.sellingPrice || item.price || 0,
+            tax_percent: item.taxPercent || 0,
+            tax_amount: item.taxAmount || 0,
+            total: item.total || (item.quantity * (item.sellingPrice || item.price || 0)),
+          };
+          if (invoice.branchId && isValidUuid(invoice.branchId)) {
+            row.branch_id = invoice.branchId;
+          }
+          if (item.partNumber) row.part_number = item.partNumber;
+          if (item.itemType) row.item_type = item.itemType;
+          if (item.description) row.description = item.description;
+          return row;
+        });
 
-        const { error: itemsErr } = await supabase.from('invoice_items').insert(itemRows);
+        let { error: itemsErr } = await supabase.from('invoice_items').insert(itemRows);
+
+        // Resilience against unmigrated schema: if extended item columns fail with PGRST204, strip to core columns and retry
+        if (itemsErr && (itemsErr.code === 'PGRST204' || itemsErr.code === '42703')) {
+          console.warn('[createInvoice.items] Line items column mismatch in schema cache (PGRST204); retrying with core columns');
+          const coreItemRows = items.map((item) => ({
+            workspace_id: wsId,
+            invoice_id: invoiceId,
+            product_id: (item.productId && isValidUuid(item.productId)) ? item.productId : null,
+            product_name: item.productName || item.name || 'Item',
+            sku: item.sku || '',
+            unit: item.unit || 'Pcs',
+            quantity: item.quantity,
+            buy_price: item.buyPrice || 0,
+            selling_price: item.sellingPrice || item.price || 0,
+            tax_percent: item.taxPercent || 0,
+            tax_amount: item.taxAmount || 0,
+            total: item.total || (item.quantity * (item.sellingPrice || item.price || 0)),
+          }));
+          const retryItems = await supabase.from('invoice_items').insert(coreItemRows);
+          itemsErr = retryItems.error;
+        }
+
         if (itemsErr) {
+          console.error('[createInvoice.items] Line items insert failed:', {
+            code: itemsErr.code,
+            message: itemsErr.message,
+            details: itemsErr.details,
+          });
           handleSupabaseError(itemsErr, 'createInvoice.items');
           await supabase.from('invoices').delete().eq('id', invoiceId);
           return { error: `Line item insert failed: ${itemsErr.message}` };
@@ -245,17 +304,26 @@ export class InvoiceService {
             ? invoice.status
             : (remaining <= 0.01 && total > 0 ? 'Paid' : (paid > 0 ? 'Partially Paid' : 'Issued'));
 
-        await supabase
+        const invUpdateFields: Record<string, any> = {
+          status: authoritativeStatus,
+          paid_amount: paid,
+          balance_amount: remaining,
+          updated_at: new Date().toISOString(),
+        };
+
+        const { error: updErr } = await supabase
           .from('invoices')
-          .update({
-            status: authoritativeStatus,
-            paid_amount: paid,
-            balance_amount: remaining,
-            is_stock_finalized: true,
-            updated_at: new Date().toISOString()
-          })
+          .update({ ...invUpdateFields, is_stock_finalized: true })
           .eq('id', invoiceId)
           .eq('workspace_id', wsId);
+
+        if (updErr && (updErr.code === 'PGRST204' || updErr.code === '42703')) {
+          await supabase
+            .from('invoices')
+            .update(invUpdateFields)
+            .eq('id', invoiceId)
+            .eq('workspace_id', wsId);
+        }
 
         const pStatus = remaining <= 0.01 ? 'PAID' : (paid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
 
@@ -733,11 +801,26 @@ export class InvoiceService {
             if (
               rpcErr.message?.includes('INSUFFICIENT_STOCK') ||
               rpcErr.message?.includes('OVERPAYMENT_REJECTED') ||
-              rpcErr.message?.includes('INVALID_AMOUNT')
+              rpcErr.message?.includes('INVALID_AMOUNT') ||
+              rpcErr.message?.includes('UNAUTHORIZED')
             ) {
               return { success: false, error: rpcErr.message };
             }
-            console.warn('[finalizeAuthoritativeInvoice] finalize_invoice_transaction RPC notice, executing fallback pipeline:', rpcErr);
+
+            // Structured Forensic Developer Logging (Section 22)
+            console.error('[Invoice Finalization Failed]', {
+              invoiceId: authoritativeInvoiceId,
+              workspaceId: wsId,
+              operation: 'finalize_invoice_transaction RPC',
+              supabaseCode: rpcErr.code || 'UNKNOWN',
+              table: 'invoices',
+              column: 'branch_id/rpc',
+              message: rpcErr.message,
+              details: rpcErr.details,
+              hint: rpcErr.hint,
+            });
+
+            console.warn('[finalizeAuthoritativeInvoice] finalize_invoice_transaction RPC notice, executing resilient fallback pipeline:', rpcErr);
           } else if (rpcData?.success) {
             isAtomicRpcExecuted = true;
             authoritativeInvoiceId = rpcData.invoice_id || authoritativeInvoiceId;
@@ -753,7 +836,12 @@ export class InvoiceService {
             }
           }
         } catch (rpcEx: any) {
-          console.warn('[finalizeAuthoritativeInvoice] RPC execution exception, falling back:', rpcEx);
+          console.error('[Invoice Finalization Failed - Exception]', {
+            invoiceId: authoritativeInvoiceId,
+            workspaceId: wsId,
+            operation: 'finalize_invoice_transaction RPC exception',
+            error: rpcEx.message || rpcEx,
+          });
         }
 
         // Fallback multi-step pipeline if RPC was unavailable (e.g. migration not applied yet)
@@ -762,19 +850,45 @@ export class InvoiceService {
             ...invoicePayload,
             invoiceNumber: authoritativeInvoiceNumber || undefined,
             quotationId: payload.quotationId,
-            status: effectiveStatus,
+            status: 'Draft',
             paidAmount: effectivePaid,
             balanceAmount: effectiveBalance,
           }, normalizedItems);
 
           if (!subRes.invoiceId || subRes.error) {
+            console.error('[Invoice Finalization Failed - Fallback]', {
+              invoiceId: authoritativeInvoiceId,
+              workspaceId: wsId,
+              operation: 'createInvoice fallback',
+              error: subRes.error,
+            });
             return {
               success: false,
-              error: subRes.error || 'Invoice finalization failed due to database error.',
+              error: subRes.error?.includes('insufficient stock')
+                ? subRes.error
+                : 'Unable to finalize invoice. No financial or stock changes were made. Please try again.',
             };
           }
 
           authoritativeInvoiceId = subRes.invoiceId;
+
+          // Transition invoice status in database
+          if (isValidUuid(authoritativeInvoiceId)) {
+            try {
+              await supabase
+                .from('invoices')
+                .update({
+                  status: effectiveStatus,
+                  paid_amount: effectivePaid,
+                  balance_amount: effectiveBalance,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', authoritativeInvoiceId)
+                .eq('workspace_id', wsId);
+            } catch (invUpErr) {
+              console.warn('[finalizeAuthoritativeInvoice] Supabase invoice status update notice:', invUpErr);
+            }
+          }
 
           if (payload.quotationId || payload.quotationNumber) {
             try {
@@ -808,6 +922,7 @@ export class InvoiceService {
         balanceAmount: effectiveBalance,
         paymentMethod: payload.paymentMode || 'Cash',
         paymentMode: payload.paymentMode || 'Cash',
+        skipStockDeduction: true,
       };
 
       let inv: Invoice;
@@ -858,9 +973,29 @@ export class InvoiceService {
       }
       safeSaveTenantStorage(LOCAL_INVOICES_KEY, localInvoices);
 
-      // Synchronize local store stock levels for products that were deducted
-      for (const [pId] of requestedByProduct.entries()) {
+      // Synchronize stock levels for products that were deducted
+      for (const [pId, req] of requestedByProduct.entries()) {
         try {
+          if (!isAtomicRpcExecuted) {
+            store.adjustStock(pId, 'Sale', -req.quantity, `Invoice Finalization #${inv.invoiceNumber}`, inv.invoiceNumber, payload.branchId);
+            if (isSupabaseConfigured() && isValidUuid(wsId)) {
+              const { data: currentProd } = await supabase
+                .from('products')
+                .select('current_stock')
+                .eq('workspace_id', wsId)
+                .eq('id', pId)
+                .maybeSingle();
+
+              if (currentProd) {
+                const newStock = Math.max(0, (Number(currentProd.current_stock) || 0) - req.quantity);
+                await supabase
+                  .from('products')
+                  .update({ current_stock: newStock, updated_at: new Date().toISOString() })
+                  .eq('workspace_id', wsId)
+                  .eq('id', pId);
+              }
+            }
+          }
           const remainingStock = await productService.getProductAvailableStock(pId, payload.branchId);
           store.syncProductStock(pId, remainingStock);
         } catch {
@@ -868,78 +1003,82 @@ export class InvoiceService {
         }
       }
 
-      // 6. Post Authoritative Daybook Transaction
+      // 7. Post Authoritative Daybook Transaction (Only executed if RPC was not already committed remotely)
       const pStatusTag = effectiveBalance <= 0.01 ? 'PAID' : (effectivePaid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
       const invoiceDesc = payload.source === 'QUOTATION'
         ? `Invoice #${inv.invoiceNumber} (Converted from Quotation #${payload.quotationNumber || payload.quotationId})`
         : `Invoice #${inv.invoiceNumber}`;
 
-      try {
-        const { daybookService } = await import('./daybookService');
-        await daybookService.recordFinancialTransaction({
-          referenceType: 'INVOICE',
-          referenceId: authoritativeInvoiceId,
-          referenceNumber: inv.invoiceNumber,
-          branchId: payload.branchId,
-          transactionType: 'SALE',
-          direction: 'IN',
-          amount: effectivePaid, // Inflow = actual cash received
-          totalAmount: finalGrandTotal, // Gross sales volume
-          remainingAmount: effectiveBalance,
-          paymentStatus: pStatusTag,
-          paymentMode: effectivePaid > 0 ? (payload.paymentMode || 'Cash') : 'Cash',
-          partyType: 'customer',
-          partyId: payload.customerId || undefined,
-          partyName: payload.customerName || 'Customer',
-          description: invoiceDesc,
-          transactionDate: inv.date,
-        });
-      } catch (dbErr) {
-        console.warn('[finalizeAuthoritativeInvoice] Daybook sync notice:', dbErr);
-      }
-
-      // 7. Authoritative Cashbook Entry & Payment Posting (STRICT RULE: ONLY when effectivePaid > 0)
-      if (effectivePaid > 0) {
+      if (!isAtomicRpcExecuted) {
         try {
-          const { cashbookService } = await import('./cashbookService');
-          await cashbookService.recordCashbookEntry({
-            sourceType: 'INVOICE_PAYMENT',
-            sourceId: authoritativeInvoiceId,
+          const { daybookService } = await import('./daybookService');
+          await daybookService.recordFinancialTransaction({
+            referenceType: 'INVOICE',
+            referenceId: authoritativeInvoiceId,
             referenceNumber: inv.invoiceNumber,
             branchId: payload.branchId,
+            transactionType: 'SALE',
             direction: 'IN',
-            amount: effectivePaid,
-            paymentMethod: payload.paymentMode || 'Cash',
+            amount: effectivePaid, // Inflow = actual cash received
+            totalAmount: finalGrandTotal, // Gross sales volume
+            remainingAmount: effectiveBalance,
+            paymentStatus: pStatusTag,
+            paymentMode: effectivePaid > 0 ? (payload.paymentMode || 'Cash') : 'Cash',
+            partyType: 'customer',
+            partyId: payload.customerId || undefined,
             partyName: payload.customerName || 'Customer',
-            description: `Payment receipt for Invoice #${inv.invoiceNumber}`,
-            notes: payload.paymentNotes,
-            transactionDate: payload.paymentDate || inv.date,
+            description: invoiceDesc,
+            transactionDate: inv.date,
           });
-        } catch (cbErr) {
-          console.warn('[finalizeAuthoritativeInvoice] Cashbook entry notice:', cbErr);
+        } catch (dbErr) {
+          console.warn('[finalizeAuthoritativeInvoice] Daybook sync notice:', dbErr);
         }
 
-        try {
-          const { paymentService } = await import('./paymentService');
-          await paymentService.createPayment({
-            invoiceId: authoritativeInvoiceId,
-            invoiceNumber: inv.invoiceNumber,
-            branchId: payload.branchId,
-            customerId: payload.customerId,
-            customerName: payload.customerName || 'Customer',
-            amount: effectivePaid,
-            date: payload.paymentDate || inv.date,
-            method: (payload.paymentMode || 'Cash') as any,
-            referenceNo: payload.paymentReference,
-            notes: payload.paymentNotes || (payload.source === 'QUOTATION' ? `Payment recorded at quotation conversion (${payload.quotationNumber || inv.invoiceNumber})` : `Payment recorded at invoice finalization`),
-            isUpfrontInvoicePayment: true,
-          });
-        } catch (payErr) {
-          console.warn('[finalizeAuthoritativeInvoice] Cashbook/Payment sync notice:', payErr);
+        // 8. Authoritative Cashbook Entry & Upfront Payment Posting (STRICT RULE: ONLY when effectivePaid > 0)
+        if (effectivePaid > 0) {
+          try {
+            const { cashbookService } = await import('./cashbookService');
+            await cashbookService.recordCashbookEntry({
+              sourceType: 'INVOICE_PAYMENT',
+              sourceId: authoritativeInvoiceId,
+              referenceNumber: inv.invoiceNumber,
+              branchId: payload.branchId,
+              direction: 'IN',
+              amount: effectivePaid,
+              paymentMethod: payload.paymentMode || 'Cash',
+              partyName: payload.customerName || 'Customer',
+              description: `Payment receipt for Invoice #${inv.invoiceNumber}`,
+              notes: payload.paymentNotes,
+              transactionDate: payload.paymentDate || inv.date,
+            });
+          } catch (cbErr) {
+            console.warn('[finalizeAuthoritativeInvoice] Cashbook entry notice:', cbErr);
+          }
+
+          try {
+            if (isSupabaseConfigured() && isValidUuid(wsId) && isValidUuid(authoritativeInvoiceId)) {
+              const upfrontNotes = payload.paymentNotes || (payload.source === 'QUOTATION' ? `Payment recorded at quotation conversion (${payload.quotationNumber || inv.invoiceNumber})` : `Payment recorded at invoice finalization`);
+              await supabase.from('payments').insert([{
+                workspace_id: wsId,
+                branch_id: payload.branchId && isValidUuid(payload.branchId) ? payload.branchId : null,
+                invoice_id: authoritativeInvoiceId,
+                invoice_number: inv.invoiceNumber,
+                customer_id: isValidUuid(payload.customerId) ? payload.customerId : null,
+                customer_name: payload.customerName || 'Customer',
+                amount: effectivePaid,
+                payment_date: payload.paymentDate || inv.date,
+                payment_method: payload.paymentMode || 'Cash',
+                reference_number: payload.paymentReference || null,
+                notes: upfrontNotes,
+              }]);
+            }
+          } catch (payErr) {
+            console.warn('[finalizeAuthoritativeInvoice] Remote payment sync notice:', payErr);
+          }
         }
       }
 
-      // 8. Authoritative Udhari Receivable Synchronization
+      // 9. Authoritative Udhari Receivable Synchronization
       try {
         store.syncInvoiceUdhari({
           invoiceId: authoritativeInvoiceId,
@@ -954,19 +1093,21 @@ export class InvoiceService {
           dueDate: inv.dueDate,
         });
 
-        const { udhariService } = await import('./udhariService');
-        await udhariService.syncInvoiceUdhari({
-          invoiceId: authoritativeInvoiceId,
-          invoiceNumber: inv.invoiceNumber,
-          branchId: payload.branchId || inv.branchId,
-          customerId: payload.customerId,
-          customerName: payload.customerName || 'Customer',
-          customerPhone: payload.customerPhone || '9999999999',
-          grandTotal: finalGrandTotal,
-          paidAmount: effectivePaid,
-          balanceAmount: effectiveBalance,
-          dueDate: inv.dueDate,
-        });
+        if (!isAtomicRpcExecuted) {
+          const { udhariService } = await import('./udhariService');
+          await udhariService.syncInvoiceUdhari({
+            invoiceId: authoritativeInvoiceId,
+            invoiceNumber: inv.invoiceNumber,
+            branchId: payload.branchId || inv.branchId,
+            customerId: payload.customerId,
+            customerName: payload.customerName || 'Customer',
+            customerPhone: payload.customerPhone || '9999999999',
+            grandTotal: finalGrandTotal,
+            paidAmount: effectivePaid,
+            balanceAmount: effectiveBalance,
+            dueDate: inv.dueDate,
+          });
+        }
       } catch (uErr) {
         console.warn('[finalizeAuthoritativeInvoice] Udhari sync notice:', uErr);
       }
