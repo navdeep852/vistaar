@@ -212,7 +212,13 @@ export class CustomerPaymentService {
           return { success: false, error: rpcData.error || rpcData.message || 'Payment validation rejected.' };
         } else if (rpcErr) {
           // If the error was explicitly a validation rejection from the database, bubble up immediately
-          if (rpcErr.message?.includes('Payment exceeds') || rpcErr.message?.includes('Overpayment') || rpcErr.message?.includes('greater than zero')) {
+          if (
+            rpcErr.message?.includes('Payment exceeds') ||
+            rpcErr.message?.includes('Overpayment') ||
+            rpcErr.message?.includes('greater than zero') ||
+            rpcErr.message?.includes('already fully paid') ||
+            rpcErr.message?.includes('UNAUTHORIZED')
+          ) {
             return { success: false, error: rpcErr.message };
           }
 

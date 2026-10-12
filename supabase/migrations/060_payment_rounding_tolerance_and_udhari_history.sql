@@ -417,3 +417,6 @@ BEGIN
     );
 END;
 $$;
+
+GRANT EXECUTE ON FUNCTION public.post_customer_payment_atomic(JSONB) TO authenticated, anon, service_role;
+NOTIFY pgrst, 'reload schema';
