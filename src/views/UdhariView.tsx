@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Scale,
   Search,
@@ -112,7 +112,10 @@ export const UdhariView: React.FC = () => {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   const settings = store.getSettings();
-  const metrics = store.getUdhariMetrics();
+  const metrics = useMemo(
+    () => store.getUdhariMetrics({ branchId: currentBranch?.id, isMainBranch: currentBranch?.isMainBranch }),
+    [currentBranch?.id, currentBranch?.isMainBranch, udharis]
+  );
 
   const resolveInvoiceForUdhari = (u: UdhariRecord): Invoice | undefined => {
     const allInvoices = store.getInvoices();
@@ -655,6 +658,12 @@ export const UdhariView: React.FC = () => {
           <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl">
             Track customer Udhari, partial payments, automated overdue alerts, and auditable payment histories.
           </p>
+          <div className="flex items-center gap-2 mt-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/10 text-slate-200 text-[11px] font-semibold border border-white/10 backdrop-blur-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              {currentBranch ? `Branch Scope: ${currentBranch.branchName}` : 'Scope: All Authorized Branches'}
+            </span>
+          </div>
         </div>
 
         <button

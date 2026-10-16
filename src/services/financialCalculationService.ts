@@ -268,3 +268,132 @@ export function validatePaymentAmount(
   return { valid: true, outstanding: balance, amount, excess: 0 };
 }
 
+export interface AuthoritativeUdhariMetrics {
+  totalUdhari: number;      // Total Udhari Issued
+  totalReceived: number;    // Total Recovered
+  received: number;         // Total Recovered (backwards-compatible alias)
+  outstanding: number;      // Net Outstanding
+  overdue: number;          // Overdue Credit
+  activeCount: number;      // Number of open credit records
+  settledCount: number;     // Number of settled credit records
+}
+
+/**
+ * Authoritative Centralized Calculation of Udhari / Credit Metrics (Section 4 & 5).
+ * 
+ * Guarantees:
+ * 1. Scope consistency: Filters strictly by branchId when specified, excluding other branches.
+ * 2. Arithmetic integrity: Net Outstanding = Sum of individual authoritative remaining balances.
+ * 3. Overdue invariant: 0 <= Overdue Credit <= Net Outstanding.
+ * 4. Settlement consistency: Fully settled records (bal <= 0.005) have outstanding = 0 and are excluded from overdue.
+ * 5. Decimal precision: All metrics rounded strictly to 2 decimal places (paise).
+ */
+export function calculateAuthoritativeUdhariMetrics(
+  records: Array<{
+    id?: string;
+    originalAmount?: number | null;
+    original_amount?: number | null;
+    totalReceived?: number | null;
+    total_received?: number | null;
+    outstandingAmount?: number | null;
+    outstanding_amount?: number | null;
+    dueDate?: string | null;
+    due_date?: string | null;
+    status?: string | null;
+    branchId?: string | null;
+    branch_id?: string | null;
+    createdAt?: string | null;
+    created_at?: string | null;
+    payments?: any[];
+  }>,
+  options?: {
+    branchId?: string | null;
+    isMainBranch?: boolean;
+    asOfDate?: string | null;
+  }
+): AuthoritativeUdhariMetrics {
+  const todayStr = new Date().toISOString().split('T')[0];
+  const targetDate = options?.asOfDate || todayStr;
+  const isHistorical = targetDate < todayStr;
+  const targetBranch = options?.branchId;
+  const isMain = options?.isMainBranch ?? true;
+
+  let totalUdhari = 0;
+  let totalReceived = 0;
+  let outstanding = 0;
+  let overdue = 0;
+  let activeCount = 0;
+  let settledCount = 0;
+
+  for (const r of records || []) {
+    // 1. Branch filtering (strict isolation)
+    if (targetBranch && targetBranch !== 'ALL') {
+      const b = r.branchId || r.branch_id;
+      const matchesBranch = b ? b === targetBranch : isMain;
+      if (!matchesBranch) continue;
+    }
+
+    // 2. Historical cutoff (if applicable)
+    const created = (r.createdAt || r.created_at || '').split('T')[0];
+    if (created && created > targetDate) continue;
+
+    const orig = Math.max(0, roundTo2(Number(r.originalAmount ?? r.original_amount ?? 0)));
+    const curRec = Math.max(0, roundTo2(Number(r.totalReceived ?? r.total_received ?? 0)));
+    const curBal = Math.max(0, roundTo2(Number(r.outstandingAmount ?? r.outstanding_amount ?? Math.max(0, orig - curRec))));
+
+    let balAsOf = curBal;
+    let recAsOf = curRec;
+
+    if (isHistorical) {
+      const payments = Array.isArray(r.payments) ? r.payments : [];
+      let paymentsAfter = 0;
+      for (const p of payments) {
+        const pDate = (p.payment_date || p.paymentDate || p.date || p.created_at || p.createdAt || '').split('T')[0];
+        if (pDate && pDate > targetDate) {
+          paymentsAfter += Number(p.amount || 0);
+        }
+      }
+      balAsOf = Math.min(orig, roundTo2(curBal + paymentsAfter));
+      recAsOf = Math.max(0, roundTo2(curRec - paymentsAfter));
+    }
+
+    // Normalize with settlement threshold
+    if (balAsOf <= FINANCIAL_EPSILON) {
+      balAsOf = 0;
+      recAsOf = orig;
+      settledCount += 1;
+    } else {
+      activeCount += 1;
+    }
+
+    totalUdhari += orig;
+    totalReceived += recAsOf;
+    outstanding += balAsOf;
+
+    // Overdue Credit calculation: only open balances whose dueDate < targetDate
+    if (balAsOf > FINANCIAL_EPSILON) {
+      const due = r.dueDate || r.due_date;
+      if (due && due < targetDate) {
+        overdue += balAsOf;
+      }
+    }
+  }
+
+  // Ensure invariants:
+  // 1. All amounts rounded to 2 decimals
+  // 2. 0 <= Overdue Credit <= Net Outstanding
+  // 3. Outstanding >= 0
+  const normalizedOutstanding = roundTo2(Math.max(0, outstanding));
+  const normalizedOverdue = roundTo2(Math.min(normalizedOutstanding, Math.max(0, overdue)));
+
+  return {
+    totalUdhari: roundTo2(totalUdhari),
+    totalReceived: roundTo2(totalReceived),
+    received: roundTo2(totalReceived),
+    outstanding: normalizedOutstanding,
+    overdue: normalizedOverdue,
+    activeCount,
+    settledCount,
+  };
+}
+

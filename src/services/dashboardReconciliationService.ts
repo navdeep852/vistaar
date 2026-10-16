@@ -5,6 +5,7 @@ import { counterSaleService } from './supabase/counterSaleService';
 import { cashbookService } from './supabase/cashbookService';
 import { supabaseAuthService } from './supabaseAuth';
 import { ResolvedDateRange } from '../lib/dateRange';
+import { calculateAuthoritativeUdhariMetrics } from './financialCalculationService';
 
 export interface ReconciliationReport {
   timestamp: string;
@@ -38,14 +39,14 @@ export class DashboardReconciliationService {
    * Runs an authoritative mathematical verification comparing Dashboard calculations
    * against individual source reports for the same date range.
    */
-  public async runAudit(range: ResolvedDateRange): Promise<ReconciliationReport> {
+  public async runAudit(range: ResolvedDateRange, branchId?: string): Promise<ReconciliationReport> {
     const details: string[] = [];
 
     const wsId = await supabaseAuthService.getAuthoritativeWorkspaceId();
 
     // 1. Dashboard calculations
-    const salesMetrics = await salesAnalyticsService.getSalesMetrics(range, true, wsId);
-    const udhariMetrics = await udhariService.getAuthoritativeUdhariMetricsAsOf(range.endDateStr, wsId);
+    const salesMetrics = await salesAnalyticsService.getSalesMetrics(range, true, wsId, branchId);
+    const udhariMetrics = await udhariService.getAuthoritativeUdhariMetricsAsOf(range.endDateStr, wsId, branchId);
 
     // 2. Direct Source Queries for same period
     // Source Invoices
@@ -87,24 +88,21 @@ export class DashboardReconciliationService {
     }
 
     // 3. Udhari Ledger verification
-    const udhariLedgerRes = await udhariService.getUdhariRecords();
+    const udhariLedgerRes = await udhariService.getUdhariRecords(wsId, { branchId });
     const rawUdharis = udhariLedgerRes.data || [];
-    let ledgerSum = 0;
-    for (const u of rawUdharis) {
-      const created = (u.createdAt || u.created_at || '').split('T')[0];
-      if (created <= range.endDateStr) {
-        ledgerSum += Number(u.outstandingAmount || u.outstanding_amount || 0);
-      }
-    }
+    const ledgerMetrics = calculateAuthoritativeUdhariMetrics(rawUdharis, {
+      branchId,
+      asOfDate: range.endDateStr,
+    });
+    const ledgerSum = ledgerMetrics.outstanding;
 
     const discrepancyUdhari = Math.abs(udhariMetrics.outstanding - ledgerSum);
-    // Allow slight variance only if historical rollback payments occurred
-    const isUdhariConsistent = range.isHistorical || discrepancyUdhari <= 0.05;
+    const isUdhariConsistent = discrepancyUdhari <= 0.05;
 
     if (isUdhariConsistent) {
-      details.push(`Udhari Audit PASSED: Dashboard Outstanding Udhari (₹${udhariMetrics.outstanding}) matches Ledger Balance.`);
+      details.push(`Udhari Audit PASSED: Dashboard Outstanding Udhari (₹${udhariMetrics.outstanding}) matches Ledger Balance (₹${ledgerSum}).`);
     } else {
-      details.push(`Udhari Audit NOTICE: Dashboard shows ₹${udhariMetrics.outstanding}, raw sum shows ₹${ledgerSum}.`);
+      details.push(`Udhari Audit MISMATCH: Dashboard shows ₹${udhariMetrics.outstanding}, but ledger sum shows ₹${ledgerSum}. Variance: ₹${discrepancyUdhari}`);
     }
 
     const overallStatus: 'PASS' | 'WARNING' | 'FAIL' =

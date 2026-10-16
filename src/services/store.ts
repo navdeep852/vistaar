@@ -43,6 +43,8 @@ import {
   calculateUdhariFinancials,
   calculateDaybookFinancials,
   calculateAuthoritativeInvoiceOutstanding,
+  calculateAuthoritativeUdhariMetrics,
+  AuthoritativeUdhariMetrics,
   validatePaymentAmount,
   PAYMENT_TOLERANCE,
 } from './financialCalculationService';
@@ -290,6 +292,9 @@ class StoreService {
       if (linkedU) {
         linkedU.invoiceId = inv.id;
         linkedU.originalAmount = inv.grandTotal;
+        if (inv.branchId && !linkedU.branchId) {
+          linkedU.branchId = inv.branchId;
+        }
         // Prioritize the highest confirmed received amount between invoice and udhari
         const effectiveRec = Math.max(Number(linkedU.totalReceived) || 0, inv.paidAmount);
         const udFin = calculateUdhariFinancials(inv.grandTotal, effectiveRec, linkedU.dueDate || inv.dueDate);
@@ -302,6 +307,27 @@ class StoreService {
         inv.paidAmount = linkedU.totalReceived;
         inv.balanceAmount = linkedU.outstandingAmount;
         inv.status = inv.balanceAmount <= 0.005 ? 'Paid' : (inv.paidAmount > 0 ? 'Partially Paid' : 'Issued');
+      } else if (inv.balanceAmount > 0.005) {
+        // Automatic repair: if an issued/partially-paid invoice with an outstanding balance
+        // has no linked Udhari entry, create it so Invoices and Udhari ledger stay 100% reconciled!
+        const udFin = calculateUdhariFinancials(inv.grandTotal, inv.paidAmount, inv.dueDate);
+        const newUdhari: UdhariRecord = {
+          id: `UD-${inv.invoiceNumber}`,
+          branchId: inv.branchId,
+          customerId: inv.customerId,
+          invoiceId: inv.id,
+          customerNameSnapshot: (inv.customerName || 'Customer').trim(),
+          phoneSnapshot: (inv.customerPhone || '9999999999').trim(),
+          originalAmount: udFin.originalAmount,
+          totalReceived: udFin.totalReceived,
+          outstandingAmount: udFin.outstandingAmount,
+          dueDate: inv.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
+          notes: `Invoice #${inv.invoiceNumber}`,
+          status: udFin.status,
+          createdAt: inv.createdAt || new Date().toISOString(),
+          updatedAt: inv.updatedAt || new Date().toISOString(),
+        };
+        udharis.unshift(newUdhari);
       }
     }
 
@@ -2439,64 +2465,18 @@ class StoreService {
     return true;
   }
 
-  public getUdhariMetrics() {
+  public getUdhariMetrics(options?: { branchId?: string; isMainBranch?: boolean; asOfDate?: string }): AuthoritativeUdhariMetrics {
     const udharis = this.getUdharis();
-    const totalUdhari = udharis.reduce((acc, u) => acc + u.originalAmount, 0);
-    const outstanding = udharis.reduce((acc, u) => acc + u.outstandingAmount, 0);
-    const received = udharis.reduce((acc, u) => acc + u.totalReceived, 0);
-    const overdue = udharis.filter((u) => u.status === 'OVERDUE').reduce((acc, u) => acc + u.outstandingAmount, 0);
-
-    return { totalUdhari, outstanding, received, overdue };
+    return calculateAuthoritativeUdhariMetrics(udharis, options);
   }
 
-  public getUdhariMetricsAsOf(asOfDateStr?: string) {
-    const today = new Date().toISOString().split('T')[0];
-    const targetDate = asOfDateStr || today;
-    const isHistorical = targetDate < today;
-
+  public getUdhariMetricsAsOf(asOfDateStr?: string, branchId?: string, isMainBranch?: boolean): AuthoritativeUdhariMetrics {
     const udharis = this.getUdharis();
-    const payments = this.getUdhariPayments();
-
-    let totalUdhari = 0;
-    let outstanding = 0;
-    let received = 0;
-    let overdue = 0;
-
-    for (const u of udharis) {
-      const created = (u.createdAt || '').split('T')[0];
-      if (created && created > targetDate) continue;
-
-      const orig = Number(u.originalAmount) || 0;
-      const curOutstanding = Number(u.outstandingAmount) || 0;
-      const curReceived = Number(u.totalReceived) || 0;
-
-      let balAsOf = curOutstanding;
-      let recAsOf = curReceived;
-
-      if (isHistorical) {
-        let paymentsAfter = 0;
-        for (const p of payments) {
-          if (p.udhariId === u.id) {
-            const pDate = (p.paymentDate || p.createdAt || '').split('T')[0];
-            if (pDate && pDate > targetDate) {
-              paymentsAfter += Number(p.amount) || 0;
-            }
-          }
-        }
-        balAsOf = Math.min(orig, curOutstanding + paymentsAfter);
-        recAsOf = Math.max(0, curReceived - paymentsAfter);
-      }
-
-      totalUdhari += orig;
-      outstanding += balAsOf;
-      received += recAsOf;
-
-      if (balAsOf > 0.01 && u.dueDate && u.dueDate < targetDate) {
-        overdue += balAsOf;
-      }
-    }
-
-    return { totalUdhari, outstanding, received, overdue };
+    return calculateAuthoritativeUdhariMetrics(udharis, {
+      branchId,
+      isMainBranch,
+      asOfDate: asOfDateStr,
+    });
   }
 
   // --- INVENTORY MANAGEMENT METHODS ---

@@ -9,6 +9,7 @@ import {
 } from '../../types';
 import { ResolvedDateRange, resolveDateRange } from '../../lib/dateRange';
 import { safeGetTenantStorage, safeGetTenantItem } from './safeStorage';
+import { udhariService } from './udhariService';
 
 export interface AnalyticsQueryOptions {
   workspaceId?: string;
@@ -187,27 +188,13 @@ export class AnalyticsService {
         }
 
         // 4. Authoritative Udhari Outstanding Balance
-        let udhQuery = supabase
-          .from('invoices')
-          .select('balance_amount, due_date, branch_id')
-          .eq('workspace_id', wsId)
-          .in('status', ['Issued', 'Partially Paid', 'issued', 'partially paid'])
-          .gt('balance_amount', 0);
-
-        if (options.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
-          udhQuery = udhQuery.eq('branch_id', options.branchId);
-        }
-
-        const { data: udhData } = await udhQuery;
-        if (udhData) {
-          for (const u of udhData) {
-            const bal = Number(u.balance_amount || 0);
-            outstandingUdhari += bal;
-            if (u.due_date && u.due_date < todayStr) {
-              overdueUdhari += bal;
-            }
-          }
-        }
+        const udhRes = await udhariService.getAuthoritativeUdhariMetricsAsOf(
+          options.endDate,
+          wsId,
+          options.branchId
+        );
+        outstandingUdhari = udhRes.outstanding;
+        overdueUdhari = udhRes.overdue;
       } catch (e) {
         console.warn('[AnalyticsService] Supabase query notice:', e);
       }

@@ -4,7 +4,7 @@ import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from './safeStorage';
 import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
-import { calculateUdhariFinancials } from '../financialCalculationService';
+import { calculateUdhariFinancials, calculateAuthoritativeUdhariMetrics } from '../financialCalculationService';
 import { getActiveBranchId } from './branchService';
 
 const LOCAL_UDHARI_KEY = 'vistaar_local_udharis_db';
@@ -451,59 +451,28 @@ export class UdhariService {
     }
 
     const records = res.data || [];
-    let totalOutstanding = 0;
-    let totalUdhari = 0;
-    let totalReceived = 0;
-    let overdue = 0;
-    let activeCount = 0;
-
-    for (const r of records) {
-      const createdDate = (r.createdAt || r.created_at || '').split('T')[0];
-      // Exclude udhari records created AFTER targetDate (did not exist yet)
-      if (createdDate && createdDate > targetDate) {
-        continue;
-      }
-
-      const orig = Number(r.originalAmount || r.original_amount || 0);
-      const currentOutstanding = Number(r.outstandingAmount || r.outstanding_amount || 0);
-      const currentReceived = Number(r.totalReceived || r.total_received || 0);
-      const payments = Array.isArray(r.payments) ? r.payments : [];
-
-      let balAsOf = currentOutstanding;
-      let recAsOf = currentReceived;
-
-      if (isHistorical) {
-        // Payments made AFTER targetDate need to be added back to the outstanding balance
-        let paymentsAfterTarget = 0;
-        for (const p of payments) {
-          const pDate = (p.payment_date || p.paymentDate || p.created_at || p.createdAt || '').split('T')[0];
-          if (pDate && pDate > targetDate) {
-            paymentsAfterTarget += Number(p.amount || 0);
-          }
-        }
-        balAsOf = Math.min(orig, currentOutstanding + paymentsAfterTarget);
-        recAsOf = Math.max(0, currentReceived - paymentsAfterTarget);
-      }
-
-      totalUdhari += orig;
-      totalReceived += recAsOf;
-      totalOutstanding += balAsOf;
-
-      if (balAsOf > 0.01) {
-        activeCount += 1;
-        const dueDate = r.dueDate || r.due_date;
-        if (dueDate && dueDate < targetDate) {
-          overdue += balAsOf;
-        }
-      }
+    let mainBranchId = safeGetTenantItem('main_branch_id');
+    if (!mainBranchId) {
+      try {
+        const storedBranches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+        const mb = storedBranches.find((b: any) => b.isMainBranch || b.branchCode === 'MAIN') || storedBranches[0];
+        if (mb?.id) mainBranchId = mb.id;
+      } catch {}
     }
+    const isMain = !branchId || branchId === 'ALL' || (mainBranchId && branchId === mainBranchId) || String(branchId).toLowerCase().includes('main');
+
+    const metrics = calculateAuthoritativeUdhariMetrics(records, {
+      branchId: branchId && branchId !== 'ALL' ? branchId : undefined,
+      isMainBranch: isMain,
+      asOfDate: targetDate,
+    });
 
     return {
-      outstanding: Math.round(totalOutstanding * 100) / 100,
-      totalUdhari: Math.round(totalUdhari * 100) / 100,
-      totalReceived: Math.round(totalReceived * 100) / 100,
-      overdue: Math.round(overdue * 100) / 100,
-      activeCount,
+      outstanding: metrics.outstanding,
+      totalUdhari: metrics.totalUdhari,
+      totalReceived: metrics.totalReceived,
+      overdue: metrics.overdue,
+      activeCount: metrics.activeCount,
     };
   }
 }
