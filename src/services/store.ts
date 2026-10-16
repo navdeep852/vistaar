@@ -274,39 +274,43 @@ class StoreService {
         sumPaid = Math.min(inv.grandTotal, Number(inv.paidAmount) || 0);
       }
 
-      inv.paidAmount = sumPaid;
-      inv.balanceAmount = Math.max(0, Number((inv.grandTotal - sumPaid).toFixed(2)));
-      inv.status = inv.balanceAmount <= 0.01 ? 'Paid' : (sumPaid > 0 ? 'Partially Paid' : 'Issued');
+      const fin = calculateInvoiceFinancials(inv.grandTotal, sumPaid, inv.status);
+      inv.grandTotal = fin.grandTotal;
+      inv.paidAmount = fin.paidAmount;
+      inv.balanceAmount = fin.balanceAmount;
+      inv.status = fin.status;
 
       // Sync linked Udhari
       const linkedU = udharis.find(
-        (u) => (u.invoiceId && u.invoiceId === inv.id) ||
+        (u) => (u.invoiceId && (u.invoiceId === inv.id || u.invoiceId === inv.invoiceNumber)) ||
                u.id === `UD-${inv.invoiceNumber}` ||
-               (u.udhariCode && u.udhariCode === `UD-${inv.invoiceNumber}`)
+               (u.udhariCode && (u.udhariCode === `UD-${inv.invoiceNumber}` || u.udhariCode === inv.invoiceNumber)) ||
+               (u.notes && u.notes.includes(inv.invoiceNumber))
       );
       if (linkedU) {
         linkedU.invoiceId = inv.id;
         linkedU.originalAmount = inv.grandTotal;
         // Prioritize the highest confirmed received amount between invoice and udhari
         const effectiveRec = Math.max(Number(linkedU.totalReceived) || 0, inv.paidAmount);
-        linkedU.totalReceived = Math.min(linkedU.originalAmount, effectiveRec);
-        linkedU.outstandingAmount = Math.max(0, Number((linkedU.originalAmount - linkedU.totalReceived).toFixed(2)));
-        linkedU.status = linkedU.outstandingAmount <= 0.01 ? 'PAID' : (linkedU.totalReceived > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+        const udFin = calculateUdhariFinancials(inv.grandTotal, effectiveRec, linkedU.dueDate || inv.dueDate);
+        linkedU.originalAmount = udFin.originalAmount;
+        linkedU.totalReceived = udFin.totalReceived;
+        linkedU.outstandingAmount = udFin.outstandingAmount;
+        linkedU.status = udFin.status;
 
         // Ensure invoice matches linked Udhari strictly
         inv.paidAmount = linkedU.totalReceived;
         inv.balanceAmount = linkedU.outstandingAmount;
-        inv.status = inv.balanceAmount <= 0.01 ? 'Paid' : (inv.paidAmount > 0 ? 'Partially Paid' : 'Issued');
+        inv.status = inv.balanceAmount <= 0.005 ? 'Paid' : (inv.paidAmount > 0 ? 'Partially Paid' : 'Issued');
       }
     }
 
     // Reconcile unlinked (manual) udharis
     for (const u of udharis) {
       if (!u.invoiceId) {
-        const orig = Number(u.originalAmount) || 0;
-        const rec = Number(u.totalReceived) || 0;
-        u.outstandingAmount = Math.max(0, Number((orig - rec).toFixed(2)));
-        u.status = u.outstandingAmount <= 0.01 ? 'PAID' : (rec > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+        const udFin = calculateUdhariFinancials(u.originalAmount, u.totalReceived, u.dueDate);
+        u.outstandingAmount = udFin.outstandingAmount;
+        u.status = udFin.status;
       }
     }
 
@@ -359,8 +363,14 @@ class StoreService {
         found.status = remote.status || found.status;
         found.originalAmount = Number(remote.originalAmount ?? remote.original_amount ?? found.originalAmount) || 0;
         if (remote.dbId) found.dbId = remote.dbId;
+        if (remote.invoiceId && !found.invoiceId) found.invoiceId = remote.invoiceId;
+        if (remote.invoice_id && !found.invoiceId) found.invoiceId = remote.invoice_id;
+        if (remote.udhari_code && !found.udhariCode) found.udhariCode = remote.udhari_code;
       } else {
-        this.state.udharis.push(remote);
+        const item = { ...remote };
+        if (item.invoice_id && !item.invoiceId) item.invoiceId = item.invoice_id;
+        if (item.udhari_code && !item.udhariCode) item.udhariCode = item.udhari_code;
+        this.state.udharis.push(item);
       }
     }
     this.reconcileStateLedgers(this.state);
@@ -1254,7 +1264,7 @@ class StoreService {
       const saleIdx = localDaybook.findIndex(
         (t: any) => t.referenceType === 'INVOICE' && (t.referenceId === newInvoice.id || t.referenceNumber === newInvoice.invoiceNumber)
       );
-      const pStatus = newInvoice.balanceAmount <= 0.01 ? 'PAID' : (newInvoice.paidAmount > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+      const pStatus = newInvoice.balanceAmount <= 0.005 ? 'PAID' : (newInvoice.paidAmount > 0 ? 'PARTIALLY PAID' : 'UNPAID');
       const saleEntry = {
         id: `db-sale-${newInvoice.id}`,
         workspaceId: (newInvoice as any).workspaceId || '',
@@ -1286,6 +1296,26 @@ class StoreService {
       safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, localDaybook);
     } catch {
       // ignore
+    }
+
+    // Synchronize Udhari entry for this invoice if not draft and has balance
+    if (newInvoice.status !== 'Draft' && newInvoice.balanceAmount > 0.005) {
+      try {
+        this.syncInvoiceUdhari({
+          invoiceId: newInvoice.id,
+          invoiceNumber: newInvoice.invoiceNumber,
+          customerId: newInvoice.customerId,
+          customerName: newInvoice.customerName || 'Customer',
+          customerPhone: newInvoice.customerPhone || '9999999999',
+          grandTotal: newInvoice.grandTotal,
+          paidAmount: newInvoice.paidAmount,
+          balanceAmount: newInvoice.balanceAmount,
+          dueDate: newInvoice.dueDate,
+          branchId: newInvoice.branchId,
+        });
+      } catch {
+        // ignore
+      }
     }
 
     return newInvoice;
@@ -2122,16 +2152,17 @@ class StoreService {
         totalReceived = Number(u.totalReceived) || 0;
       }
 
-      totalReceived = Number(totalReceived.toFixed(2));
-      const outstandingAmount = Math.max(0, Number((u.originalAmount - totalReceived).toFixed(2)));
-      const newStatus = calculateUdhariStatus(u.originalAmount, totalReceived, u.dueDate);
+      const udFin = calculateUdhariFinancials(u.originalAmount, totalReceived, u.dueDate);
+      const totalReceivedNorm = udFin.totalReceived;
+      const outstandingAmount = udFin.outstandingAmount;
+      const newStatus = udFin.status;
 
       if (
-        Math.abs((u.totalReceived || 0) - totalReceived) > 0.001 ||
+        Math.abs((u.totalReceived || 0) - totalReceivedNorm) > 0.001 ||
         Math.abs((u.outstandingAmount || 0) - outstandingAmount) > 0.001 ||
         u.status !== newStatus
       ) {
-        u.totalReceived = totalReceived;
+        u.totalReceived = totalReceivedNorm;
         u.outstandingAmount = outstandingAmount;
         u.status = newStatus;
         u.updatedAt = new Date().toISOString();
@@ -2211,7 +2242,7 @@ class StoreService {
     if (!this.state.followUps) this.state.followUps = [];
 
     const effectiveDueDate = params.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0];
-    const isCleared = params.balanceAmount <= 0.01;
+    const isCleared = params.balanceAmount <= 0.005;
     const udFin = calculateUdhariFinancials(params.grandTotal, params.paidAmount, effectiveDueDate);
 
     let udhari = this.state.udharis.find(

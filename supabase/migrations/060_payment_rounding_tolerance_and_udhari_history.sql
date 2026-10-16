@@ -55,7 +55,7 @@ DECLARE
     v_target_ref_num VARCHAR(100);
     v_account_name VARCHAR(100);
 
-    c_tolerance CONSTANT NUMERIC(12,2) := 1.00;
+    c_tolerance CONSTANT NUMERIC(12,2) := 0.00;
 BEGIN
     -- 1. Resolve workspace_id
     v_workspace_id := (p_payload->>'workspace_id')::UUID;
@@ -168,14 +168,11 @@ BEGIN
     v_authoritative_total := COALESCE(v_inv.grand_total, v_udhari.original_amount, 0);
     v_raw_outstanding := ROUND(v_authoritative_total - v_authoritative_paid, 2);
 
-    -- Apply PAYMENT_TOLERANCE (₹1.00) rule
-    IF v_raw_outstanding >= 0 AND v_raw_outstanding < c_tolerance THEN
+    -- Apply exact settlement rule (strictly 0.00 is settled; 0.01+ remains payable)
+    IF v_raw_outstanding <= 0.00 THEN
         v_authoritative_outstanding := 0.00;
-    ELSIF v_raw_outstanding >= c_tolerance THEN
-        v_authoritative_outstanding := v_raw_outstanding;
     ELSE
-        -- Overpayment detected (never store/display negative balance)
-        v_authoritative_outstanding := 0.00;
+        v_authoritative_outstanding := v_raw_outstanding;
     END IF;
 
     -- 6. Strict Payment Validation & Rapid Duplicate Prevention
@@ -194,16 +191,14 @@ BEGIN
             TO_CHAR(ROUND(v_amount, 2), 'FM999,999,990.00');
     END IF;
 
-    -- 7. Calculate New Financial State with Tolerance Normalization
+    -- 7. Calculate New Financial State with Exact Settlement
     v_new_inv_paid := v_authoritative_paid + v_amount;
     v_raw_new_bal := ROUND(v_authoritative_total - v_new_inv_paid, 2);
 
-    IF v_raw_new_bal >= 0 AND v_raw_new_bal < c_tolerance THEN
+    IF v_raw_new_bal <= 0.00 THEN
         v_new_inv_bal := 0.00;
-    ELSIF v_raw_new_bal >= c_tolerance THEN
-        v_new_inv_bal := v_raw_new_bal;
     ELSE
-        v_new_inv_bal := 0.00;
+        v_new_inv_bal := v_raw_new_bal;
     END IF;
 
     v_new_inv_status := CASE WHEN v_new_inv_bal = 0.00 THEN 'Paid' ELSE 'Partially Paid' END;

@@ -1,6 +1,7 @@
 import { InvoiceStatus, UdhariStatus } from '../types';
 
-export const PAYMENT_TOLERANCE = 1.00;
+export const PAYMENT_TOLERANCE = 0.00;
+export const FINANCIAL_EPSILON = 0.005;
 
 export function roundTo2(value: number): number {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
@@ -29,17 +30,20 @@ export interface DaybookFinancials {
 
 /**
  * Single Authoritative Financial Calculation Engine for VISTAAR Business OS.
- * Enforces fundamental accounting invariants:
- *   1. Near-zero remaining balance (< PAYMENT_TOLERANCE = ₹1.00) normalized to ₹0.00 & PAID
- *   2. Never allows negative outstanding balances to be stored or displayed
- *   3. Retains actual historical payment inflows without fabricating artificial write-off transactions
+ * Enforces fundamental accounting invariants (Master Prompt Settlement Policy):
+ *   1. Outstanding = ₹0.00: Fully settled (Paid / PAID)
+ *   2. Outstanding <= ₹0.00 due to rounding residual: Normalized to ₹0.00 (Paid / PAID)
+ *   3. Outstanding between ₹0.01 and ₹0.99: Strictly outstanding & actively payable (Partially Paid)
+ *   4. Outstanding >= ₹1.00: Strictly outstanding & actively payable
+ *   5. Never allows negative outstanding balances to be stored or displayed
+ *   6. Retains actual historical payment inflows without fabricating artificial write-off transactions
  */
 
 /**
- * Calculates normalized invoice financial metrics with monetary tolerance.
+ * Calculates normalized invoice financial metrics with exact settlement policy.
  * Caps paidAmount between 0 and grandTotal.
- * If 0 <= remaining < PAYMENT_TOLERANCE (₹1.00), remaining is normalized to 0.00 and status is Paid.
- * If remaining >= PAYMENT_TOLERANCE, remaining is preserved and status is Partially Paid / Issued.
+ * If remaining <= 0.005 (₹0.00), remaining is normalized to 0.00 and status is Paid.
+ * If remaining > 0.005 (e.g. ₹0.01, ₹0.10, ₹0.80), remaining is preserved and status is Partially Paid / Issued.
  */
 export function calculateInvoiceFinancials(
   grandTotalInput?: number | null,
@@ -52,18 +56,16 @@ export function calculateInvoiceFinancials(
   const rawBalance = roundTo2(grandTotal - paidAmount);
 
   let balanceAmount = 0;
-  if (rawBalance >= 0 && rawBalance < PAYMENT_TOLERANCE) {
-    balanceAmount = 0;
-  } else if (rawBalance >= PAYMENT_TOLERANCE) {
+  if (rawBalance > FINANCIAL_EPSILON) {
     balanceAmount = rawBalance;
   } else {
-    // Negative balance indicates overpayment; never store/display negative balance
+    // 0.00 or negative calculation residual: normalize to 0.00
     balanceAmount = 0;
   }
 
   let status: InvoiceStatus = currentStatus || 'Issued';
   if (status !== 'Cancelled' && status !== 'Draft') {
-    if (balanceAmount <= 0.01 && grandTotal > 0) {
+    if (balanceAmount <= FINANCIAL_EPSILON && grandTotal > 0) {
       status = 'Paid';
     } else if (paidAmount > 0) {
       status = 'Partially Paid';
@@ -81,8 +83,9 @@ export function calculateInvoiceFinancials(
 }
 
 /**
- * Calculates normalized Udhari ledger financials with monetary tolerance.
- * Enforces originalAmount = totalReceived + outstandingAmount (with near-zero tolerance).
+ * Calculates normalized Udhari ledger financials with exact settlement policy.
+ * Enforces originalAmount = totalReceived + outstandingAmount.
+ * Balances from ₹0.01 upwards remain strictly outstanding and payable.
  */
 export function calculateUdhariFinancials(
   originalAmountInput?: number | null,
@@ -95,19 +98,17 @@ export function calculateUdhariFinancials(
   const rawOutstanding = roundTo2(originalAmount - totalReceived);
 
   let outstandingAmount = 0;
-  if (rawOutstanding >= 0 && rawOutstanding < PAYMENT_TOLERANCE) {
-    outstandingAmount = 0;
-  } else if (rawOutstanding >= PAYMENT_TOLERANCE) {
+  if (rawOutstanding > FINANCIAL_EPSILON) {
     outstandingAmount = rawOutstanding;
   } else {
-    // Overpayment
+    // 0.00 or overpayment
     outstandingAmount = 0;
   }
 
   const todayStr = new Date().toISOString().split('T')[0];
   let status: UdhariStatus = 'UNPAID';
 
-  if (outstandingAmount <= 0.01) {
+  if (outstandingAmount <= FINANCIAL_EPSILON) {
     status = 'PAID';
   } else if (totalReceived > 0) {
     status = 'PARTIALLY PAID';
@@ -148,16 +149,14 @@ export function calculateDaybookFinancials(
 
   const rawRemaining = roundTo2(totalAmount - effectiveCumulativePaid);
   let remainingAmount = 0;
-  if (rawRemaining >= 0 && rawRemaining < PAYMENT_TOLERANCE) {
-    remainingAmount = 0;
-  } else if (rawRemaining >= PAYMENT_TOLERANCE) {
+  if (rawRemaining > FINANCIAL_EPSILON) {
     remainingAmount = rawRemaining;
   } else {
     remainingAmount = 0;
   }
 
   let paymentStatus: 'PAID' | 'PARTIALLY PAID' | 'UNPAID' = 'UNPAID';
-  if (remainingAmount <= 0.01 && totalAmount > 0) {
+  if (remainingAmount <= FINANCIAL_EPSILON && totalAmount > 0) {
     paymentStatus = 'PAID';
   } else if (effectiveCumulativePaid > 0) {
     paymentStatus = 'PARTIALLY PAID';
@@ -177,9 +176,8 @@ export function calculateDaybookFinancials(
  * Calculates authoritative invoice outstanding balance from total and valid posted payments.
  * Authoritative Formula:
  *   raw = grandTotal - sumPaid
- *   if 0 <= raw < PAYMENT_TOLERANCE (₹1.00) => 0.00 (PAID)
- *   if raw >= PAYMENT_TOLERANCE => raw
- *   if raw < 0 => 0.00 (overpayment, never negative)
+ *   if raw <= 0.005 => 0.00 (PAID / fully settled)
+ *   if raw > 0.005 => raw (strictly outstanding and payable)
  */
 export function calculateAuthoritativeInvoiceOutstanding(
   grandTotalInput?: number | null,
@@ -195,18 +193,15 @@ export function calculateAuthoritativeInvoiceOutstanding(
   sumPaid = roundTo2(sumPaid);
 
   const rawRemaining = roundTo2(grandTotal - sumPaid);
-  if (rawRemaining >= 0 && rawRemaining < PAYMENT_TOLERANCE) {
-    return 0;
+  if (rawRemaining > FINANCIAL_EPSILON) {
+    return rawRemaining;
   }
-  if (rawRemaining < 0) {
-    return 0;
-  }
-  return rawRemaining;
+  return 0;
 }
 
 /**
  * Calculates total customer outstanding across multiple invoices.
- * Applies PAYMENT_TOLERANCE to each invoice's remaining balance.
+ * Preserves exact decimal balances (>= ₹0.01).
  */
 export function calculateCustomerOutstanding(
   invoices: { balanceAmount?: number | null; grandTotal?: number | null; paidAmount?: number | null; status?: string }[]
@@ -223,19 +218,18 @@ export function calculateCustomerOutstanding(
       bal = g - p;
     }
     bal = roundTo2(bal);
-    if (bal >= 0 && bal < PAYMENT_TOLERANCE) {
-      bal = 0;
-    } else if (bal < 0) {
-      bal = 0;
+    if (bal > FINANCIAL_EPSILON) {
+      return acc + bal;
     }
-    return acc + bal;
+    return acc;
   }, 0);
   return roundTo2(total);
 }
 
 /**
  * Validates whether an incoming payment amount would cause an overpayment.
- * Enforces decimal-safe monetary arithmetic and user-friendly error formatting.
+ * Enforces decimal-safe monetary arithmetic, supports decimal balances (e.g. ₹0.80, ₹0.10),
+ * and provides user-friendly error formatting with exact 2 decimal places.
  */
 export function validatePaymentAmount(
   outstandingBalance: number,
@@ -248,11 +242,11 @@ export function validatePaymentAmount(
     return { valid: false, error: 'Payment amount must be greater than ₹0.', outstanding: balance, amount: 0, excess: 0 };
   }
 
-  // If already paid or within tolerance (balance = 0), reject payment
-  if (balance <= 0) {
+  // If already paid or zero balance, reject payment
+  if (balance <= FINANCIAL_EPSILON) {
     return {
       valid: false,
-      error: `Invoice is already fully paid. No outstanding balance remains.\nInvoice Outstanding: ₹0.00\nAmount Entered: ₹${amount.toLocaleString('en-IN')}`,
+      error: `Invoice is already fully paid. No outstanding balance remains.\nInvoice Outstanding: ₹0.00\nAmount Entered: ₹${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       outstanding: 0,
       amount,
       excess: amount,
@@ -264,7 +258,7 @@ export function validatePaymentAmount(
     const excess = Math.max(0, roundTo2(amount - balance));
     return {
       valid: false,
-      error: `Payment exceeds this invoice's outstanding balance.\nInvoice Outstanding: ₹${balance.toLocaleString('en-IN')}\nAmount Entered: ₹${amount.toLocaleString('en-IN')}\nExcess: ₹${excess.toLocaleString('en-IN')}`,
+      error: `Payment exceeds this invoice's outstanding balance.\nInvoice Outstanding: ₹${balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\nAmount Entered: ₹${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\nExcess: ₹${excess.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       outstanding: balance,
       amount,
       excess,

@@ -129,22 +129,27 @@ async function runTestSuite() {
   }
 
   // ---------------------------------------------------------------------------
-  // TEST 4: Invoice ₹1,000, Payment ₹999.60 (Remaining ₹0.40 < ₹1.00 tolerance)
+  // TEST 4: Invoice ₹1,000, Payment ₹999.60 (Remaining ₹0.40 is outstanding and payable)
   // ---------------------------------------------------------------------------
-  console.log('\n--- TEST 4: Invoice ₹1,000, Payment ₹999.60 (Tolerance ₹0.40) ---');
+  console.log('\n--- TEST 4: Invoice ₹1,000, Payment ₹999.60 (Exact Settlement Rule: ₹0.40 Outstanding) ---');
   {
     const fin = calculateInvoiceFinancials(1000, 999.60);
     assert(fin.paidAmount === 999.60, 'Actual recorded payment remains ₹999.60 (NOT altered)');
-    assert(fin.balanceAmount === 0, 'Outstanding normalized to ₹0.00');
-    assert(fin.status === 'Paid', 'Status is Paid');
+    assert(fin.balanceAmount === 0.40, 'Outstanding is exact ₹0.40 (not falsely marked as paid)');
+    assert(fin.status === 'Partially Paid', 'Status is Partially Paid');
 
     const udFin = calculateUdhariFinancials(1000, 999.60);
     assert(udFin.totalReceived === 999.60, 'Udhari totalReceived is ₹999.60');
-    assert(udFin.outstandingAmount === 0, 'Udhari outstanding is ₹0.00');
-    assert(udFin.status === 'PAID', 'Udhari status is PAID');
+    assert(udFin.outstandingAmount === 0.40, 'Udhari outstanding is ₹0.40');
+    assert(udFin.status === 'PARTIALLY PAID', 'Udhari status is PARTIALLY PAID');
 
     const authOut = calculateAuthoritativeInvoiceOutstanding(1000, 999.60);
-    assert(authOut === 0, 'Authoritative outstanding is ₹0.00');
+    assert(authOut === 0.40, 'Authoritative outstanding is ₹0.40');
+
+    // Pay remaining ₹0.40 to complete settlement
+    const settledFin = calculateInvoiceFinancials(1000, 1000);
+    assert(settledFin.balanceAmount === 0, 'Outstanding becomes ₹0.00 upon paying remaining ₹0.40');
+    assert(settledFin.status === 'Paid', 'Status becomes Paid');
   }
 
   // ---------------------------------------------------------------------------

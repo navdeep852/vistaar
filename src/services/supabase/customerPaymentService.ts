@@ -478,14 +478,13 @@ export class CustomerPaymentService {
             let updatedInvTotal = 0;
             if (dbInvRow) {
               const finalCumulativePaid = Number((authoritativePaid + amount).toFixed(2));
-              const { grandTotal, paidAmount: newPaid, balanceAmount: newBal } = calculateInvoiceFinancials(
+              const { grandTotal, paidAmount: newPaid, balanceAmount: newBal, status: newStatus } = calculateInvoiceFinancials(
                 authoritativeTotal,
                 finalCumulativePaid
               );
               updatedInvPaid = newPaid;
               updatedInvBal = newBal;
               updatedInvTotal = grandTotal;
-              const newStatus = newBal <= 0.01 ? 'Paid' : 'Partially Paid';
               await supabase
                 .from('invoices')
                 .update({
@@ -501,7 +500,7 @@ export class CustomerPaymentService {
             // 6. Record Daybook Payment Event & Synchronize Invoice SALE Entry
             if (dbInvRow) {
               try {
-                const pStatusTag = updatedInvBal <= 0.01 ? 'PAID' : (updatedInvPaid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+                const pStatusTag = updatedInvBal <= 0.005 ? 'PAID' : (updatedInvPaid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
                 const paymentRefId = paymentId || dbPaymentId;
 
                 // 6a. Record authoritative Daybook transaction for this specific payment on paymentDate

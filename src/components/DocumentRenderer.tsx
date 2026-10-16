@@ -179,8 +179,8 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = ({
     const rawBalance = balanceAmount !== undefined && balanceAmount !== null
       ? Number(balanceAmount)
       : Math.max(0, Number((sGrand - sPaid).toFixed(2)));
-    const sBalance = (rawBalance >= 0 && rawBalance < PAYMENT_TOLERANCE) ? 0 : rawBalance;
-    const calculatedStatus = (sBalance <= 0.01 && sGrand > 0) ? 'PAID' : sPaid > 0 ? 'PARTIALLY PAID' : 'UNPAID';
+    const sBalance = rawBalance > 0.005 ? rawBalance : 0;
+    const calculatedStatus = (sBalance <= 0.005 && sGrand > 0) ? 'PAID' : sPaid > 0 ? 'PARTIALLY PAID' : 'UNPAID';
 
     return (
       <InvoiceTemplateEngineRenderer
