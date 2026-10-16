@@ -195,9 +195,15 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   };
 
   const handleSavePdf = async (inv: Invoice) => {
+    if (isGeneratingPdf) return;
+    if (!inv || !inv.invoiceNumber) {
+      showToast('Invoice record is missing or invalid.', 'error');
+      return;
+    }
     setIsGeneratingPdf(true);
     try {
-      const props = getInvoiceRendererProps(inv);
+      const fullInv = store.getInvoice(inv.id || inv.invoiceNumber) || inv;
+      const props = getInvoiceRendererProps(fullInv);
       await saveDocumentPdf(props);
     } catch (e: any) {
       showToast('Failed to generate PDF.', 'error');

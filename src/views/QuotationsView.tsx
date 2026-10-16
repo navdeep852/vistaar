@@ -250,6 +250,11 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
   };
 
   const handleSavePdf = async (qt: Quotation) => {
+    if (isGeneratingPdf) return;
+    if (!qt || !qt.quotationNumber) {
+      showToast('Quotation record is missing or invalid.', 'error');
+      return;
+    }
     setIsGeneratingPdf(true);
     try {
       const props = getQuotationRendererProps(qt);

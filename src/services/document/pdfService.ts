@@ -13,14 +13,18 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 import { DocumentRenderer, DocumentRendererProps } from '../../components/DocumentRenderer';
-import { fileService } from '../../platform';
+import { fileService, getPlatformInfo } from '../../platform';
 import { showToast } from '../../components/Toast';
 
 export function sanitizeWindowsFilename(name: string): string {
   // Strip characters illegal on Windows filesystems: \ / : * ? " < > |
-  return name.replace(/[\\/:*?"<>|]/g, '_').replace(/_+/g, '_').trim();
+  return name
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .trim();
 }
 
 export function buildDocumentFilename(documentType: 'invoice' | 'quotation', documentNumber: string): string {
@@ -40,6 +44,10 @@ export interface GeneratedPdfResult {
  * Renders any invoice or quotation template offscreen and compiles an audit-grade A4 PDF.
  */
 export async function generateDocumentPdf(props: DocumentRendererProps): Promise<GeneratedPdfResult> {
+  if (!props || !props.documentNumber) {
+    throw new Error('Invalid document data: missing document number.');
+  }
+
   const orientation = props.customization?.orientation || 'portrait';
   const isLandscape = orientation === 'landscape';
 
@@ -59,11 +67,12 @@ export async function generateDocumentPdf(props: DocumentRendererProps): Promise
   container.id = 'pdf-render-offscreen-root';
   container.style.position = 'fixed';
   container.style.top = '0';
-  container.style.left = '-99999px';
+  container.style.left = '0';
   container.style.width = `${targetWidthPx}px`;
   container.style.backgroundColor = '#ffffff';
   container.style.color = '#0f172a';
   container.style.zIndex = '-9999';
+  container.style.opacity = '0.01'; // Not visible to user, but fully measurable by browser layout engine
   container.style.pointerEvents = 'none';
   document.body.appendChild(container);
 
@@ -83,7 +92,13 @@ export async function generateDocumentPdf(props: DocumentRendererProps): Promise
       )
     );
 
-    // 4. Wait for images, web fonts, and QR codes to settle
+    // 4. Wait for web fonts, images, and QR codes to settle
+    if (typeof document !== 'undefined' && (document as any).fonts && (document as any).fonts.ready) {
+      try {
+        await (document as any).fonts.ready;
+      } catch {}
+    }
+
     await new Promise((resolve) => setTimeout(resolve, 350));
     const images = Array.from(container.querySelectorAll('img'));
     if (images.length > 0) {
@@ -104,7 +119,7 @@ export async function generateDocumentPdf(props: DocumentRendererProps): Promise
     // Additional short tick to ensure layout engine finishes reflow
     await new Promise((resolve) => setTimeout(resolve, 150));
 
-    // 5. Capture container using html2canvas at scale: 2 for crisp 300DPI-equivalent printing
+    // 5. Capture container using html2canvas-pro at scale: 2 for crisp 300DPI-equivalent printing
     const canvas = await html2canvas(container, {
       scale: 2,
       useCORS: true,
@@ -112,7 +127,21 @@ export async function generateDocumentPdf(props: DocumentRendererProps): Promise
       logging: false,
       backgroundColor: '#ffffff',
       windowWidth: targetWidthPx,
+      onclone: (clonedDoc) => {
+        const el = clonedDoc.getElementById('pdf-render-offscreen-root');
+        if (el) {
+          el.style.position = 'static';
+          el.style.left = '0';
+          el.style.top = '0';
+          el.style.opacity = '1';
+          el.style.visibility = 'visible';
+        }
+      },
     });
+
+    if (!canvas || canvas.width === 0 || canvas.height === 0) {
+      throw new Error(`HTML2Canvas produced an empty canvas (${canvas?.width || 0}x${canvas?.height || 0}).`);
+    }
 
     // 6. Initialize jsPDF
     const doc = new jsPDF({
@@ -167,7 +196,23 @@ export async function generateDocumentPdf(props: DocumentRendererProps): Promise
 
     const filename = buildDocumentFilename(props.documentType, props.documentNumber);
     const arrayBuffer = doc.output('arraybuffer');
+
+    // 7. Rigorous PDF byte & header verification
+    if (!arrayBuffer || arrayBuffer.byteLength < 100) {
+      throw new Error('Generated PDF byte buffer is empty or corrupted.');
+    }
+
+    const headerBytes = new Uint8Array(arrayBuffer.slice(0, 5));
+    const headerStr = String.fromCharCode(...headerBytes);
+    if (!headerStr.startsWith('%PDF-')) {
+      throw new Error(`Generated document data is not a valid PDF file. Header: ${headerStr}`);
+    }
+
     const blob = new Blob([arrayBuffer], { type: 'application/pdf' });
+    if (blob.size < 100) {
+      throw new Error(`Generated PDF blob is invalid (size: ${blob.size} bytes).`);
+    }
+
     const dataUri = doc.output('datauristring');
 
     return {
@@ -177,7 +222,7 @@ export async function generateDocumentPdf(props: DocumentRendererProps): Promise
       dataUri,
     };
   } finally {
-    // 7. Cleanup offscreen DOM and root cleanly
+    // 8. Cleanup offscreen DOM and root cleanly
     setTimeout(() => {
       try {
         root.unmount();
@@ -190,25 +235,46 @@ export async function generateDocumentPdf(props: DocumentRendererProps): Promise
 /**
  * Generates an Invoice or Quotation PDF and initiates the native file-save workflow.
  * On Windows Desktop: Native File Save Dialog -> "Open File" interactive action.
- * On Web: Direct browser file download.
+ * On Web: Direct browser file download with success notification.
  * On Android: Native cache & share sheet.
+ * Guarantees single, deterministic notification sequence without conflicting toasts.
  */
 export async function saveDocumentPdf(
   props: DocumentRendererProps
-): Promise<{ success: boolean; uri?: string; filename: string }> {
+): Promise<{ success: boolean; uri?: string; filename: string; blob?: Blob; error?: string }> {
+  const docTitle = props?.documentType === 'invoice' ? 'Invoice' : 'Quotation';
+  const fallbackFilename = buildDocumentFilename(props?.documentType || 'invoice', props?.documentNumber || 'DRAFT');
+
+  if (!props || !props.documentNumber) {
+    const errorMsg = 'Invalid document data: missing document number.';
+    console.error('[pdfService]', errorMsg);
+    showToast(errorMsg, 'error');
+    return { success: false, filename: fallbackFilename, error: errorMsg };
+  }
+
   try {
-    const { doc, filename } = await generateDocumentPdf(props);
-    const docTitle = props.documentType === 'invoice' ? 'Invoice' : 'Quotation';
+    const { doc, filename, blob } = await generateDocumentPdf(props);
     const res = await fileService.saveJsPdf(doc, filename, `${docTitle} #${props.documentNumber}`);
-    return {
-      success: res.success,
-      uri: res.uri,
-      filename,
-    };
+
+    if (res.success) {
+      const platform = getPlatformInfo();
+      if (!platform.isDesktop) {
+        showToast(`${docTitle} downloaded successfully!`, 'success');
+      }
+      return {
+        success: true,
+        uri: res.uri,
+        filename,
+        blob,
+      };
+    } else {
+      showToast('Unable to generate PDF. Please try again.', 'error');
+      return { success: false, filename: fallbackFilename, error: 'File save failed' };
+    }
   } catch (err: any) {
     console.error('[pdfService] Document PDF generation error:', err);
     showToast('Unable to generate PDF. Please try again.', 'error');
-    return { success: false, filename: buildDocumentFilename(props.documentType, props.documentNumber) };
+    return { success: false, filename: fallbackFilename, error: err?.message || 'PDF generation failed' };
   }
 }
 

@@ -151,12 +151,18 @@ export const UdhariView: React.FC = () => {
   };
 
   const handleSavePdf = async (inv: Invoice) => {
+    if (isGeneratingPdf) return;
+    if (!inv || !inv.invoiceNumber) {
+      showToast('Original invoice record is missing or invalid.', 'error');
+      return;
+    }
+
     setIsGeneratingPdf(true);
     try {
-      const docData = normalizeInvoiceToDocument(inv, settings);
+      const fullInv = store.getInvoice(inv.id || inv.invoiceNumber) || inv;
+      const docData = normalizeInvoiceToDocument(fullInv, settings);
       const props = documentDataToRendererProps(docData);
       await saveDocumentPdf(props);
-      showToast('Invoice downloaded successfully!', 'success');
     } catch (e: any) {
       showToast('Failed to generate PDF.', 'error');
     } finally {

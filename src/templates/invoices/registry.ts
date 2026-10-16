@@ -326,6 +326,7 @@ export const getInvoiceTemplateById = (id?: string): InvoiceTemplateDefinition =
     'inv-creative': 'inv-creative-agency',
     'classic': 'inv-classic-corporate',
     'modern': 'inv-modern-split',
+    'modern-split': 'inv-modern-split',
     'minimal': 'inv-modern-minimal',
     'corporate': 'inv-executive-pro',
     'creative': 'inv-creative-agency',

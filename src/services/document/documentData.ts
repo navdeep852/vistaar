@@ -15,6 +15,7 @@ import { Invoice, Quotation, InvoiceItem, QuotationItem, Payment } from '../../t
 import { BrandingConfig, ThemeConfig, DocumentCustomization } from '../../types/template';
 import { DocumentRendererProps } from '../../components/DocumentRenderer';
 import { calculateInvoiceFinancials, PAYMENT_TOLERANCE, roundTo2 } from '../financialCalculationService';
+import { store } from '../store';
 
 export interface NormalizedPaymentHistoryItem {
   id: string;
@@ -138,9 +139,8 @@ export function normalizeInvoiceToDocument(
 
   // Assemble complete payment history
   let rawPayments: any[] = paymentsOverride || invoice.payments || [];
-  if (rawPayments.length === 0 && typeof window !== 'undefined') {
+  if (rawPayments.length === 0) {
     try {
-      const { store } = require('../store');
       rawPayments = store.getPaymentsForInvoice(invoice.id || invoice.invoiceNumber);
     } catch {
       // ignore
@@ -158,13 +158,27 @@ export function normalizeInvoiceToDocument(
       reference: p.referenceNo || p.reference || p.transactionId,
       notes: p.notes,
     }));
+
+    // If recorded payment rows don't sum to the full paidAmount (e.g. initial payment recorded on invoice directly),
+    // prepend the initial payment record so the historical ledger is complete and exact
+    const recordedTotal = paymentHistory.reduce((sum, p) => sum + p.amount, 0);
+    if (paidAmount - recordedTotal > 0.01) {
+      paymentHistory.unshift({
+        id: `init-${invoice.invoiceNumber}`,
+        paymentNumber: `INIT-${invoice.invoiceNumber}`,
+        date: invoice.date,
+        amount: roundTo2(paidAmount - recordedTotal),
+        method: (invoice as any).paymentMethod || (invoice as any).paymentMode || 'Direct / Cash',
+        notes: 'Initial Payment',
+      });
+    }
   } else if (paidAmount > 0) {
     paymentHistory = [{
       id: `init-${invoice.invoiceNumber}`,
       paymentNumber: `INIT-${invoice.invoiceNumber}`,
       date: invoice.date,
       amount: paidAmount,
-      method: 'Direct / Cash',
+      method: (invoice as any).paymentMethod || (invoice as any).paymentMode || 'Direct / Cash',
       notes: 'Initial Payment',
     }];
   }

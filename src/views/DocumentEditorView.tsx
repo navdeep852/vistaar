@@ -1085,6 +1085,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   const handleSavePdf = async () => {
+    if (isGeneratingPdf) return;
     setIsGeneratingPdf(true);
     try {
       const props = getCurrentRendererProps();

@@ -14,6 +14,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),
+      'html2canvas': 'html2canvas-pro',
     },
   },
   server: {
@@ -37,7 +38,7 @@ export default defineConfig({
             if (id.includes('recharts') || id.includes('d3-')) {
               return 'vendor-charts';
             }
-            if (id.includes('jspdf') || id.includes('jspdf-autotable')) {
+            if (id.includes('jspdf') || id.includes('jspdf-autotable') || id.includes('html2canvas')) {
               return 'vendor-pdf';
             }
             if (id.includes('lucide-react')) {
