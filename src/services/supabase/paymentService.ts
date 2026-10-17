@@ -172,10 +172,10 @@ export class PaymentService {
     }
   }
 
-  public async createPayment(payment: Partial<Payment> & { isUpfrontInvoicePayment?: boolean }): Promise<{ paymentId?: string; error?: string }> {
+  public async createPayment(payment: Partial<Payment> & { isUpfrontInvoicePayment?: boolean }): Promise<{ success: boolean; paymentId?: string; error?: string }> {
     const amount = Number(payment.amount) || 0;
     if (isNaN(amount) || amount <= 0) {
-      return { error: 'Payment amount must be greater than zero.' };
+      return { success: false, error: 'Payment amount must be greater than zero.' };
     }
 
     try {
@@ -196,13 +196,13 @@ export class PaymentService {
       });
 
       if (!res.success) {
-        return { error: res.error || 'Payment failed — no financial records were changed.' };
+        return { success: false, error: res.error || 'Payment failed — no financial records were changed.' };
       }
 
-      return { paymentId: res.paymentId };
+      return { success: true, paymentId: res.paymentId };
     } catch (err: any) {
       const errStr = handleSupabaseError(err, 'createPayment');
-      return { error: errStr || 'Payment transaction failed' };
+      return { success: false, error: errStr || 'Payment transaction failed' };
     }
   }
 }

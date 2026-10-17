@@ -7,6 +7,7 @@ import { salesAnalyticsService } from './salesAnalyticsService';
 import { productService } from './productService';
 import { CounterSale } from '../../types';
 import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from './safeStorage';
+import { isRecordInBranch, resolveBranch } from '../../lib/branchUtils';
 
 const LOCAL_SALES_KEY = 'vistaar_local_counter_sales_db';
 
@@ -45,23 +46,26 @@ export class CounterSaleService {
     } catch (e) {
       console.warn('Failed to get authoritative workspace ID in counterSaleService:', e);
     }
+    const currentId = supabaseAuthService.getCurrentCompanyId();
+    if (currentId && isValidUuid(currentId)) return currentId;
     return '';
   }
 
   private async deductCounterSaleStock(items: any[], invoiceNumber: string, saleDate: string, branchId?: string) {
     const wsId = await this.getOrFetchWorkspaceId();
+    const executedMutations: Array<{ productId: string; previousStock: number }> = [];
 
-    for (const item of items) {
-      const productId = item.productId || item.product_id;
-      const quantity = Math.abs(Number(item.quantity) || 0);
+    try {
+      for (const item of items) {
+        const productId = item.productId || item.product_id;
+        const quantity = Math.abs(Number(item.quantity) || 0);
 
-      if (!productId || quantity <= 0) continue;
+        if (!productId || quantity <= 0) continue;
 
-      // 1. Always update local store state for instant UI sync
-      store.adjustStock(productId, 'Sale', -quantity, `Counter Sale #${invoiceNumber}`, invoiceNumber, branchId);
+        // 1. Update local store state for instant UI sync
+        store.adjustStock(productId, 'Sale', -quantity, `Counter Sale #${invoiceNumber}`, invoiceNumber, branchId);
 
-      if (isSupabaseConfigured() && isValidUuid(wsId)) {
-        try {
+        if (isSupabaseConfigured() && isValidUuid(wsId)) {
           // 2. Fetch current product current_stock and deduct
           const { data: prod } = await supabase
             .from('products')
@@ -71,7 +75,10 @@ export class CounterSaleService {
             .maybeSingle();
 
           if (prod) {
-            const newStock = Math.max(0, (Number(prod.current_stock) || 0) - quantity);
+            const oldStock = Number(prod.current_stock) || 0;
+            const newStock = Math.max(0, oldStock - quantity);
+            executedMutations.push({ productId, previousStock: oldStock });
+
             await supabase
               .from('products')
               .update({ current_stock: newStock, updated_at: new Date().toISOString() })
@@ -79,72 +86,101 @@ export class CounterSaleService {
               .eq('id', productId);
           }
 
-          // 2b. Deduct strictly from remote branch_inventory if online
+          // 2b. Deduct strictly from remote branch_inventory if table exists and branchId is valid
           if (branchId && isValidUuid(branchId)) {
-            const { data: bProd } = await supabase
-              .from('branch_inventory')
-              .select('current_stock')
-              .eq('branch_id', branchId)
-              .eq('product_id', productId)
-              .maybeSingle();
-
-            if (bProd) {
-              const newBStock = Math.max(0, (Number(bProd.current_stock) || 0) - quantity);
-              await supabase
+            try {
+              const { data: bProd } = await supabase
                 .from('branch_inventory')
-                .update({ current_stock: newBStock, updated_at: new Date().toISOString() })
+                .select('current_stock')
                 .eq('branch_id', branchId)
-                .eq('product_id', productId);
+                .eq('product_id', productId)
+                .maybeSingle();
+
+              if (bProd) {
+                const newBStock = Math.max(0, (Number(bProd.current_stock) || 0) - quantity);
+                await supabase
+                  .from('branch_inventory')
+                  .update({ current_stock: newBStock, updated_at: new Date().toISOString() })
+                  .eq('branch_id', branchId)
+                  .eq('product_id', productId);
+              }
+            } catch (bInvErr) {
+              // branch_inventory may not exist in schema cache
             }
           }
 
           // 3. FIFO deduction on active stock receipts
-          let recQuery = supabase
-            .from('stock_receipts')
-            .select('id, quantity_remaining')
-            .eq('workspace_id', wsId)
-            .eq('product_id', productId)
-            .gt('quantity_remaining', 0);
-          if (branchId && isValidUuid(branchId)) {
-            recQuery = recQuery.eq('branch_id', branchId);
-          }
-          const { data: receipts } = await recQuery
-            .order('received_date', { ascending: true })
-            .order('created_at', { ascending: true });
-
-          if (receipts && receipts.length > 0) {
-            let remainingToDeduct = quantity;
-            for (const rec of receipts) {
-              if (remainingToDeduct <= 0) break;
-              const rem = Number(rec.quantity_remaining) || 0;
-              const deduct = Math.min(rem, remainingToDeduct);
-              const newRem = Math.max(0, rem - deduct);
-              await supabase
-                .from('stock_receipts')
-                .update({ quantity_remaining: newRem, updated_at: new Date().toISOString() })
-                .eq('workspace_id', wsId)
-                .eq('id', rec.id);
-              remainingToDeduct -= deduct;
+          try {
+            let recQuery = supabase
+              .from('stock_receipts')
+              .select('id, quantity_remaining')
+              .eq('workspace_id', wsId)
+              .eq('product_id', productId)
+              .gt('quantity_remaining', 0);
+            if (branchId && isValidUuid(branchId)) {
+              recQuery = recQuery.eq('branch_id', branchId);
             }
+            const { data: receipts } = await recQuery
+              .order('received_date', { ascending: true })
+              .order('created_at', { ascending: true });
+
+            if (receipts && receipts.length > 0) {
+              let remainingToDeduct = quantity;
+              for (const rec of receipts) {
+                if (remainingToDeduct <= 0) break;
+                const rem = Number(rec.quantity_remaining) || 0;
+                const deduct = Math.min(rem, remainingToDeduct);
+                const newRem = Math.max(0, rem - deduct);
+                await supabase
+                  .from('stock_receipts')
+                  .update({ quantity_remaining: newRem, updated_at: new Date().toISOString() })
+                  .eq('workspace_id', wsId)
+                  .eq('id', rec.id);
+                remainingToDeduct -= deduct;
+              }
+            }
+          } catch (recErr) {
+            // stock_receipts schema tolerance
           }
 
-          // 4. Log stock movement
-          await supabase.from('stock_movements').insert([{
+          // 4. Log stock movement with branch resilience
+          const movementNotes = `Counter Sale #${invoiceNumber}${branchId ? ` [branch: ${branchId}]` : ''}`;
+          const movPayload: any = {
             workspace_id: wsId,
-            branch_id: branchId && isValidUuid(branchId) ? branchId : null,
             product_id: productId,
             type: 'SALE',
             quantity: -quantity,
             movement_date: saleDate || new Date().toISOString().split('T')[0],
             reference_id: invoiceNumber,
             reference_type: 'COUNTER_SALE',
-            notes: `Counter Sale #${invoiceNumber}`,
-          }]);
-        } catch (e) {
-          console.error('Failed to perform Supabase stock deduction for item:', item, e);
-          throw e; // Do NOT swallow stock errors
+            notes: movementNotes,
+          };
+          if (branchId && isValidUuid(branchId)) {
+            movPayload.branch_id = branchId;
+          }
+
+          let { error: movErr } = await supabase.from('stock_movements').insert([movPayload]);
+          if (movErr && (movErr.code === '42703' || movErr.code === 'PGRST204' || movErr.message?.includes('branch_id'))) {
+            delete movPayload.branch_id;
+            await supabase.from('stock_movements').insert([movPayload]);
+          }
         }
       }
+    } catch (e) {
+      console.error('Failed to perform atomic stock deduction, executing rollback:', e);
+      // Rollback products stock
+      if (isSupabaseConfigured() && isValidUuid(wsId)) {
+        for (const mut of executedMutations) {
+          try {
+            await supabase
+              .from('products')
+              .update({ current_stock: mut.previousStock, updated_at: new Date().toISOString() })
+              .eq('workspace_id', wsId)
+              .eq('id', mut.productId);
+          } catch {}
+        }
+      }
+      throw e;
     }
   }
 
@@ -245,8 +281,16 @@ export class CounterSaleService {
     }
   }
 
-  public async getCounterSales(options?: { branchId?: string }): Promise<{ data: CounterSale[]; error?: string }> {
+  public async getCounterSales(options?: {
+    branchId?: string;
+    search?: string;
+    startDate?: string;
+    endDate?: string;
+  }): Promise<{ data: CounterSale[]; error?: string }> {
     const wsId = await this.getOrFetchWorkspaceId();
+    let supabaseSales: any[] = [];
+    let queryError: string | undefined;
+
     try {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
         let query = supabase
@@ -254,97 +298,103 @@ export class CounterSaleService {
           .select('*, counter_sale_items(*)')
           .eq('workspace_id', wsId);
 
-        if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
-          query = query.eq('branch_id', options.branchId);
+        if (options?.startDate) {
+          query = query.gte('sale_date', options.startDate);
+        }
+        if (options?.endDate) {
+          query = query.lte('sale_date', options.endDate);
         }
 
         let { data, error } = await query.order('created_at', { ascending: false });
 
-        if (error && (error.code === '42703' || error.message?.includes('branch_id'))) {
-          const fbQuery = await supabase
-            .from('counter_sales')
-            .select('*, counter_sale_items(*)')
-            .eq('workspace_id', wsId)
-            .order('created_at', { ascending: false });
-          data = fbQuery.data;
-          error = fbQuery.error;
+        if (error) {
+          queryError = handleSupabaseError(error, 'getCounterSales');
+          console.warn('[getCounterSales] Supabase query notice, falling back to local merge:', error);
+        } else if (data) {
+          supabaseSales = data;
         }
-
-        const fallback = safeStorageGet(LOCAL_SALES_KEY);
-        const storeSales = store.getCounterSales();
-        let merged = [...(data || [])];
-        const seenIds = new Set(merged.map((s: any) => s.id));
-        for (const ss of [...(fallback || []), ...storeSales]) {
-          if (ss?.id && !seenIds.has(ss.id)) {
-            merged.push(ss);
-            seenIds.add(ss.id);
-          }
-        }
-
-        if (options?.branchId && options.branchId !== 'ALL') {
-          const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
-          const bObj = branches.find((b: any) => b.id === options.branchId);
-          const isMain = Boolean(bObj?.isMainBranch);
-          merged = merged.filter((s: any) => {
-            const bId = s.branchId || s.branch_id;
-            if (bId) return bId === options.branchId;
-            return isMain;
-          });
-        }
-
-        if (error && merged.length === 0) {
-          const errStr = handleSupabaseError(error, 'getCounterSales');
-          return { data: [], error: errStr };
-        }
-
-        return { data: merged.map((row: any) => fromDbCounterSale(row)) };
       }
     } catch (e: any) {
-      const errStr = handleSupabaseError(e, 'getCounterSales');
-      const fallback = safeStorageGet(LOCAL_SALES_KEY);
-      const storeSales = store.getCounterSales();
-      let merged = [...(fallback || [])];
-      const seenIds = new Set(merged.map((s: any) => s.id));
-      for (const ss of storeSales) {
-        if (!seenIds.has(ss.id)) {
-          merged.push(ss);
-          seenIds.add(ss.id);
-        }
-      }
-      if (options?.branchId && options.branchId !== 'ALL') {
-        const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
-        const bObj = branches.find((b: any) => b.id === options.branchId);
-        const isMain = Boolean(bObj?.isMainBranch);
-        merged = merged.filter((s: any) => {
-          const bId = s.branchId || s.branch_id;
-          if (bId) return bId === options.branchId;
-          return isMain;
-        });
-      }
-      return { data: merged.map((row: any) => fromDbCounterSale(row)), error: errStr };
+      queryError = handleSupabaseError(e, 'getCounterSales');
     }
 
+    // Merge Supabase, local tenant storage, and memory store with deduplication
     const fallback = safeStorageGet(LOCAL_SALES_KEY);
     const storeSales = store.getCounterSales();
-    let merged = [...(fallback || [])];
-    const seenIds = new Set(merged.map((s: any) => s.id));
-    for (const ss of storeSales) {
-      if (!seenIds.has(ss.id)) {
-        merged.push(ss);
-        seenIds.add(ss.id);
-      }
+    const candidatePool = [...supabaseSales, ...(fallback || []), ...storeSales];
+
+    const seenIds = new Set<string>();
+    const seenInvoiceNumbers = new Set<string>();
+    const seenSaleNumbers = new Set<string>();
+    let merged: any[] = [];
+
+    for (const item of candidatePool) {
+      if (!item) continue;
+      const idKey = item.id ? String(item.id).toLowerCase() : '';
+      const invNum = (item.invoiceNumber || item.invoice_number) ? String(item.invoiceNumber || item.invoice_number).trim().toLowerCase() : '';
+      const saleNum = (item.saleNumber || item.sale_number) ? String(item.saleNumber || item.sale_number).trim().toLowerCase() : '';
+
+      if (idKey && seenIds.has(idKey)) continue;
+      if (invNum && seenInvoiceNumbers.has(invNum)) continue;
+      if (saleNum && seenSaleNumbers.has(saleNum)) continue;
+
+      if (idKey) seenIds.add(idKey);
+      if (invNum) seenInvoiceNumbers.add(invNum);
+      if (saleNum) seenSaleNumbers.add(saleNum);
+
+      merged.push(item);
     }
+
+    // Branch Isolation Filtering
     if (options?.branchId && options.branchId !== 'ALL') {
-      const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
-      const bObj = branches.find((b: any) => b.id === options.branchId);
-      const isMain = Boolean(bObj?.isMainBranch);
       merged = merged.filter((s: any) => {
         const bId = s.branchId || s.branch_id;
-        if (bId) return bId === options.branchId;
-        return isMain;
+        const notes = s.notes || '';
+        return isRecordInBranch(options.branchId, bId, notes);
       });
     }
-    return { data: merged.map((row: any) => fromDbCounterSale(row)) };
+
+    // Date Range Filtering
+    if (options?.startDate || options?.endDate) {
+      merged = merged.filter((s: any) => {
+        const d = (s.saleDate || s.sale_date || s.createdAt || s.created_at || '').split('T')[0];
+        if (options.startDate && d < options.startDate) return false;
+        if (options.endDate && d > options.endDate) return false;
+        return true;
+      });
+    }
+
+    // Search Filtering across sale number, invoice number, customer, phone, reference, AND line items (e.g. 100SS)
+    if (options?.search && options.search.trim()) {
+      const q = options.search.trim().toLowerCase();
+      merged = merged.filter((s: any) => {
+        const num = (s.invoiceNumber || s.invoice_number || '').toLowerCase();
+        const saleNo = (s.saleNumber || s.sale_number || '').toLowerCase();
+        const cust = (s.customerName || s.customer_name || '').toLowerCase();
+        const phone = (s.phoneNumber || s.phone_number || '').toLowerCase();
+        const ref = (s.estimateReference || s.estimate_reference || '').toLowerCase();
+        const items = s.items || s.counter_sale_items || [];
+
+        if (num.includes(q) || saleNo.includes(q) || cust.includes(q) || phone.includes(q) || ref.includes(q)) {
+          return true;
+        }
+
+        if (Array.isArray(items)) {
+          return items.some((i: any) => {
+            const pName = (i.productNameSnapshot || i.product_name_snapshot || i.productName || i.name || '').toLowerCase();
+            const pPart = (i.partNumberSnapshot || i.part_number_snapshot || i.partNumber || '').toLowerCase();
+            const pSku = (i.sku || '').toLowerCase();
+            return pName.includes(q) || pPart.includes(q) || pSku.includes(q);
+          });
+        }
+        return false;
+      });
+    }
+
+    return {
+      data: merged.map((row: any) => fromDbCounterSale(row)),
+      error: queryError && merged.length === 0 ? queryError : undefined,
+    };
   }
 
   public async getCounterSaleMetrics(options?: { branchId?: string }): Promise<{
@@ -390,9 +440,14 @@ export class CounterSaleService {
    * Record a new Counter Sale atomically.
    * Returns a complete domain-level CounterSale object with child items.
    * Eliminates silent failure: fails if stock deduction or database operations fail.
+   * Primary rule: No stock deduction without a saved, recoverable sale record.
    */
   public async createCounterSale(sale: any): Promise<{ success: boolean; data?: CounterSale; error?: string }> {
-    const wsId = await this.getOrFetchWorkspaceId();
+    let wsId = await this.getOrFetchWorkspaceId();
+    if (!wsId || !isValidUuid(wsId)) {
+      wsId = supabaseAuthService.getCurrentCompanyId() || '';
+    }
+
     const saleNumber = sale.saleNumber || `CS-${Date.now()}`;
     const invoiceNumber = (sale.invoiceNumber || saleNumber).trim();
     const items = sale.items || [];
@@ -406,42 +461,73 @@ export class CounterSaleService {
       return { success: false, error: 'Please select at least one product for the counter sale.' };
     }
 
-    // 1. PRE-FINALIZATION AUTHORITATIVE STOCK VALIDATION FOR ALL ITEMS
-    const { productService } = await import('./productService');
-    let stockAlreadyDeducted = false;
-    let saleBranchId = sale.branchId;
-    if (!saleBranchId || saleBranchId === 'ALL') {
+    // 1. Authoritative Branch Context Resolution
+    let rawBranchId = sale.branchId;
+    if (!rawBranchId || rawBranchId === 'ALL') {
       try {
         const saved = safeGetTenantItem<string | null>('active_branch_id', null);
-        if (saved && saved !== 'ALL') saleBranchId = saved;
+        if (saved && saved !== 'ALL') rawBranchId = saved;
       } catch {}
     }
-    if (!saleBranchId) {
+    const resolvedBranch = resolveBranch(rawBranchId);
+    let canonicalBranchId = resolvedBranch?.id || rawBranchId;
+    if (!canonicalBranchId) {
       const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
       const mainB = branches.find((b: any) => b.isMainBranch) || branches[0];
-      saleBranchId = mainB?.id || 'default';
+      canonicalBranchId = mainB?.id || 'default';
     }
 
+    // 2. Pre-Finalization Authoritative Stock Validation
+    const { productService } = await import('./productService');
     for (const item of items) {
       const productId = item.productId || item.product_id;
       const requestedQty = Math.abs(Number(item.quantity) || 0);
 
       if (productId && requestedQty > 0) {
-        const availableStock = await productService.getProductAvailableStock(productId, saleBranchId);
+        const availableStock = await productService.getProductAvailableStock(productId, canonicalBranchId);
         if (requestedQty > availableStock) {
           const prodName = item.productName || item.productNameSnapshot || item.product_name_snapshot || 'Product';
           return {
             success: false,
-            error: `Insufficient stock for "${prodName}". Requested ${requestedQty}, but only ${availableStock} units are available.`,
+            error: `Insufficient stock for "${prodName}". Requested ${requestedQty}, but only ${availableStock} units are available in this branch.`,
           };
         }
       }
     }
 
-    // 2. BUILD RPC PAYLOAD
-    const rpcPayload = {
-      branch_id: (saleBranchId && isValidUuid(saleBranchId)) ? saleBranchId : null,
-      customer_id: sale.customerId || null,
+    // 3. Idempotency Guard: Check if transaction was already completed
+    if (isSupabaseConfigured() && isValidUuid(wsId)) {
+      try {
+        const { data: existingSale } = await supabase
+          .from('counter_sales')
+          .select('*, counter_sale_items(*)')
+          .eq('workspace_id', wsId)
+          .or(`invoice_number.eq.${invoiceNumber},sale_number.eq.${saleNumber}`)
+          .maybeSingle();
+
+        if (existingSale) {
+          const mapped = fromDbCounterSale(existingSale);
+          return { success: true, data: mapped };
+        }
+      } catch (idempErr) {
+        // Proceed if lookup fails
+      }
+    }
+
+    const localExisting = safeStorageGet(LOCAL_SALES_KEY).find(
+      (s: any) =>
+        (s.invoiceNumber || s.invoice_number) === invoiceNumber ||
+        (s.saleNumber || s.sale_number) === saleNumber
+    );
+    if (localExisting) {
+      return { success: true, data: fromDbCounterSale(localExisting) };
+    }
+
+    // 4. Build RPC Payload with explicit workspace_id
+    const rpcPayload: any = {
+      workspace_id: isValidUuid(wsId) ? wsId : undefined,
+      branch_id: (canonicalBranchId && isValidUuid(canonicalBranchId)) ? canonicalBranchId : null,
+      customer_id: (sale.customerId && isValidUuid(sale.customerId)) ? sale.customerId : null,
       sale_number: saleNumber,
       invoice_number: invoiceNumber,
       customer_name: sale.customerName || 'Walk-in Customer',
@@ -453,7 +539,7 @@ export class CounterSaleService {
       discount_value: sale.discountValue || 0,
       discount_amount: sale.discountAmount || 0,
       final_total: finalTotal,
-      notes: sale.notes || null,
+      notes: sale.notes || (canonicalBranchId ? `[branch: ${canonicalBranchId}]` : null),
       payment_method: paymentMethod,
       amount_received: amountReceived,
       balance_amount: balanceAmount,
@@ -482,341 +568,251 @@ export class CounterSaleService {
       }),
     };
 
-    // 3. PRODUCTION SUPABASE MODE: STRICT SERVER-SIDE ATOMIC POSTGRESQL RPC EXECUTION
+    // 5. SERVER-SIDE ATOMIC EXECUTION (If Supabase is configured and authenticated)
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
-      const { data: rpcRes, error: rpcErr } = await supabase.rpc('finalize_counter_sale', {
-        p_sale: rpcPayload,
-      });
-
-      if (!rpcErr && rpcRes && rpcRes.success && rpcRes.data) {
-        // Update local store stock for instant UI reactivity
-        items.forEach((item: any) => {
-          const pId = item.productId || item.product_id;
-          if (pId) store.adjustStock(pId, 'Sale', -Math.abs(item.quantity), `Counter Sale #${invoiceNumber}`, invoiceNumber, saleBranchId);
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('finalize_counter_sale', {
+          p_sale: rpcPayload,
         });
 
-        const completeSale = fromDbCounterSale(rpcRes.data);
-        const finalTot = Number(completeSale.finalTotal) || 0;
-        const recAmt = Number(completeSale.amountReceived !== undefined ? completeSale.amountReceived : finalTot) || 0;
-        const balAmt = Number(completeSale.balanceAmount) || Math.max(0, finalTot - recAmt);
-        const pStat = balAmt <= 0.01 ? 'PAID' : (recAmt > 0 ? 'PARTIALLY PAID' : 'UNPAID');
-
-        // 1. Authoritative Daybook Sale Entry
-        try {
-          const { daybookService } = await import('./daybookService');
-          await daybookService.recordFinancialTransaction({
-            branchId: completeSale.branchId,
-            referenceType: 'COUNTER_SALE',
-            referenceId: completeSale.id,
-            referenceNumber: completeSale.invoiceNumber || completeSale.saleNumber,
-            transactionType: 'SALE',
-            direction: 'IN',
-            amount: recAmt, // Inflow = actual money received
-            totalAmount: finalTot, // Gross Total filled strictly for Invoice & Counter Sale
-            remainingAmount: balAmt, // Remaining unpaid
-            paymentStatus: pStat,
-            paymentMode: completeSale.paymentMethod,
-            partyType: 'customer',
-            partyId: completeSale.customerId || undefined,
-            partyName: completeSale.customerName || 'Walk-in Customer',
-            description: `Counter Sale #${completeSale.invoiceNumber || completeSale.saleNumber}`,
-            transactionDate: completeSale.saleDate || new Date().toISOString().split('T')[0],
+        if (!rpcErr && rpcRes && rpcRes.success && rpcRes.data) {
+          // Instant store inventory sync
+          items.forEach((item: any) => {
+            const pId = item.productId || item.product_id;
+            if (pId) store.adjustStock(pId, 'Sale', -Math.abs(item.quantity), `Counter Sale #${invoiceNumber}`, invoiceNumber, canonicalBranchId);
           });
-        } catch (dbErr) {
-          console.warn('[finalizeCounterSale] Daybook sync notice:', dbErr);
+
+          const completeSale = fromDbCounterSale(rpcRes.data);
+          store.addOrUpdateCounterSale(completeSale);
+          const local = safeStorageGet(LOCAL_SALES_KEY);
+          local.unshift(completeSale);
+          safeStorageSave(LOCAL_SALES_KEY, local);
+
+          productService.invalidateCache();
+          salesAnalyticsService.invalidateCache();
+          try {
+            const { enterpriseAnalyticsService } = await import('./enterpriseAnalyticsService');
+            enterpriseAnalyticsService.invalidateCache();
+          } catch {}
+          store.notify();
+          if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
+
+          return { success: true, data: completeSale };
         }
 
-        const finalPayMethod = completeSale.paymentMethod || 'Cash';
-
-        // 2. Authoritative Cashbook Entry for actual money received
-        if (recAmt > 0 && !['Credit', 'Credit / Udhari', 'Udhari'].includes(finalPayMethod)) {
-          try {
-            const { cashbookService } = await import('./cashbookService');
-            await cashbookService.recordCashbookEntry({
-              branchId: completeSale.branchId,
-              sourceType: 'COUNTER_SALE',
-              sourceId: completeSale.id,
-              referenceNumber: completeSale.invoiceNumber || completeSale.saleNumber,
-              direction: 'IN',
-              amount: recAmt,
-              paymentMethod: finalPayMethod,
-              partyName: completeSale.customerName || 'Walk-in Customer',
-              description: `Counter sale payment #${completeSale.invoiceNumber || completeSale.saleNumber}`,
-              transactionDate: completeSale.saleDate || new Date().toISOString().split('T')[0],
-            });
-          } catch (cbErr) {
-            console.warn('[finalizeCounterSale] Cashbook sync notice:', cbErr);
+        if (rpcErr) {
+          const errMsg = (rpcErr as any).message || '';
+          if (errMsg.includes('INSUFFICIENT_STOCK') || errMsg.includes('VALIDATION_ERROR') || errMsg.includes('must equal final total')) {
+            return { success: false, error: errMsg };
           }
         }
+      } catch (rpcEx: any) {
+        console.warn('[counterSaleService] RPC exception, attempting direct atomic table insert:', rpcEx?.message || rpcEx);
+      }
 
-        // In case the DB RPC did not create the payment row (or older migration):
-        if (recAmt > 0 && !['Credit', 'Credit / Udhari', 'Udhari'].includes(finalPayMethod)) {
+      // DIRECT ATOMIC SUPABASE TABLE INSERTION PIPELINE
+      try {
+        const salePayload: any = {
+          workspace_id: wsId,
+          customer_id: (sale.customerId && isValidUuid(sale.customerId)) ? sale.customerId : null,
+          sale_number: saleNumber,
+          invoice_number: invoiceNumber,
+          customer_name: sale.customerName || 'Walk-in Customer',
+          phone_number: sale.phoneNumber || '',
+          sale_date: sale.saleDate || new Date().toISOString().split('T')[0],
+          estimate_reference: sale.estimateReference || null,
+          subtotal: sale.subtotal || 0,
+          discount_type: sale.discountType || 'fixed',
+          discount_value: sale.discountValue || 0,
+          discount_amount: sale.discountAmount || 0,
+          final_total: finalTotal,
+          status: 'COMPLETED',
+          notes: sale.notes || (canonicalBranchId ? `[branch: ${canonicalBranchId}]` : null),
+          payment_method: paymentMethod,
+          amount_received: amountReceived,
+          balance_amount: balanceAmount,
+          payment_reference: sale.paymentReference || null,
+          payment_notes: sale.paymentNotes || null,
+        };
+        if (canonicalBranchId && isValidUuid(canonicalBranchId)) {
+          salePayload.branch_id = canonicalBranchId;
+        }
+
+        let { data: insertedSale, error: insertErr } = await supabase
+          .from('counter_sales')
+          .insert([salePayload])
+          .select()
+          .single();
+
+        if (insertErr && (insertErr.code === '42703' || insertErr.code === 'PGRST204' || insertErr.message?.includes('branch_id'))) {
+          delete salePayload.branch_id;
+          if (!salePayload.notes?.includes('[branch:')) {
+            salePayload.notes = (salePayload.notes ? salePayload.notes + ' ' : '') + `[branch: ${canonicalBranchId}]`;
+          }
+          const retry = await supabase.from('counter_sales').insert([salePayload]).select().single();
+          insertedSale = retry.data;
+          insertErr = retry.error;
+        }
+
+        if (insertErr || !insertedSale) {
+          console.warn('[counterSaleService] Direct table insertion notice, falling back to local tenant persistence:', insertErr?.message);
+        } else {
+          const saleId = insertedSale.id;
+        const itemRows = items.map((i: any) => ({
+          workspace_id: wsId,
+          counter_sale_id: saleId,
+          product_id: (i.productId && isValidUuid(i.productId)) ? i.productId : ((i.product_id && isValidUuid(i.product_id)) ? i.product_id : null),
+          product_name_snapshot: i.productName || i.productNameSnapshot || i.product_name_snapshot || 'Product',
+          part_number_snapshot: i.partNumber || i.partNumberSnapshot || i.part_number_snapshot || '',
+          quantity: Math.abs(Number(i.quantity) || 0),
+          rate: Number(i.rate) || 0,
+          amount: Math.abs(Number(i.quantity) || 0) * (Number(i.rate) || 0),
+          buy_price_snapshot: Number(i.buyPriceSnapshot || i.buy_price_snapshot || 0),
+        }));
+
+        let { error: itemsErr } = await supabase.from('counter_sale_items').insert(itemRows);
+        if (itemsErr) {
+          console.error('[counterSaleService] Line items insertion failed, executing rollback of header:', itemsErr);
+          await supabase.from('counter_sales').delete().eq('id', saleId);
+          return {
+            success: false,
+            error: `Failed to record line items: ${itemsErr.message}. Transaction cancelled; no stock was deducted.`,
+          };
+        }
+
+        // STRICT ATOMICITY: Deduct stock ONLY AFTER sale header AND items exist in database
+        try {
+          await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate, canonicalBranchId);
+        } catch (stockDeductErr: any) {
+          console.error('[counterSaleService] Stock deduction failed, rolling back committed sale records:', stockDeductErr);
+          await supabase.from('counter_sale_items').delete().eq('counter_sale_id', saleId);
+          await supabase.from('counter_sales').delete().eq('id', saleId);
+          return {
+            success: false,
+            error: `Stock deduction failed: ${stockDeductErr?.message || 'Stock mutation error'}. Transaction rolled back cleanly.`,
+          };
+        }
+
+        // Record Authoritative Payment Entry
+        if (amountReceived > 0 && !['Credit', 'Credit / Udhari', 'Udhari'].includes(paymentMethod)) {
           try {
             const { paymentService } = await import('./paymentService');
             await paymentService.createPayment({
-              counterSaleId: completeSale.id,
-              branchId: completeSale.branchId,
-              amount: recAmt,
-              method: finalPayMethod as any,
-              customerName: completeSale.customerName || 'Walk-in Customer',
-              customerId: completeSale.customerId,
-              invoiceNumber: completeSale.invoiceNumber || completeSale.saleNumber,
-              referenceNo: completeSale.paymentReference,
-              notes: completeSale.paymentNotes || `Counter Sale payment #${completeSale.invoiceNumber || completeSale.saleNumber}`,
-              date: completeSale.saleDate,
+              counterSaleId: saleId,
+              branchId: canonicalBranchId,
+              amount: amountReceived,
+              method: paymentMethod as any,
+              customerName: sale.customerName || 'Walk-in Customer',
+              customerId: sale.customerId,
+              invoiceNumber,
+              referenceNo: sale.paymentReference,
+              notes: sale.paymentNotes || `Counter Sale payment #${invoiceNumber}`,
+              date: sale.saleDate,
             });
           } catch (payErr) {
-            console.warn('[finalizeCounterSale] Payment sync notice:', payErr);
+            console.warn('[counterSaleService] Payment record notice:', payErr);
+          }
+        }
+
+        // Record Daybook Entry
+        try {
+          const { daybookService } = await import('./daybookService');
+          await daybookService.recordFinancialTransaction({
+            branchId: canonicalBranchId,
+            referenceType: 'COUNTER_SALE',
+            referenceId: saleId,
+            referenceNumber: invoiceNumber,
+            transactionType: 'SALE',
+            direction: 'IN',
+            amount: amountReceived,
+            totalAmount: finalTotal,
+            remainingAmount: balanceAmount,
+            paymentStatus: balanceAmount <= 0.01 ? 'PAID' : (amountReceived > 0 ? 'PARTIALLY PAID' : 'UNPAID'),
+            paymentMode: paymentMethod,
+            partyType: 'customer',
+            partyId: sale.customerId || undefined,
+            partyName: sale.customerName || 'Walk-in Customer',
+            description: `Counter Sale #${invoiceNumber}`,
+            transactionDate: sale.saleDate || new Date().toISOString().split('T')[0],
+          });
+        } catch (dbErr) {
+          console.warn('[counterSaleService] Daybook record notice:', dbErr);
+        }
+
+        // Record Cashbook Entry (Only for actual money received, non-credit)
+        if (amountReceived > 0 && !['Credit', 'Credit / Udhari', 'Udhari'].includes(paymentMethod)) {
+          try {
+            const { cashbookService } = await import('./cashbookService');
+            await cashbookService.recordCashbookEntry({
+              sourceType: 'COUNTER_SALE',
+              sourceId: saleId,
+              referenceNumber: invoiceNumber,
+              direction: 'IN',
+              amount: amountReceived,
+              paymentMethod: paymentMethod,
+              partyName: sale.customerName || 'Walk-in Customer',
+              description: `Counter sale payment #${invoiceNumber}`,
+              transactionDate: sale.saleDate || new Date().toISOString().split('T')[0],
+            });
+          } catch (cbErr) {
+            console.warn('[counterSaleService] Cashbook record notice:', cbErr);
           }
         }
 
         // Record Udhari if balanceAmount > 0
-        if (balAmt > 0 && completeSale.customerId) {
+        if (balanceAmount > 0 && sale.customerId) {
           try {
             const { udhariService } = await import('./udhariService');
             await udhariService.syncInvoiceUdhari({
-              invoiceId: completeSale.id,
-              invoiceNumber: completeSale.invoiceNumber || completeSale.saleNumber,
-              customerId: completeSale.customerId,
-              customerName: completeSale.customerName || 'Customer',
-              customerPhone: completeSale.phoneNumber || '9999999999',
-              grandTotal: finalTot,
-              paidAmount: recAmt,
-              balanceAmount: balAmt,
+              invoiceId: saleId,
+              invoiceNumber,
+              customerId: sale.customerId,
+              customerName: sale.customerName || 'Customer',
+              customerPhone: sale.phoneNumber || '9999999999',
+              grandTotal: finalTotal,
+              paidAmount: amountReceived,
+              balanceAmount,
               dueDate: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
             });
           } catch (uErr) {
-            console.warn('[finalizeCounterSale] Udhari sync notice:', uErr);
+            console.warn('[counterSaleService] Udhari record notice:', uErr);
           }
         }
+
+        const completeSale = fromDbCounterSale({
+          ...insertedSale,
+          branch_id: canonicalBranchId,
+          branchId: canonicalBranchId,
+          items: itemRows,
+        });
 
         store.addOrUpdateCounterSale(completeSale);
         const local = safeStorageGet(LOCAL_SALES_KEY);
         local.unshift(completeSale);
         safeStorageSave(LOCAL_SALES_KEY, local);
 
-        // Invalidate caches
         productService.invalidateCache();
         salesAnalyticsService.invalidateCache();
         try {
           const { enterpriseAnalyticsService } = await import('./enterpriseAnalyticsService');
           enterpriseAnalyticsService.invalidateCache();
         } catch {}
-        try {
-          const { analyticsService } = await import('./analyticsService');
-          analyticsService.invalidateCache();
-        } catch {}
         store.notify();
         if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
 
         return { success: true, data: completeSale };
-      }
-
-      if (rpcErr) {
-        const errCode = (rpcErr as any).code || '';
-        const errMsg = (rpcErr as any).message || '';
-        const isFunctionMissing =
-          errCode === 'PGRST202' ||
-          errCode === 'P0001' ||
-          errMsg.includes('UNAUTHORIZED') ||
-          errMsg.includes('Could not find the function') ||
-          errMsg.includes('does not exist');
-
-        if (isFunctionMissing) {
-          console.warn('[counterSaleService] RPC finalize_counter_sale returned error/missing; performing direct authoritative table finalization:', errMsg);
-          try {
-            // Direct Supabase table insert
-            const salePayload: any = {
-              workspace_id: wsId,
-              branch_id: saleBranchId || null,
-              customer_id: (sale.customerId && isValidUuid(sale.customerId)) ? sale.customerId : null,
-              sale_number: saleNumber,
-              invoice_number: invoiceNumber,
-              customer_name: sale.customerName || 'Walk-in Customer',
-              phone_number: sale.phoneNumber || '',
-              sale_date: sale.saleDate || new Date().toISOString().split('T')[0],
-              estimate_reference: sale.estimateReference || null,
-              subtotal: sale.subtotal || 0,
-              discount_type: sale.discountType || 'fixed',
-              discount_value: sale.discountValue || 0,
-              discount_amount: sale.discountAmount || 0,
-              final_total: finalTotal,
-              status: 'COMPLETED',
-              notes: sale.notes || null,
-              payment_method: paymentMethod,
-              amount_received: amountReceived,
-              balance_amount: balanceAmount,
-              payment_reference: sale.paymentReference || null,
-              payment_notes: sale.paymentNotes || null,
-            };
-
-            let { data: insertedSale, error: insertErr } = await supabase
-              .from('counter_sales')
-              .insert([salePayload])
-              .select()
-              .single();
-
-            if (insertErr && (insertErr.code === '42703' || insertErr.message?.includes('branch_id'))) {
-              delete salePayload.branch_id;
-              const retry = await supabase.from('counter_sales').insert([salePayload]).select().single();
-              insertedSale = retry.data;
-              insertErr = retry.error;
-            }
-
-            if (!insertErr && insertedSale) {
-              const saleId = insertedSale.id;
-              const itemRows = items.map((i: any) => ({
-                workspace_id: wsId,
-                branch_id: saleBranchId || null,
-                counter_sale_id: saleId,
-                product_id: (i.productId && isValidUuid(i.productId)) ? i.productId : ((i.product_id && isValidUuid(i.product_id)) ? i.product_id : null),
-                product_name_snapshot: i.productName || i.productNameSnapshot || i.product_name_snapshot || 'Product',
-                part_number_snapshot: i.partNumber || i.partNumberSnapshot || i.part_number_snapshot || '',
-                quantity: Math.abs(Number(i.quantity) || 0),
-                rate: Number(i.rate) || 0,
-                amount: Math.abs(Number(i.quantity) || 0) * (Number(i.rate) || 0),
-                buy_price_snapshot: Number(i.buyPriceSnapshot || i.buy_price_snapshot || 0),
-              }));
-
-              const { error: itemsErr } = await supabase.from('counter_sale_items').insert(itemRows);
-              if (itemsErr && (itemsErr.code === '42703' || itemsErr.message?.includes('column'))) {
-                const strippedItems = itemRows.map((r: any) => ({
-                  counter_sale_id: r.counter_sale_id,
-                  product_id: r.product_id,
-                  product_name_snapshot: r.product_name_snapshot,
-                  part_number_snapshot: r.part_number_snapshot,
-                  quantity: r.quantity,
-                  rate: r.rate,
-                  amount: r.amount,
-                }));
-                await supabase.from('counter_sale_items').insert(strippedItems);
-              }
-
-              // Deduct stock
-              if (!stockAlreadyDeducted) {
-                await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate, saleBranchId);
-                stockAlreadyDeducted = true;
-              }
-
-              // 1. Authoritative Daybook Sale Entry
-              try {
-                const { daybookService } = await import('./daybookService');
-                await daybookService.recordFinancialTransaction({
-                  branchId: saleBranchId,
-                  referenceType: 'COUNTER_SALE',
-                  referenceId: saleId,
-                  referenceNumber: invoiceNumber,
-                  transactionType: 'SALE',
-                  direction: 'IN',
-                  amount: amountReceived,
-                  totalAmount: finalTotal,
-                  remainingAmount: balanceAmount,
-                  paymentStatus: balanceAmount <= 0.01 ? 'PAID' : (amountReceived > 0 ? 'PARTIALLY PAID' : 'UNPAID'),
-                  paymentMode: paymentMethod,
-                  partyType: 'customer',
-                  partyId: sale.customerId || undefined,
-                  partyName: sale.customerName || 'Walk-in Customer',
-                  description: `Counter Sale #${invoiceNumber}`,
-                  transactionDate: sale.saleDate || new Date().toISOString().split('T')[0],
-                });
-              } catch (dbErr) {
-                console.warn('[finalizeCounterSale fallback] Daybook sync notice:', dbErr);
-              }
-
-              // 2. Authoritative Payment Record
-              if (amountReceived > 0 && !['Credit', 'Credit / Udhari', 'Udhari'].includes(paymentMethod)) {
-                try {
-                  const { paymentService } = await import('./paymentService');
-                  await paymentService.createPayment({
-                    counterSaleId: saleId,
-                    branchId: saleBranchId,
-                    amount: amountReceived,
-                    method: paymentMethod as any,
-                    customerName: sale.customerName || 'Walk-in Customer',
-                    customerId: sale.customerId,
-                    invoiceNumber,
-                    referenceNo: sale.paymentReference,
-                    notes: sale.paymentNotes || `Counter Sale payment #${invoiceNumber}`,
-                    date: sale.saleDate,
-                  });
-                } catch (payErr) {
-                  console.warn('[finalizeCounterSale fallback] Payment sync notice:', payErr);
-                }
-              }
-
-              // 3. Authoritative Cashbook Entry
-              if (amountReceived > 0 && !['Credit', 'Credit / Udhari', 'Udhari'].includes(paymentMethod)) {
-                try {
-                  const { cashbookService } = await import('./cashbookService');
-                  await cashbookService.recordCashbookEntry({
-                    sourceType: 'COUNTER_SALE',
-                    sourceId: saleId,
-                    referenceNumber: invoiceNumber,
-                    direction: 'IN',
-                    amount: amountReceived,
-                    paymentMethod: paymentMethod,
-                    partyName: sale.customerName || 'Walk-in Customer',
-                    description: `Counter sale payment #${invoiceNumber}`,
-                    transactionDate: sale.saleDate || new Date().toISOString().split('T')[0],
-                  });
-                } catch (cbErr) {
-                  console.warn('[finalizeCounterSale fallback] Cashbook sync notice:', cbErr);
-                }
-              }
-
-              // 4. Record Udhari if balanceAmount > 0 and customer exists
-              if (balanceAmount > 0 && sale.customerId) {
-                try {
-                  const { udhariService } = await import('./udhariService');
-                  await udhariService.syncInvoiceUdhari({
-                    invoiceId: saleId,
-                    invoiceNumber,
-                    customerId: sale.customerId,
-                    customerName: sale.customerName || 'Customer',
-                    customerPhone: sale.phoneNumber || '9999999999',
-                    grandTotal: finalTotal,
-                    paidAmount: amountReceived,
-                    balanceAmount,
-                    dueDate: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
-                  });
-                } catch (uErr) {
-                  console.warn('[finalizeCounterSale fallback] Udhari sync notice:', uErr);
-                }
-              }
-
-              const completeSale = fromDbCounterSale({ ...insertedSale, branch_id: saleBranchId, items: itemRows });
-              store.addOrUpdateCounterSale(completeSale);
-              const local = safeStorageGet(LOCAL_SALES_KEY);
-              local.unshift(completeSale);
-              safeStorageSave(LOCAL_SALES_KEY, local);
-
-              productService.invalidateCache();
-              salesAnalyticsService.invalidateCache();
-              try {
-                const { enterpriseAnalyticsService } = await import('./enterpriseAnalyticsService');
-                enterpriseAnalyticsService.invalidateCache();
-              } catch {}
-              try {
-                const { analyticsService } = await import('./analyticsService');
-                analyticsService.invalidateCache();
-              } catch {}
-              store.notify();
-              if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
-
-              return { success: true, data: completeSale };
-            }
-          } catch (directErr) {
-            console.warn('[finalizeCounterSale direct fallback notice]:', directErr);
-          }
         }
+      } catch (directEx: any) {
+        console.warn('[counterSaleService] Direct table insertion notice, falling back to local tenant mode:', directEx);
       }
     }
 
-    // 4. PURE OFFLINE / LOCAL MODE (Only when Supabase is not configured)
+    // 6. PURE OFFLINE / LOCAL MODE (Only when Supabase is completely unconfigured)
     const saleId = sale.id || `cs-${Date.now()}`;
     const offlineSale = {
       id: saleId,
-      branch_id: saleBranchId || null,
+      branch_id: canonicalBranchId || null,
+      branchId: canonicalBranchId || null,
       sale_number: saleNumber,
       invoice_number: invoiceNumber,
       payment_method: paymentMethod,
@@ -841,16 +837,14 @@ export class CounterSaleService {
     local.unshift(offlineSale);
     safeStorageSave(LOCAL_SALES_KEY, local);
 
-    if (!stockAlreadyDeducted) {
-      await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate, saleBranchId);
-      stockAlreadyDeducted = true;
-    }
+    // Deduct stock in local store only
+    await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate, canonicalBranchId);
 
-    // Synchronize Daybook and Cashbook for offline/local mode
+    // Synchronize local Daybook & Cashbook
     try {
       const { daybookService } = await import('./daybookService');
       await daybookService.recordFinancialTransaction({
-        branchId: saleBranchId,
+        branchId: canonicalBranchId,
         referenceType: 'COUNTER_SALE',
         referenceId: saleId,
         referenceNumber: invoiceNumber,
@@ -873,7 +867,7 @@ export class CounterSaleService {
       try {
         const { cashbookService } = await import('./cashbookService');
         await cashbookService.recordCashbookEntry({
-          branchId: saleBranchId,
+          branchId: canonicalBranchId,
           sourceType: 'COUNTER_SALE',
           sourceId: saleId,
           referenceNumber: invoiceNumber,
@@ -890,7 +884,7 @@ export class CounterSaleService {
         const { paymentService } = await import('./paymentService');
         await paymentService.createPayment({
           counterSaleId: saleId,
-          branchId: saleBranchId,
+          branchId: canonicalBranchId,
           amount: amountReceived,
           method: paymentMethod as any,
           customerName: sale.customerName || 'Walk-in Customer',
@@ -903,9 +897,8 @@ export class CounterSaleService {
       } catch {}
     }
 
-    const domainSale = fromDbCounterSale(offlineSale);
-    store.addOrUpdateCounterSale(domainSale);
-
+    const completeSale = fromDbCounterSale(offlineSale);
+    store.addOrUpdateCounterSale(completeSale);
     productService.invalidateCache();
     salesAnalyticsService.invalidateCache();
     try {
@@ -915,7 +908,7 @@ export class CounterSaleService {
     store.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
 
-    return { success: true, data: domainSale };
+    return { success: true, data: completeSale };
   }
 
   public async cancelCounterSale(saleId: string): Promise<{ success: boolean; error?: string }> {

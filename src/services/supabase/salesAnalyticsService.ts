@@ -3,6 +3,7 @@ import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { safeGetTenantStorage, safeGetTenantItem } from './safeStorage';
 import { ResolvedDateRange, resolveDateRange } from '../../lib/dateRange';
+import { isRecordInBranch } from '../../lib/branchUtils';
 
 export interface SalesMetrics {
   totalSales: number;
@@ -59,15 +60,6 @@ export class SalesAnalyticsService {
     const range = dateRange || resolveDateRange('today');
     const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
     const effectiveBranchId = branchId;
-    let mainBranchId = safeGetTenantItem('main_branch_id');
-    if (!mainBranchId) {
-      try {
-        const storedBranches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
-        const mb = storedBranches.find((b: any) => b.isMainBranch || b.branchCode === 'MAIN') || storedBranches[0];
-        if (mb?.id) mainBranchId = mb.id;
-      } catch {}
-    }
-    const isMainBranch = !effectiveBranchId || effectiveBranchId === 'ALL' || (mainBranchId && effectiveBranchId === mainBranchId) || String(effectiveBranchId).toLowerCase().includes('main');
 
     const cacheKey = `${wsId}:${effectiveBranchId || 'all'}:${range.rangeType}:${range.startDateStr}:${range.endDateStr}`;
 
@@ -85,81 +77,75 @@ export class SalesAnalyticsService {
         // 1. Fetch Authoritative Completed Counter Sales bounded by sale_date
         let csQ = supabase
           .from('counter_sales')
-          .select('id, sale_number, invoice_number, sale_date, final_total, status, payment_method, amount_received, balance_amount, created_at, branch_id')
+          .select('id, sale_number, invoice_number, sale_date, final_total, status, payment_method, amount_received, balance_amount, created_at, branch_id, notes')
           .eq('workspace_id', wsId)
           .eq('status', 'COMPLETED')
           .gte('sale_date', range.startDateStr)
           .lte('sale_date', range.endDateStr);
-
-        if (effectiveBranchId && effectiveBranchId !== 'ALL' && isValidUuid(effectiveBranchId)) {
-          csQ = csQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
-        }
 
         let { data: csData, error: csErr } = await csQ;
 
         if (csErr && (csErr.code === '42703' || csErr.message?.includes('branch_id'))) {
           let fallbackQ = supabase
             .from('counter_sales')
-            .select('id, sale_number, invoice_number, sale_date, final_total, status, payment_method, amount_received, balance_amount, created_at')
+            .select('id, sale_number, invoice_number, sale_date, final_total, status, payment_method, amount_received, balance_amount, created_at, notes')
             .eq('workspace_id', wsId)
             .eq('status', 'COMPLETED')
             .gte('sale_date', range.startDateStr)
             .lte('sale_date', range.endDateStr);
           const retryRes = await fallbackQ;
           if (!retryRes.error && retryRes.data) {
-            csData = retryRes.data.filter((cs: any) => {
-              const b = cs.branch_id || cs.branchId;
-              if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-                return b ? (b === effectiveBranchId || b === wsId) : isMainBranch;
-              }
-              return true;
-            });
+            csData = retryRes.data;
             csErr = null;
           }
         }
 
         if (!csErr && csData) {
-          counterSales = csData;
+          counterSales = csData.filter((cs: any) => {
+            if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+              const b = cs.branch_id || cs.branchId;
+              const notes = cs.notes || '';
+              return isRecordInBranch(effectiveBranchId, b, notes);
+            }
+            return true;
+          });
         }
 
         // 2. Fetch Authoritative Valid Invoices bounded by date (Excluding Draft and Cancelled)
         let invQ = supabase
           .from('invoices')
-          .select('id, invoice_number, date, grand_total, paid_amount, balance_amount, status, created_at, branch_id')
+          .select('id, invoice_number, date, grand_total, paid_amount, balance_amount, status, created_at, branch_id, notes, terms')
           .eq('workspace_id', wsId)
           .in('status', ['Issued', 'Partially Paid', 'Paid', 'issued', 'partially paid', 'paid'])
           .gte('date', range.startDateStr)
           .lte('date', range.endDateStr);
-
-        if (effectiveBranchId && effectiveBranchId !== 'ALL' && isValidUuid(effectiveBranchId)) {
-          invQ = invQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
-        }
 
         let { data: invData, error: invErr } = await invQ;
 
         if (invErr && (invErr.code === '42703' || invErr.message?.includes('branch_id'))) {
           let fallbackInvQ = supabase
             .from('invoices')
-            .select('id, invoice_number, date, grand_total, paid_amount, balance_amount, status, created_at')
+            .select('id, invoice_number, date, grand_total, paid_amount, balance_amount, status, created_at, notes, terms')
             .eq('workspace_id', wsId)
             .in('status', ['Issued', 'Partially Paid', 'Paid', 'issued', 'partially paid', 'paid'])
             .gte('date', range.startDateStr)
             .lte('date', range.endDateStr);
           const retryInv = await fallbackInvQ;
           if (!retryInv.error && retryInv.data) {
-            invData = retryInv.data.filter((inv: any) => {
-              const b = inv.branch_id || inv.branchId;
-              if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-                return b ? b === effectiveBranchId : isMainBranch;
-              }
-              return true;
-            });
+            invData = retryInv.data;
             invErr = null;
           }
         }
 
         if (!invErr && invData) {
-          invoices = invData;
+          invoices = invData.filter((inv: any) => {
+            if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+              const b = inv.branch_id || inv.branchId;
+              const notes = inv.notes || inv.terms || '';
+              return isRecordInBranch(effectiveBranchId, b, notes);
+            }
+            return true;
+          });
         }
       } catch (err) {
         console.warn('[salesAnalyticsService] Failed to query Supabase, checking local tenant cache:', err);
@@ -181,8 +167,9 @@ export class SalesAnalyticsService {
       if (s === 'draft' || s === 'cancelled') continue;
       if (wsId && (li.workspace_id || li.workspaceId) && (li.workspace_id !== wsId && li.workspaceId !== wsId)) continue;
       if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-        const b = li.branch_id || li.branchId;
-        if (b ? b !== effectiveBranchId : !isMainBranch) continue;
+        const b = li.branch_id || li.branchId || li.snapshot?.branch_id;
+        const notes = li.notes || li.terms || '';
+        if (!isRecordInBranch(effectiveBranchId, b, notes)) continue;
       }
       const d = (li.date ?? li.created_at ?? '').split('T')[0];
       if (d < range.startDateStr || d > range.endDateStr) continue;
@@ -202,8 +189,9 @@ export class SalesAnalyticsService {
         if (s === 'draft' || s === 'cancelled') continue;
         if (wsId && (si as any).workspaceId && (si as any).workspaceId !== wsId) continue;
         if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-          const b = si.branchId || (si as any).branch_id;
-          if (b ? b !== effectiveBranchId : !isMainBranch) continue;
+          const b = si.branchId || (si as any).branch_id || (si as any).snapshot?.branch_id;
+          const notes = si.notes || si.terms || '';
+          if (!isRecordInBranch(effectiveBranchId, b, notes)) continue;
         }
         const d = (si.date || '').split('T')[0];
         if (d < range.startDateStr || d > range.endDateStr) continue;
@@ -242,7 +230,8 @@ export class SalesAnalyticsService {
       if (wsId && (s.workspace_id || s.workspaceId) && (s.workspace_id !== wsId && s.workspaceId !== wsId)) continue;
       if (effectiveBranchId && effectiveBranchId !== 'ALL') {
         const b = s.branch_id || s.branchId;
-        if (b ? b !== effectiveBranchId : !isMainBranch) continue;
+        const notes = s.notes || '';
+        if (!isRecordInBranch(effectiveBranchId, b, notes)) continue;
       }
       const d = (s.sale_date ?? s.saleDate ?? s.created_at ?? '').split('T')[0];
       if (d < range.startDateStr || d > range.endDateStr) continue;
@@ -260,7 +249,8 @@ export class SalesAnalyticsService {
         if (String(scs.status || '').toUpperCase() === 'CANCELLED') continue;
         if (effectiveBranchId && effectiveBranchId !== 'ALL') {
           const b = scs.branchId || (scs as any).branch_id;
-          if (b ? b !== effectiveBranchId : !isMainBranch) continue;
+          const notes = scs.notes || '';
+          if (!isRecordInBranch(effectiveBranchId, b, notes)) continue;
         }
         const d = (scs.saleDate || (scs as any).sale_date || '').split('T')[0];
         if (d < range.startDateStr || d > range.endDateStr) continue;

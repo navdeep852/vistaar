@@ -316,7 +316,7 @@ export class CustomerPaymentService {
               if (existingPays && existingPays.length > 0) {
                 authoritativePaid = existingPays.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
               } else {
-                authoritativePaid = Number(dbInvRow?.paid_amount ?? dbUdhariRow?.total_received ?? 0);
+                authoritativePaid = Number(dbInvRow?.paid_amount ?? dbUdhariRow?.total_received ?? (targetInvoice?.paidAmount ?? targetUdhari?.totalReceived ?? 0));
               }
             } else if (dbUdhariRow?.id) {
               const { data: existingUpPays } = await supabase
@@ -327,11 +327,18 @@ export class CustomerPaymentService {
               if (existingUpPays && existingUpPays.length > 0) {
                 authoritativePaid = existingUpPays.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
               } else {
-                authoritativePaid = Number(dbUdhariRow.total_received || 0);
+                authoritativePaid = Number(dbUdhariRow.total_received ?? (targetInvoice?.paidAmount ?? targetUdhari?.totalReceived ?? 0));
               }
+            } else {
+              authoritativePaid = Number(targetInvoice?.paidAmount ?? targetUdhari?.totalReceived ?? 0);
             }
 
-            const authoritativeTotal = dbInvRow ? Number(dbInvRow.grand_total) : Number(dbUdhariRow?.original_amount || 0);
+            const authoritativeTotal = dbInvRow
+              ? Number(dbInvRow.grand_total)
+              : (dbUdhariRow
+                ? Number(dbUdhariRow.original_amount || 0)
+                : (targetInvoice ? Number(targetInvoice.grandTotal) : Number(targetUdhari?.originalAmount || 0)));
+
             const authoritativeOutstanding = calculateAuthoritativeInvoiceOutstanding(authoritativeTotal, authoritativePaid);
 
             if (!payload.isUpfrontInvoicePayment) {
@@ -411,12 +418,10 @@ export class CustomerPaymentService {
                     paymentCode = retry.data.payment_number || paymentCode;
                     isDbPersisted = true;
                   } else if (retry.error) {
-                    const errStr = handleSupabaseError(retry.error, 'recordCustomerPayment.payments_insert_retry');
-                    return { success: false, error: errStr };
+                    console.warn('[customerPaymentService] Payments insert retry notice, falling back to local tenant persistence:', retry.error.message || retry.error);
                   }
                 } else {
-                  const errStr = handleSupabaseError(payInsertErr, 'recordCustomerPayment.payments_insert');
-                  return { success: false, error: errStr };
+                  console.warn('[customerPaymentService] Payments insert notice, falling back to local tenant persistence:', payInsertErr.message || payInsertErr);
                 }
               }
 
@@ -429,47 +434,51 @@ export class CustomerPaymentService {
 
             // 4. Insert into public.udhari_payments if linked to an Udhari record
             if (dbUdhariRow) {
-              const dbUdhariPayPayload: any = {
-                workspace_id: wsId,
-                udhari_id: dbUdhariRow.id,
-                customer_id: dbUdhariRow.customer_id || resolvedCustomerId || null,
-                payment_code: paymentCode,
-                amount,
-                payment_method: paymentMethod,
-                payment_date: paymentDate,
-                phone_number: customerPhone || dbUdhariRow.phone_snapshot || '9999999999',
-                reference: payload.reference || null,
-                notes: payload.notes || null,
-              };
-              if (isValidUuid(paymentId)) {
-                dbUdhariPayPayload.id = paymentId;
+              try {
+                const dbUdhariPayPayload: any = {
+                  workspace_id: wsId,
+                  udhari_id: dbUdhariRow.id,
+                  customer_id: dbUdhariRow.customer_id || resolvedCustomerId || null,
+                  payment_code: paymentCode,
+                  amount,
+                  payment_method: paymentMethod,
+                  payment_date: paymentDate,
+                  phone_number: customerPhone || dbUdhariRow.phone_snapshot || '9999999999',
+                  reference: payload.reference || null,
+                  notes: payload.notes || null,
+                };
+                if (isValidUuid(paymentId)) {
+                  dbUdhariPayPayload.id = paymentId;
+                }
+
+                const { error: upErr } = await supabase
+                  .from('udhari_payments')
+                  .insert([dbUdhariPayPayload]);
+
+                if (upErr) {
+                  console.warn('[customerPaymentService] udhari_payments insert notice:', upErr.message);
+                }
+
+                // Update public.udhari_records using calculateUdhariFinancials
+                const finalCumulativePaid = Number((authoritativePaid + amount).toFixed(2));
+                const origUdhariAmt = Number(dbUdhariRow.original_amount) || authoritativeTotal;
+                const { originalAmount, totalReceived: newRec, outstandingAmount: newOut, status: newStatus } = calculateUdhariFinancials(
+                  origUdhariAmt,
+                  finalCumulativePaid
+                );
+                await supabase
+                  .from('udhari_records')
+                  .update({
+                    original_amount: originalAmount,
+                    total_received: newRec,
+                    outstanding_amount: newOut,
+                    status: newStatus,
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq('id', dbUdhariRow.id);
+              } catch (upEx) {
+                console.warn('[customerPaymentService] udhari_payments sync notice:', upEx);
               }
-
-              const { error: upErr } = await supabase
-                .from('udhari_payments')
-                .insert([dbUdhariPayPayload]);
-
-              if (upErr) {
-                console.warn('[customerPaymentService] udhari_payments insert notice:', upErr.message);
-              }
-
-              // Update public.udhari_records using calculateUdhariFinancials
-              const finalCumulativePaid = Number((authoritativePaid + amount).toFixed(2));
-              const origUdhariAmt = Number(dbUdhariRow.original_amount) || authoritativeTotal;
-              const { originalAmount, totalReceived: newRec, outstandingAmount: newOut, status: newStatus } = calculateUdhariFinancials(
-                origUdhariAmt,
-                finalCumulativePaid
-              );
-              await supabase
-                .from('udhari_records')
-                .update({
-                  original_amount: originalAmount,
-                  total_received: newRec,
-                  outstanding_amount: newOut,
-                  status: newStatus,
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('id', dbUdhariRow.id);
             }
 
             // 5. Update public.invoices if linked
@@ -477,24 +486,28 @@ export class CustomerPaymentService {
             let updatedInvBal = 0;
             let updatedInvTotal = 0;
             if (dbInvRow) {
-              const finalCumulativePaid = Number((authoritativePaid + amount).toFixed(2));
-              const { grandTotal, paidAmount: newPaid, balanceAmount: newBal, status: newStatus } = calculateInvoiceFinancials(
-                authoritativeTotal,
-                finalCumulativePaid
-              );
-              updatedInvPaid = newPaid;
-              updatedInvBal = newBal;
-              updatedInvTotal = grandTotal;
-              await supabase
-                .from('invoices')
-                .update({
-                  grand_total: grandTotal,
-                  paid_amount: newPaid,
-                  balance_amount: newBal,
-                  status: newStatus,
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('id', dbInvRow.id);
+              try {
+                const finalCumulativePaid = Number((authoritativePaid + amount).toFixed(2));
+                const { grandTotal, paidAmount: newPaid, balanceAmount: newBal, status: newStatus } = calculateInvoiceFinancials(
+                  authoritativeTotal,
+                  finalCumulativePaid
+                );
+                updatedInvPaid = newPaid;
+                updatedInvBal = newBal;
+                updatedInvTotal = grandTotal;
+                await supabase
+                  .from('invoices')
+                  .update({
+                    grand_total: grandTotal,
+                    paid_amount: newPaid,
+                    balance_amount: newBal,
+                    status: newStatus,
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq('id', dbInvRow.id);
+              } catch (invUpEx) {
+                console.warn('[customerPaymentService] invoices update notice:', invUpEx);
+              }
             }
 
             // 6. Record Daybook Payment Event & Synchronize Invoice SALE Entry

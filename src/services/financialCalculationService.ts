@@ -1,4 +1,5 @@
 import { InvoiceStatus, UdhariStatus } from '../types';
+import { isRecordInBranch } from '../lib/branchUtils';
 
 export const PAYMENT_TOLERANCE = 0.00;
 export const FINANCIAL_EPSILON = 0.005;
@@ -329,8 +330,8 @@ export function calculateAuthoritativeUdhariMetrics(
     // 1. Branch filtering (strict isolation)
     if (targetBranch && targetBranch !== 'ALL') {
       const b = r.branchId || r.branch_id;
-      const matchesBranch = b ? b === targetBranch : isMain;
-      if (!matchesBranch) continue;
+      const notes = (r as any).notes || '';
+      if (!isRecordInBranch(targetBranch, b, notes)) continue;
     }
 
     // 2. Historical cutoff (if applicable)

@@ -12,6 +12,7 @@ import { Invoice, Product, Expense, Payment } from '../../types';
 import { fromDbInvoice } from './types';
 import { hasCurrentUserPermission, AuthorizationError } from '../../lib/permissions';
 import { auditLogService } from './auditLogService';
+import { isRecordInBranch } from '../../lib/branchUtils';
 
 export interface AnalyticsKPIs {
   totalSales: number;
@@ -467,9 +468,10 @@ export class EnterpriseAnalyticsService {
           if (!retryCs.error && retryCs.data) {
             csRes = {
               data: retryCs.data.filter((cs: any) => {
-                const b = cs.branch_id || cs.branchId;
                 if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-                  return b ? b === effectiveBranchId : isMainBranch;
+                  const b = cs.branch_id || cs.branchId;
+                  const notes = cs.notes || '';
+                  return isRecordInBranch(effectiveBranchId, b, notes);
                 }
                 return true;
               })
@@ -488,9 +490,10 @@ export class EnterpriseAnalyticsService {
           if (!retryInv.error && retryInv.data) {
             invRes = {
               data: retryInv.data.filter((inv: any) => {
-                const b = inv.branch_id || inv.branchId;
                 if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-                  return b ? b === effectiveBranchId : isMainBranch;
+                  const b = inv.branch_id || inv.branchId || inv.snapshot?.branch_id;
+                  const notes = inv.notes || inv.terms || '';
+                  return isRecordInBranch(effectiveBranchId, b, notes);
                 }
                 return true;
               })
@@ -508,9 +511,10 @@ export class EnterpriseAnalyticsService {
           if (!retryPay.error && retryPay.data) {
             payRes = {
               data: retryPay.data.filter((p: any) => {
-                const b = p.branch_id || p.branchId;
                 if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-                  return b ? b === effectiveBranchId : isMainBranch;
+                  const b = p.branch_id || p.branchId;
+                  const notes = p.notes || '';
+                  return isRecordInBranch(effectiveBranchId, b, notes);
                 }
                 return true;
               })
@@ -518,9 +522,36 @@ export class EnterpriseAnalyticsService {
           }
         }
 
-        if (invRes.data) invoices = invRes.data;
-        if (csRes.data) counterSales = csRes.data;
-        if (payRes.data) payments = payRes.data;
+        if (invRes.data) {
+          invoices = invRes.data.filter((inv: any) => {
+            if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+              const b = inv.branch_id || inv.branchId || inv.snapshot?.branch_id;
+              const notes = inv.notes || inv.terms || '';
+              return isRecordInBranch(effectiveBranchId, b, notes);
+            }
+            return true;
+          });
+        }
+        if (csRes.data) {
+          counterSales = csRes.data.filter((cs: any) => {
+            if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+              const b = cs.branch_id || cs.branchId;
+              const notes = cs.notes || '';
+              return isRecordInBranch(effectiveBranchId, b, notes);
+            }
+            return true;
+          });
+        }
+        if (payRes.data) {
+          payments = payRes.data.filter((p: any) => {
+            if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+              const b = p.branch_id || p.branchId;
+              const notes = p.notes || '';
+              return isRecordInBranch(effectiveBranchId, b, notes);
+            }
+            return true;
+          });
+        }
         if (prodRes.data) productsList = prodRes.data;
         if (expRes.data) expensesList = expRes.data;
       } catch (err) {
@@ -542,7 +573,8 @@ export class EnterpriseAnalyticsService {
         if (w && w !== wsId) return false;
         if (effectiveBranchId && effectiveBranchId !== 'ALL') {
           const b = exp.branchId || exp.branch_id;
-          if (b && b !== effectiveBranchId) return false;
+          const notes = exp.notes || '';
+          if (!isRecordInBranch(effectiveBranchId, b, notes)) return false;
         }
         const d = (exp.date || exp.expense_date || exp.createdAt || '').split('T')[0];
         return d >= dateRange.startDateStr && d <= dateRange.endDateStr;
@@ -569,8 +601,9 @@ export class EnterpriseAnalyticsService {
       const s = String(inv.status || '').toLowerCase();
       if (s === 'draft' || s === 'cancelled') return;
       if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-        const b = inv.branchId || (inv as any).branch_id;
-        if (b ? b !== effectiveBranchId : !isMainBranch) return;
+        const b = inv.branchId || (inv as any).branch_id || (inv as any).snapshot?.branch_id;
+        const notes = (inv as any).notes || (inv as any).terms || '';
+        if (!isRecordInBranch(effectiveBranchId, b, notes)) return;
       }
       const d = (inv.date || inv.createdAt || '').split('T')[0];
       if (d < dateRange.startDateStr || d > dateRange.endDateStr) return;
@@ -589,9 +622,10 @@ export class EnterpriseAnalyticsService {
       if (k) seenCsIds.add(k);
     });
 
-    const localCS = store.getCounterSales().length > 0
-      ? store.getCounterSales()
-      : safeGetTenantStorage<any>(LOCAL_SALES_KEY, []);
+    const localCS = [
+      ...store.getCounterSales(),
+      ...safeGetTenantStorage<any>(LOCAL_SALES_KEY, []),
+    ];
 
     localCS.forEach((cs: any) => {
       const w = cs.workspaceId || cs.workspace_id;
@@ -599,7 +633,8 @@ export class EnterpriseAnalyticsService {
       if (String(cs.status || '').toUpperCase() === 'CANCELLED') return;
       if (effectiveBranchId && effectiveBranchId !== 'ALL') {
         const b = cs.branchId || cs.branch_id;
-        if (b ? b !== effectiveBranchId : !isMainBranch) return;
+        const notes = cs.notes || '';
+        if (!isRecordInBranch(effectiveBranchId, b, notes)) return;
       }
       const d = (cs.sale_date ?? cs.saleDate ?? cs.created_at ?? '').split('T')[0];
       if (d < dateRange.startDateStr || d > dateRange.endDateStr) return;
@@ -629,7 +664,8 @@ export class EnterpriseAnalyticsService {
       if (w && w !== wsId) return;
       if (effectiveBranchId && effectiveBranchId !== 'ALL') {
         const b = p.branchId || p.branch_id;
-        if (b ? b !== effectiveBranchId : !isMainBranch) return;
+        const notes = p.notes || '';
+        if (!isRecordInBranch(effectiveBranchId, b, notes)) return;
       }
       const d = (p.date || p.payment_date || p.createdAt || '').split('T')[0];
       if (d < dateRange.startDateStr || d > dateRange.endDateStr) return;

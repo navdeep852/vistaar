@@ -6,6 +6,8 @@ import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from '
 import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
 import { calculateUdhariFinancials, calculateAuthoritativeUdhariMetrics } from '../financialCalculationService';
 import { getActiveBranchId } from './branchService';
+import { isRecordInBranch } from '../../lib/branchUtils';
+import { store } from '../store';
 
 const LOCAL_UDHARI_KEY = 'vistaar_local_udharis_db';
 const LOCAL_UDHARI_PAYMENTS_KEY = 'vistaar_local_udhari_payments_db';
@@ -29,6 +31,9 @@ export class UdhariService {
   public async getUdhariRecords(explicitWsId?: string, options?: { branchId?: string }): Promise<{ data: any[]; error?: string }> {
     const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
     const effectiveBId = options?.branchId !== undefined ? options.branchId : getActiveBranchId();
+    let remoteRecords: any[] = [];
+    let fetchError: string | undefined = undefined;
+
     try {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
         let query = supabase
@@ -37,106 +42,100 @@ export class UdhariService {
           .eq('workspace_id', wsId);
 
         if (effectiveBId && effectiveBId !== 'ALL' && isValidUuid(effectiveBId)) {
-          query = query.eq('branch_id', effectiveBId);
+          query = query.or(`branch_id.eq.${effectiveBId},branch_id.is.null,branch_id.eq.${wsId}`);
         }
 
         const { data, error } = await query.order('created_at', { ascending: false });
 
-        if (error) {
+        if (!error && data) {
+          remoteRecords = data;
+        } else if (error) {
           if (error.code === '42703' || error.message?.includes('branch_id')) {
             const retryRes = await supabase
               .from('udhari_records')
               .select('*, udhari_payments(*)')
               .eq('workspace_id', wsId)
               .order('created_at', { ascending: false });
-
             if (!retryRes.error && retryRes.data) {
-              let mainBranchId = safeGetTenantItem('main_branch_id');
-              if (!mainBranchId) {
-                try {
-                  const storedBranches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
-                  const mb = storedBranches.find((b: any) => b.isMainBranch || b.branchCode === 'MAIN') || storedBranches[0];
-                  if (mb?.id) mainBranchId = mb.id;
-                } catch {}
-              }
-              const isMainBranch = !effectiveBId || effectiveBId === 'ALL' || (mainBranchId && effectiveBId === mainBranchId) || String(effectiveBId).toLowerCase().includes('main');
-
-              const filtered = retryRes.data.filter((r: any) => {
-                const b = r.branch_id || r.branchId;
-                if (effectiveBId && effectiveBId !== 'ALL') {
-                  return b ? b === effectiveBId : isMainBranch;
-                }
-                return true;
-              });
-
-              const mapped = filtered.map((r: any) => ({
-                id: r.udhari_code || r.id,
-                dbId: r.id,
-                branchId: r.branch_id,
-                customerId: r.customer_id,
-                invoiceId: r.invoice_id,
-                counterSaleId: r.counter_sale_id,
-                customerNameSnapshot: r.customer_name_snapshot || 'Customer',
-                phoneSnapshot: r.phone_snapshot || '',
-                originalAmount: Number(r.original_amount) || 0,
-                totalReceived: Number(r.total_received) || 0,
-                outstandingAmount: Number(r.outstanding_amount) || 0,
-                dueDate: r.due_date,
-                status: r.status,
-                notes: r.notes,
-                createdAt: r.created_at,
-                updatedAt: r.updated_at,
-                payments: r.udhari_payments,
-              }));
-
-              return { data: mapped };
+              remoteRecords = retryRes.data;
             }
+          } else {
+            fetchError = handleSupabaseError(error, 'getUdhariRecords');
           }
-
-          const errStr = handleSupabaseError(error, 'getUdhariRecords');
-          let fallback = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
-          if (effectiveBId && effectiveBId !== 'ALL') {
-            fallback = fallback.filter((r: any) => (r.branchId || r.branch_id) === effectiveBId);
-          }
-          return { data: fallback, error: errStr };
         }
-
-        const mapped = (data || []).map((r: any) => ({
-          id: r.udhari_code || r.id,
-          dbId: r.id,
-          branchId: r.branch_id,
-          customerId: r.customer_id,
-          invoiceId: r.invoice_id,
-          counterSaleId: r.counter_sale_id,
-          customerNameSnapshot: r.customer_name_snapshot || 'Customer',
-          phoneSnapshot: r.phone_snapshot || '',
-          originalAmount: Number(r.original_amount) || 0,
-          totalReceived: Number(r.total_received) || 0,
-          outstandingAmount: Number(r.outstanding_amount) || 0,
-          dueDate: r.due_date,
-          status: r.status,
-          notes: r.notes,
-          createdAt: r.created_at,
-          updatedAt: r.updated_at,
-          payments: r.udhari_payments,
-        }));
-
-        return { data: mapped };
       }
-
-      let fallback = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
-      if (effectiveBId && effectiveBId !== 'ALL') {
-        fallback = fallback.filter((r: any) => (r.branchId || r.branch_id) === effectiveBId);
-      }
-      return { data: fallback };
     } catch (e: any) {
-      const errStr = handleSupabaseError(e, 'getUdhariRecords');
-      let fallback = safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []);
-      if (effectiveBId && effectiveBId !== 'ALL') {
-        fallback = fallback.filter((r: any) => (r.branchId || r.branch_id) === effectiveBId);
-      }
-      return { data: fallback, error: errStr };
+      fetchError = handleSupabaseError(e, 'getUdhariRecords');
     }
+
+    const filteredRemote = remoteRecords.filter((r: any) => {
+      if (effectiveBId && effectiveBId !== 'ALL') {
+        const b = r.branch_id || r.branchId;
+        const notes = r.notes || '';
+        return isRecordInBranch(effectiveBId, b, notes);
+      }
+      return true;
+    });
+
+    const mappedRemote: any[] = filteredRemote.map((r: any) => ({
+      id: r.udhari_code || r.id,
+      dbId: r.id,
+      branchId: r.branch_id,
+      customerId: r.customer_id,
+      invoiceId: r.invoice_id,
+      counterSaleId: r.counter_sale_id,
+      customerNameSnapshot: r.customer_name_snapshot || 'Customer',
+      phoneSnapshot: r.phone_snapshot || '',
+      originalAmount: Number(r.original_amount) || 0,
+      totalReceived: Number(r.total_received) || 0,
+      outstandingAmount: Number(r.outstanding_amount) || 0,
+      dueDate: r.due_date,
+      status: r.status,
+      notes: r.notes,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      payments: r.udhari_payments,
+    }));
+
+    // Deduplication across remote, in-memory store, and local tenant storage
+    const seenUdhariKeys = new Set<string>();
+    mappedRemote.forEach((u) => {
+      const k1 = u.id ? String(u.id).toLowerCase() : '';
+      const k2 = u.dbId ? String(u.dbId).toLowerCase() : '';
+      const k3 = u.invoiceId ? String(u.invoiceId).toLowerCase() : '';
+      if (k1) seenUdhariKeys.add(k1);
+      if (k2) seenUdhariKeys.add(k2);
+      if (k3) seenUdhariKeys.add(k3);
+    });
+
+    const localList: any[] = [
+      ...store.getUdharis(),
+      ...safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []),
+    ];
+
+    const allRecords: any[] = [...mappedRemote];
+
+    localList.forEach((u: any) => {
+      const w = u.workspaceId || u.workspace_id;
+      if (w && w !== wsId) return;
+      if (effectiveBId && effectiveBId !== 'ALL') {
+        const b = u.branchId || u.branch_id;
+        const notes = u.notes || '';
+        if (!isRecordInBranch(effectiveBId, b, notes)) return;
+      }
+      const k1 = u.id ? String(u.id).toLowerCase() : '';
+      const k2 = u.dbId ? String(u.dbId).toLowerCase() : '';
+      const k3 = u.invoiceId ? String(u.invoiceId).toLowerCase() : '';
+      if ((k1 && seenUdhariKeys.has(k1)) || (k2 && seenUdhariKeys.has(k2)) || (k3 && seenUdhariKeys.has(k3))) {
+        return;
+      }
+      if (k1) seenUdhariKeys.add(k1);
+      if (k2) seenUdhariKeys.add(k2);
+      if (k3) seenUdhariKeys.add(k3);
+      allRecords.push(u);
+    });
+
+    return { data: allRecords, error: fetchError };
   }
 
   public async createUdhari(udhari: Partial<UdhariRecord>): Promise<{ udhariId?: string; error?: string }> {
@@ -152,6 +151,9 @@ export class UdhariService {
     }
 
     const code = udhari.id || `UD-${Date.now()}`;
+    const branchTag = udhari.branchId ? `[branch: ${udhari.branchId}]` : '';
+    const udhariNotes = udhari.notes ? (udhari.notes.includes('[branch:') ? udhari.notes : `${udhari.notes} ${branchTag}`.trim()) : (branchTag || null);
+
     const payload: any = {
       workspace_id: wsId,
       branch_id: udhari.branchId && isValidUuid(udhari.branchId) ? udhari.branchId : null,
@@ -164,6 +166,7 @@ export class UdhariService {
       total_received: udhari.totalReceived || 0,
       outstanding_amount: udhari.outstandingAmount !== undefined ? udhari.outstandingAmount : (udhari.originalAmount || 0),
       due_date: udhari.dueDate || new Date().toISOString().split('T')[0],
+      notes: udhariNotes,
       status: udhari.status || 'UNPAID',
     };
 
@@ -205,6 +208,7 @@ export class UdhariService {
       totalReceived: Number(udhari.totalReceived) || 0,
       outstandingAmount: udhari.outstandingAmount !== undefined ? Number(udhari.outstandingAmount) : (Number(udhari.originalAmount) || 0),
       dueDate: udhari.dueDate || new Date().toISOString().split('T')[0],
+      notes: udhariNotes || '',
       status: udhari.status || 'UNPAID',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
