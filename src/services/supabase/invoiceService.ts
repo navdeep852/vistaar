@@ -39,6 +39,8 @@ export class InvoiceService {
     search?: string;
     customerId?: string;
     status?: string;
+    startDate?: string;
+    endDate?: string;
     page?: number;
     pageSize?: number;
     workspaceId?: string;
@@ -61,6 +63,14 @@ export class InvoiceService {
 
     if (options?.status) {
       query = query.eq('status', options.status);
+    }
+
+    if (options?.startDate) {
+      query = query.gte('date', options.startDate);
+    }
+
+    if (options?.endDate) {
+      query = query.lte('date', options.endDate);
     }
 
     if (options?.page && options?.pageSize) {
@@ -87,6 +97,12 @@ export class InvoiceService {
         }
         if (options?.status) {
           retryQuery = retryQuery.eq('status', options.status);
+        }
+        if (options?.startDate) {
+          retryQuery = retryQuery.gte('date', options.startDate);
+        }
+        if (options?.endDate) {
+          retryQuery = retryQuery.lte('date', options.endDate);
         }
         retryQuery = retryQuery.order('created_at', { ascending: false });
         const retryRes = await retryQuery;
@@ -132,6 +148,14 @@ export class InvoiceService {
         }
         if (options?.status) {
           filtered = filtered.filter((inv: any) => inv.status === options.status);
+        }
+        if (options?.startDate || options?.endDate) {
+          filtered = filtered.filter((inv: any) => {
+            const d = (inv.date || inv.invoice_date || inv.createdAt || inv.created_at || '').split('T')[0];
+            if (options.startDate && d < options.startDate) return false;
+            if (options.endDate && d > options.endDate) return false;
+            return true;
+          });
         }
         return { data: filtered, count: filtered.length, error: errStr };
       }
@@ -196,6 +220,16 @@ export class InvoiceService {
         mapped = mapped.filter((inv: any) => inv.status === options.status);
       }
 
+      // Filter by date range (inclusive boundary dates in IST)
+      if (options?.startDate || options?.endDate) {
+        mapped = mapped.filter((inv: any) => {
+          const d = (inv.date || inv.invoice_date || inv.createdAt || inv.created_at || '').split('T')[0];
+          if (options.startDate && d < options.startDate) return false;
+          if (options.endDate && d > options.endDate) return false;
+          return true;
+        });
+      }
+
       return { data: mapped, count: mapped.length };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getInvoices');
@@ -234,6 +268,14 @@ export class InvoiceService {
       }
       if (options?.status) {
         filtered = filtered.filter((inv: any) => inv.status === options.status);
+      }
+      if (options?.startDate || options?.endDate) {
+        filtered = filtered.filter((inv: any) => {
+          const d = (inv.date || inv.invoice_date || inv.createdAt || inv.created_at || '').split('T')[0];
+          if (options.startDate && d < options.startDate) return false;
+          if (options.endDate && d > options.endDate) return false;
+          return true;
+        });
       }
       return { data: filtered, count: filtered.length, error: errStr };
     }

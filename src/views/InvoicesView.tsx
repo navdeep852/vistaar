@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Plus,
   Search,
@@ -14,10 +14,21 @@ import {
   Copy,
   Download,
   Loader2,
+  X,
+  RotateCcw,
+  ChevronDown,
+  AlertCircle,
+  Filter,
 } from 'lucide-react';
 import { store } from '../services/store';
 import { invoiceService, paymentService } from '../services/supabase';
 import { Invoice, InvoiceStatus, PaymentMethod } from '../types';
+import {
+  InvoiceDateFilterPreset,
+  resolveInvoiceDateFilter,
+  formatCompactRange,
+} from '../lib/invoiceDateFilter';
+import { getIstTodayString } from '../lib/dateRange';
 import { Modal } from '../components/Modal';
 import { TemplateGalleryModal } from '../components/TemplateGalleryModal';
 import { DocumentEditorView } from './DocumentEditorView';
@@ -54,6 +65,29 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
+  // Date Filter State (Defaults to 'ALL' / All Dates)
+  const [dateFilterPreset, setDateFilterPreset] = useState<InvoiceDateFilterPreset>('ALL');
+  const [customStartDate, setCustomStartDate] = useState<string>('');
+  const [customEndDate, setCustomEndDate] = useState<string>('');
+  const [isCustomPickerOpen, setIsCustomPickerOpen] = useState(false);
+  const [pickerTempStart, setPickerTempStart] = useState<string>('');
+  const [pickerTempEnd, setPickerTempEnd] = useState<string>('');
+  const [pickerError, setPickerError] = useState<string | null>(null);
+
+  // Authoritative resolved date range in IST
+  const resolvedDateRange = useMemo(() => {
+    return resolveInvoiceDateFilter(dateFilterPreset, customStartDate, customEndDate);
+  }, [dateFilterPreset, customStartDate, customEndDate]);
+
+  const handleClearAllFilters = () => {
+    setSearch('');
+    setStatusFilter('ALL');
+    setDateFilterPreset('ALL');
+    setCustomStartDate('');
+    setCustomEndDate('');
+    setIsCustomPickerOpen(false);
+  };
+
   // Workflow State: list | gallery | editor
   const [mode, setMode] = useState<'list' | 'gallery' | 'editor'>(
     initialOpenCreate ? (typeof window !== 'undefined' && window.innerWidth < 768 ? 'editor' : 'gallery') : 'list'
@@ -88,7 +122,11 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
     updateData();
 
     import('../services/supabase/invoiceService').then(({ invoiceService }) => {
-      invoiceService.getInvoices({ branchId: currentBranch?.id }).then((res) => {
+      invoiceService.getInvoices({
+        branchId: currentBranch?.id,
+        startDate: resolvedDateRange.startDate || undefined,
+        endDate: resolvedDateRange.endDate || undefined,
+      }).then((res) => {
         if (res.data && res.data.length > 0) {
           store.syncRemoteInvoices(res.data);
           updateData();
@@ -103,7 +141,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
       unsub();
     };
-  }, [currentBranch?.id, updateData]);
+  }, [currentBranch?.id, resolvedDateRange.startDate, resolvedDateRange.endDate, updateData]);
 
   const handleEditDraft = (inv: Invoice) => {
     setEditingDraftInvoice(inv);
@@ -214,13 +252,28 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
     }
   };
 
-  const filteredInvoices = invoices.filter((inv) => {
-    const matchesSearch =
-      inv.invoiceNumber.toLowerCase().includes(search.toLowerCase()) ||
-      inv.customerName.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === 'ALL' || inv.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const filteredInvoices = useMemo(() => {
+    return invoices.filter((inv) => {
+      // 1. Search filter: invoiceNumber or customerName
+      const q = search.trim().toLowerCase();
+      const matchesSearch =
+        !q ||
+        (inv.invoiceNumber || '').toLowerCase().includes(q) ||
+        (inv.customerName || '').toLowerCase().includes(q);
+
+      // 2. Status filter
+      const matchesStatus = statusFilter === 'ALL' || inv.status === statusFilter;
+
+      // 3. Date filter: matches invoice's actual issue/creation date in IST
+      let matchesDate = true;
+      if (dateFilterPreset !== 'ALL' && resolvedDateRange.isValid && resolvedDateRange.startDate && resolvedDateRange.endDate) {
+        const invDate = (inv.date || inv.createdAt || '').split('T')[0];
+        matchesDate = invDate >= resolvedDateRange.startDate && invDate <= resolvedDateRange.endDate;
+      }
+
+      return matchesSearch && matchesStatus && matchesDate;
+    });
+  }, [invoices, search, statusFilter, dateFilterPreset, resolvedDateRange]);
 
   if (mode === 'editor') {
     return (
@@ -254,49 +307,160 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
-      {/* Action Header & Search */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card transition-colors">
-        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-          <div className="relative flex-1 sm:w-64">
-            <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400 dark:text-slate-500" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search invoice # or customer..."
-              className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+      {/* Action Header & Search Toolbar */}
+      <div className="flex flex-col gap-3.5 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card transition-colors">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto flex-1">
+            {/* Search Input */}
+            <div className="relative flex-1 sm:w-60 min-w-[200px]">
+              <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400 dark:text-slate-500" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search invoice # or customer..."
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            {/* Status Dropdown */}
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 focus:outline-none cursor-pointer"
+            >
+              <option value="ALL">All Statuses</option>
+              <option value="Draft">Draft</option>
+              <option value="Issued">Issued</option>
+              <option value="Partially Paid">Partially Paid</option>
+              <option value="Paid">Paid</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+
+            {/* Date Filter Dropdown */}
+            <div className="relative flex items-center">
+              <Calendar className="w-3.5 h-3.5 absolute left-3 text-slate-400 dark:text-slate-500 pointer-events-none" />
+              <select
+                value={dateFilterPreset}
+                onChange={(e) => {
+                  const val = e.target.value as InvoiceDateFilterPreset;
+                  if (val === 'custom') {
+                    setPickerTempStart(customStartDate || getIstTodayString());
+                    setPickerTempEnd(customEndDate || getIstTodayString());
+                    setPickerError(null);
+                    setIsCustomPickerOpen(true);
+                  } else {
+                    setDateFilterPreset(val);
+                    setIsCustomPickerOpen(false);
+                  }
+                }}
+                className="pl-8.5 pr-8 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer appearance-none"
+              >
+                <option value="ALL">All Dates</option>
+                <option value="today">Today</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="this_week">This Week</option>
+                <option value="this_month">This Month</option>
+                <option value="last_month">Last Month</option>
+                <option value="custom">Custom Date Range...</option>
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
+            </div>
           </div>
 
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 focus:outline-none"
+          {/* Create Invoice Button */}
+          <button
+            onClick={() => {
+              setEditingDraftInvoice(null);
+              if (typeof window !== 'undefined' && window.innerWidth < 768) {
+                setSelectedTemplateId(store.getLastUsedTemplate('invoice') || 'inv-modern-blue');
+                setMode('editor');
+              } else {
+                setMode('gallery');
+              }
+            }}
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-600/20 transition-colors shrink-0 cursor-pointer"
           >
-            <option value="ALL">All Statuses</option>
-            <option value="Draft">Draft</option>
-            <option value="Issued">Issued</option>
-            <option value="Partially Paid">Partially Paid</option>
-            <option value="Paid">Paid</option>
-            <option value="Cancelled">Cancelled</option>
-          </select>
+            <Sparkles className="w-4 h-4 text-amber-300" />
+            <span>+ Create Invoice</span>
+          </button>
         </div>
 
-        <button
-          onClick={() => {
-            setEditingDraftInvoice(null);
-            if (typeof window !== 'undefined' && window.innerWidth < 768) {
-              setSelectedTemplateId(store.getLastUsedTemplate('invoice') || 'inv-modern-blue');
-              setMode('editor');
-            } else {
-              setMode('gallery');
-            }
-          }}
-          className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-600/20 transition-colors"
-        >
-          <Sparkles className="w-4 h-4 text-amber-300" />
-          <span>+ Create Invoice</span>
-        </button>
+        {/* Active Filters Summary & Reset */}
+        {(search.trim() !== '' || statusFilter !== 'ALL' || dateFilterPreset !== 'ALL') && (
+          <div className="flex flex-wrap items-center gap-2 pt-2.5 border-t border-slate-100 dark:border-slate-800 text-xs animate-fade-in">
+            <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+              Active Filters:
+            </span>
+
+            {dateFilterPreset !== 'ALL' && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900/50 font-medium">
+                <Calendar className="w-3 h-3 text-blue-500" />
+                <span>{resolvedDateRange.badgeText}</span>
+                {dateFilterPreset === 'custom' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPickerTempStart(customStartDate || getIstTodayString());
+                      setPickerTempEnd(customEndDate || getIstTodayString());
+                      setPickerError(null);
+                      setIsCustomPickerOpen(true);
+                    }}
+                    className="ml-1 text-blue-600 dark:text-blue-400 hover:underline cursor-pointer font-semibold"
+                    title="Edit custom date range"
+                  >
+                    Edit
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setDateFilterPreset('ALL')}
+                  className="hover:text-blue-900 dark:hover:text-blue-100 cursor-pointer ml-0.5"
+                  title="Remove date filter"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+
+            {statusFilter !== 'ALL' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
+                <span>Status: <strong>{statusFilter}</strong></span>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('ALL')}
+                  className="hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer ml-1"
+                  title="Remove status filter"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+
+            {search.trim() !== '' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
+                <span>Search: "<strong>{search.trim()}</strong>"</span>
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  className="hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer ml-1"
+                  title="Clear search text"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={handleClearAllFilters}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 font-semibold hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg transition-colors cursor-pointer ml-auto"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Clear All Filters</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Invoices List / Table Container */}
@@ -321,7 +485,20 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
               {filteredInvoices.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500">
-                    No invoices found. Click <strong>+ Create Invoice</strong> to choose a template!
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <p>No invoices matching your active filters.</p>
+                      {(search.trim() !== '' || statusFilter !== 'ALL' || dateFilterPreset !== 'ALL') ? (
+                        <button
+                          type="button"
+                          onClick={handleClearAllFilters}
+                          className="px-3 py-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                        >
+                          Clear all filters to view all invoices
+                        </button>
+                      ) : (
+                        <p>Click <strong>+ Create Invoice</strong> to choose a template!</p>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -429,8 +606,19 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
         {/* MOBILE CARD LIST VIEW (below md) */}
         <div className="block md:hidden divide-y divide-slate-100 dark:divide-slate-800">
           {filteredInvoices.length === 0 ? (
-            <div className="p-8 text-center text-slate-400 dark:text-slate-500 text-xs">
-              No invoices found. Tap <strong>+ Create Invoice</strong> to get started!
+            <div className="p-8 text-center text-slate-400 dark:text-slate-500 text-xs space-y-2">
+              <p>No invoices matching your active filters.</p>
+              {(search.trim() !== '' || statusFilter !== 'ALL' || dateFilterPreset !== 'ALL') ? (
+                <button
+                  type="button"
+                  onClick={handleClearAllFilters}
+                  className="px-3 py-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                >
+                  Clear all filters to view all invoices
+                </button>
+              ) : (
+                <p>Tap <strong>+ Create Invoice</strong> to get started!</p>
+              )}
             </div>
           ) : (
             filteredInvoices.map((inv) => {
@@ -552,6 +740,116 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* CUSTOM DATE RANGE PICKER MODAL */}
+      <Modal
+        isOpen={isCustomPickerOpen}
+        onClose={() => {
+          setIsCustomPickerOpen(false);
+          if (!customStartDate || !customEndDate) {
+            setDateFilterPreset('ALL');
+          }
+        }}
+        title="Custom Date Range"
+        subtitle="Filter invoices by issue date between start and end dates"
+        maxWidth="md"
+      >
+        <div className="space-y-4">
+          {pickerError && (
+            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2 animate-fade-in">
+              <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+              <span>{pickerError}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                Start Date
+              </label>
+              <input
+                type="date"
+                value={pickerTempStart}
+                onChange={(e) => {
+                  setPickerTempStart(e.target.value);
+                  setPickerError(null);
+                }}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-medium text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                End Date
+              </label>
+              <input
+                type="date"
+                value={pickerTempEnd}
+                onChange={(e) => {
+                  setPickerTempEnd(e.target.value);
+                  setPickerError(null);
+                }}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-medium text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-950/60 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800">
+            Dates are inclusive: invoices issued on both {pickerTempStart || 'Start Date'} and {pickerTempEnd || 'End Date'} will be displayed.
+          </div>
+
+          <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => {
+                setCustomStartDate('');
+                setCustomEndDate('');
+                setDateFilterPreset('ALL');
+                setIsCustomPickerOpen(false);
+              }}
+              className="px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              Reset to All Dates
+            </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCustomPickerOpen(false);
+                  if (!customStartDate || !customEndDate) {
+                    setDateFilterPreset('ALL');
+                  }
+                }}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!pickerTempStart || !pickerTempEnd) {
+                    setPickerError('Please select both Start Date and End Date.');
+                    return;
+                  }
+                  if (pickerTempStart > pickerTempEnd) {
+                    setPickerError('Start date cannot be later than end date.');
+                    return;
+                  }
+                  setPickerError(null);
+                  setCustomStartDate(pickerTempStart);
+                  setCustomEndDate(pickerTempEnd);
+                  setDateFilterPreset('custom');
+                  setIsCustomPickerOpen(false);
+                }}
+                className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-md cursor-pointer transition-all"
+              >
+                Apply Range
+              </button>
+            </div>
+          </div>
+        </div>
+      </Modal>
 
       {/* TEMPLATE GALLERY MODAL */}
       <TemplateGalleryModal
