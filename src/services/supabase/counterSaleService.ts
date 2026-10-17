@@ -8,6 +8,7 @@ import { productService } from './productService';
 import { CounterSale } from '../../types';
 import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from './safeStorage';
 import { isRecordInBranch, resolveBranch } from '../../lib/branchUtils';
+import { normalizeToYyyyMmDd, getIstTodayString } from '../../lib/dateRange';
 
 const LOCAL_SALES_KEY = 'vistaar_local_counter_sales_db';
 
@@ -318,15 +319,12 @@ export class CounterSaleService {
       queryError = handleSupabaseError(e, 'getCounterSales');
     }
 
-    // Merge Supabase, local tenant storage, and memory store with deduplication
+    // Merge Supabase, local tenant storage, and memory store with deduplication and metadata enrichment
     const fallback = safeStorageGet(LOCAL_SALES_KEY);
     const storeSales = store.getCounterSales();
     const candidatePool = [...supabaseSales, ...(fallback || []), ...storeSales];
 
-    const seenIds = new Set<string>();
-    const seenInvoiceNumbers = new Set<string>();
-    const seenSaleNumbers = new Set<string>();
-    let merged: any[] = [];
+    const recordMap = new Map<string, any>();
 
     for (const item of candidatePool) {
       if (!item) continue;
@@ -334,16 +332,48 @@ export class CounterSaleService {
       const invNum = (item.invoiceNumber || item.invoice_number) ? String(item.invoiceNumber || item.invoice_number).trim().toLowerCase() : '';
       const saleNum = (item.saleNumber || item.sale_number) ? String(item.saleNumber || item.sale_number).trim().toLowerCase() : '';
 
-      if (idKey && seenIds.has(idKey)) continue;
-      if (invNum && seenInvoiceNumbers.has(invNum)) continue;
-      if (saleNum && seenSaleNumbers.has(saleNum)) continue;
+      // Find if we already have an entry for this sale across any canonical key
+      let existingKey = '';
+      if (idKey && recordMap.has(`id:${idKey}`)) existingKey = `id:${idKey}`;
+      else if (invNum && recordMap.has(`inv:${invNum}`)) existingKey = `inv:${invNum}`;
+      else if (saleNum && recordMap.has(`sale:${saleNum}`)) existingKey = `sale:${saleNum}`;
 
-      if (idKey) seenIds.add(idKey);
-      if (invNum) seenInvoiceNumbers.add(invNum);
-      if (saleNum) seenSaleNumbers.add(saleNum);
+      if (existingKey) {
+        // ENRICH existing record with missing metadata from this duplicate (e.g. branch_id missing from remote Supabase schema cache)
+        const existing = recordMap.get(existingKey)!;
+        const b = existing.branch_id || existing.branchId;
+        const newB = item.branch_id || item.branchId;
+        if (!b && newB) {
+          existing.branch_id = newB;
+          existing.branchId = newB;
+        }
+        if (!existing.notes && item.notes) {
+          existing.notes = item.notes;
+        } else if (item.notes && !existing.notes?.includes('[branch:') && item.notes.includes('[branch:')) {
+          existing.notes = `${existing.notes || ''} ${item.notes}`.trim();
+        }
+        const existingItems = existing.items || existing.counter_sale_items || [];
+        const newItems = item.items || item.counter_sale_items || [];
+        if (existingItems.length === 0 && newItems.length > 0) {
+          existing.items = newItems;
+          existing.counter_sale_items = newItems;
+        }
+        continue;
+      }
 
-      merged.push(item);
+      if (idKey) recordMap.set(`id:${idKey}`, item);
+      if (invNum) recordMap.set(`inv:${invNum}`, item);
+      if (saleNum) recordMap.set(`sale:${saleNum}`, item);
     }
+
+    let merged = Array.from(new Set(recordMap.values()));
+
+    // Ensure newest records appear first
+    merged.sort((a, b) => {
+      const tA = new Date(a.saleDate || a.sale_date || a.createdAt || a.created_at || 0).getTime();
+      const tB = new Date(b.saleDate || b.sale_date || b.createdAt || b.created_at || 0).getTime();
+      return tB - tA;
+    });
 
     // Branch Isolation Filtering
     if (options?.branchId && options.branchId !== 'ALL') {
@@ -357,7 +387,7 @@ export class CounterSaleService {
     // Date Range Filtering
     if (options?.startDate || options?.endDate) {
       merged = merged.filter((s: any) => {
-        const d = (s.saleDate || s.sale_date || s.createdAt || s.created_at || '').split('T')[0];
+        const d = normalizeToYyyyMmDd(s.saleDate || s.sale_date || s.createdAt || s.created_at);
         if (options.startDate && d < options.startDate) return false;
         if (options.endDate && d > options.endDate) return false;
         return true;
@@ -407,11 +437,11 @@ export class CounterSaleService {
   }> {
     const { data } = await this.getCounterSales(options);
     const sales = (data || []).filter((s) => s.status !== 'CANCELLED');
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getIstTodayString();
     const currentMonthStr = todayStr.substring(0, 7);
 
-    const todaySales = sales.filter((s) => s.saleDate === todayStr);
-    const monthSales = sales.filter((s) => (s.saleDate || '').startsWith(currentMonthStr));
+    const todaySales = sales.filter((s) => normalizeToYyyyMmDd(s.saleDate || (s as any).sale_date) === todayStr);
+    const monthSales = sales.filter((s) => normalizeToYyyyMmDd(s.saleDate || (s as any).sale_date).startsWith(currentMonthStr));
 
     const todayTotal = todaySales.reduce((acc, s) => acc + (s.finalTotal || 0), 0);
     const monthTotal = monthSales.reduce((acc, s) => acc + (s.finalTotal || 0), 0);
@@ -539,7 +569,7 @@ export class CounterSaleService {
       discount_value: sale.discountValue || 0,
       discount_amount: sale.discountAmount || 0,
       final_total: finalTotal,
-      notes: sale.notes || (canonicalBranchId ? `[branch: ${canonicalBranchId}]` : null),
+      notes: (sale.notes ? `${sale.notes} ` : '') + (canonicalBranchId && !sale.notes?.includes('[branch:') ? `[branch: ${canonicalBranchId}]` : ''),
       payment_method: paymentMethod,
       amount_received: amountReceived,
       balance_amount: balanceAmount,
@@ -627,7 +657,7 @@ export class CounterSaleService {
           discount_amount: sale.discountAmount || 0,
           final_total: finalTotal,
           status: 'COMPLETED',
-          notes: sale.notes || (canonicalBranchId ? `[branch: ${canonicalBranchId}]` : null),
+          notes: (sale.notes ? `${sale.notes} ` : '') + (canonicalBranchId && !sale.notes?.includes('[branch:') ? `[branch: ${canonicalBranchId}]` : ''),
           payment_method: paymentMethod,
           amount_received: amountReceived,
           balance_amount: balanceAmount,
@@ -810,6 +840,7 @@ export class CounterSaleService {
     // 6. PURE OFFLINE / LOCAL MODE (Only when Supabase is completely unconfigured)
     const saleId = sale.id || `cs-${Date.now()}`;
     const offlineSale = {
+      ...sale,
       id: saleId,
       branch_id: canonicalBranchId || null,
       branchId: canonicalBranchId || null,
@@ -818,7 +849,7 @@ export class CounterSaleService {
       payment_method: paymentMethod,
       amount_received: amountReceived,
       balance_amount: balanceAmount,
-      ...sale,
+      notes: (sale.notes ? `${sale.notes} ` : '') + (canonicalBranchId && !sale.notes?.includes('[branch:') ? `[branch: ${canonicalBranchId}]` : ''),
       items: items.map((i: any) => ({
         id: `csi-${Date.now()}-${Math.random()}`,
         counterSaleId: saleId,

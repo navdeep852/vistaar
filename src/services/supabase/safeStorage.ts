@@ -45,6 +45,22 @@ export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = [], b
   const unifiedKey = buildTenantCacheKey(key);
   const legacyKey = `${key}_${getActiveCompanyId()}`;
 
+  const itemMatchesBranch = (it: any, bId?: string | null): boolean => {
+    if (!bId || bId === 'ALL') return true;
+    const itemBranch = it.branchId || it.branch_id;
+    if (itemBranch === bId) return true;
+    if (it.notes && typeof it.notes === 'string') {
+      const match = it.notes.match(/\[branch(?:_id)?:?\s*([^\]]+)\]/i);
+      if (match && match[1]) {
+        const embedded = match[1].trim();
+        if (embedded === bId || embedded.toLowerCase() === bId.toLowerCase()) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
   const readRaw = (k: string): T[] | null => {
     if (typeof localStorage !== 'undefined') {
       try {
@@ -69,7 +85,7 @@ export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = [], b
     const unified = readRaw(unifiedKey);
     if (unified && Array.isArray(unified) && unified.length > 0) {
       if (branchId && branchId !== 'ALL') {
-        return unified.filter((it: any) => (it.branchId || it.branch_id) === branchId);
+        return unified.filter((it: any) => itemMatchesBranch(it, branchId));
       }
       return unified;
     }
@@ -85,7 +101,7 @@ export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = [], b
   if (branchId && branchId !== 'ALL') {
     const unified = readRaw(unifiedKey);
     if (unified && Array.isArray(unified) && unified.length > 0) {
-      const branchItems = unified.filter((it: any) => (it.branchId || it.branch_id) === branchId);
+      const branchItems = unified.filter((it: any) => itemMatchesBranch(it, branchId));
       if (branchItems.length > 0) return branchItems;
     }
   }
@@ -102,7 +118,7 @@ export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = [], b
   const legacy = readRaw(legacyKey);
   if (legacy && Array.isArray(legacy)) {
     if (branchId && branchId !== 'ALL') {
-      const filtered = legacy.filter((it: any) => (it.branchId || it.branch_id) === branchId);
+      const filtered = legacy.filter((it: any) => itemMatchesBranch(it, branchId));
       if (filtered.length > 0) return filtered;
     } else {
       return legacy;
@@ -117,7 +133,7 @@ export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = [], b
       const altUnified = readRaw(altUnifiedKey);
       if (altUnified && Array.isArray(altUnified) && altUnified.length > 0) {
         if (branchId && branchId !== 'ALL') {
-          const bFiltered = altUnified.filter((it: any) => (it.branchId || it.branch_id) === branchId);
+          const bFiltered = altUnified.filter((it: any) => itemMatchesBranch(it, branchId));
           if (bFiltered.length > 0) return bFiltered;
         } else {
           return altUnified;
@@ -126,7 +142,7 @@ export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = [], b
       const altLegacy = readRaw(`${key}_${altWs}`);
       if (altLegacy && Array.isArray(altLegacy) && altLegacy.length > 0) {
         if (branchId && branchId !== 'ALL') {
-          const bFiltered = altLegacy.filter((it: any) => (it.branchId || it.branch_id) === branchId);
+          const bFiltered = altLegacy.filter((it: any) => itemMatchesBranch(it, branchId));
           if (bFiltered.length > 0) return bFiltered;
         } else {
           return altLegacy;
@@ -144,7 +160,7 @@ export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = [], b
           const val = readRaw(lk);
           if (val && Array.isArray(val) && val.length > 0) {
             if (branchId && branchId !== 'ALL') {
-              const bFiltered = val.filter((it: any) => (it.branchId || it.branch_id) === branchId);
+              const bFiltered = val.filter((it: any) => itemMatchesBranch(it, branchId));
               if (bFiltered.length > 0) return bFiltered;
             } else {
               return val;

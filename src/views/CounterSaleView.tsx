@@ -45,6 +45,8 @@ import { ProductLineItemsTable, LineItemRow, isEmptyLineItem } from '../componen
 import { validateIndianPhoneNumber, isValidIndianPhoneNumber, normalizeIndianPhoneNumber, formatIndianPhoneNumber } from '../lib/phoneUtils';
 import { useBranch } from '../context/BranchContext';
 import { CounterSaleDetailsModal } from '../components/CounterSaleDetailsModal';
+import { store } from '../services/store';
+import { getIstTodayString, normalizeToYyyyMmDd } from '../lib/dateRange';
 
 type DateFilterType = 'ALL' | 'TODAY' | 'WEEK' | 'MONTH';
 
@@ -57,7 +59,7 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   onNavigateTab,
   activeTab,
 }) => {
-  const { currentBranch } = useBranch();
+  const { currentBranch, isBranchReady, isLoadingBranches } = useBranch();
 
   // Store Collections
   const [sales, setSales] = useState<CounterSale[]>([]);
@@ -82,7 +84,7 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   const [custPhone, setCustPhone] = useState('');
   const [custPhoneError, setCustPhoneError] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
-  const [saleDate, setSaleDate] = useState(new Date().toISOString().split('T')[0]);
+  const [saleDate, setSaleDate] = useState(getIstTodayString());
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [estimateRef, setEstimateRef] = useState('');
   const [discountType, setDiscountType] = useState<'fixed' | 'percentage'>('fixed');
@@ -107,11 +109,12 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   const [mobileViewMode, setMobileViewMode] = useState<'table' | 'cards'>('table');
 
   const refreshData = async () => {
+    const effectiveBranchId = currentBranch?.id;
     const [saleRes, prodRes, custRes, m, invRes] = await Promise.all([
-      counterSaleService.getCounterSales({ branchId: currentBranch?.id }),
-      productService.getProducts({ branchId: currentBranch?.id }),
+      counterSaleService.getCounterSales({ branchId: effectiveBranchId }),
+      productService.getProducts({ branchId: effectiveBranchId }),
       customerService.getCustomers(),
-      counterSaleService.getCounterSaleMetrics({ branchId: currentBranch?.id }),
+      counterSaleService.getCounterSaleMetrics({ branchId: effectiveBranchId }),
       inventoryService.getInventorySettings(),
     ]);
 
@@ -125,17 +128,26 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   };
 
   useEffect(() => {
+    if (!isBranchReady && isLoadingBranches) {
+      return;
+    }
     refreshData();
     const handleRefresh = () => refreshData();
     window.addEventListener('vistaar:branch_changed', handleRefresh);
     window.addEventListener('vistaar:stock_transferred', handleRefresh);
     window.addEventListener('vistaar:branch_inventory_updated', handleRefresh);
+    window.addEventListener('vistaar:refresh-dashboard', handleRefresh);
+    const unsubscribe = store.subscribe(() => {
+      refreshData();
+    });
     return () => {
       window.removeEventListener('vistaar:branch_changed', handleRefresh);
       window.removeEventListener('vistaar:stock_transferred', handleRefresh);
       window.removeEventListener('vistaar:branch_inventory_updated', handleRefresh);
+      window.removeEventListener('vistaar:refresh-dashboard', handleRefresh);
+      unsubscribe();
     };
-  }, [currentBranch?.id]);
+  }, [currentBranch?.id, isBranchReady, isLoadingBranches]);
 
   // Format Helpers
   const formatCurrency = (val: number) => {
@@ -157,7 +169,7 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
     setCustName('Walk-in Customer');
     setCustPhone('');
     setSelectedCustomerId('');
-    setSaleDate(new Date().toISOString().split('T')[0]);
+    setSaleDate(getIstTodayString());
     setInvoiceNumber(counterSaleService.generateNextInvoiceNumber());
     setEstimateRef('');
     setDiscountType('fixed');
@@ -379,13 +391,14 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   // Search & Filter Sales History
   const filteredSales = (sales || []).filter((s) => {
     if (!s) return false;
-    const saleDateStr = s.saleDate || (s as any).sale_date || '';
-    const todayStr = new Date().toISOString().split('T')[0];
+    const rawDate = s.saleDate || (s as any).sale_date || s.createdAt || (s as any).created_at || '';
+    const saleDateStr = normalizeToYyyyMmDd(rawDate);
+    const todayStr = getIstTodayString();
     if (dateFilter === 'TODAY' && saleDateStr !== todayStr) return false;
 
     if (dateFilter === 'WEEK') {
       const now = new Date();
-      const weekAgo = new Date(now.getTime() - 7 * 86400000).toISOString().split('T')[0];
+      const weekAgo = normalizeToYyyyMmDd(new Date(now.getTime() - 7 * 86400000));
       if (saleDateStr < weekAgo) return false;
     }
 

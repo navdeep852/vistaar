@@ -49,10 +49,11 @@ import {
   PAYMENT_TOLERANCE,
 } from './financialCalculationService';
 import { filterValidLineItems } from '../lib/productHelpers';
-import { fromDbInvoice } from './supabase/types';
+import { fromDbInvoice, fromDbCounterSale } from './supabase/types';
 
 const LOCAL_PRODUCTS_KEY = 'vistaar_local_products_db';
 const LOCAL_INVOICES_KEY = 'vistaar_local_invoices_db';
+const LOCAL_SALES_KEY = 'vistaar_local_counter_sales_db';
 
 
 export function calculateUdhariStatus(originalAmount: number, totalReceived: number, dueDate: string): UdhariStatus {
@@ -268,6 +269,24 @@ class StoreService {
           console.warn('[loadFromStorage] Failed merging local payments DB:', pErr);
         }
 
+        // Merge fallback counter sales from LOCAL_SALES_KEY (vistaar_local_counter_sales_db)
+        try {
+          const localDbSales = safeGetTenantStorage<any>(LOCAL_SALES_KEY, []);
+          if (Array.isArray(localDbSales) && localDbSales.length > 0) {
+            for (const lSale of localDbSales) {
+              const mapped = fromDbCounterSale(lSale);
+              const exists = stateObj.counterSales.some(
+                (s) => s.id === mapped.id || (mapped.saleNumber && s.saleNumber === mapped.saleNumber)
+              );
+              if (!exists) {
+                stateObj.counterSales.push(mapped);
+              }
+            }
+          }
+        } catch (sErr) {
+          console.warn('[loadFromStorage] Failed merging local counter sales DB:', sErr);
+        }
+
         this.reconcileStateLedgers(stateObj);
         return stateObj;
       }
@@ -302,6 +321,13 @@ class StoreService {
           notes: lPay.notes || '',
           createdAt: lPay.created_at || lPay.createdAt || new Date().toISOString(),
         }));
+      }
+    } catch {}
+
+    try {
+      const localDbSales = safeGetTenantStorage<any>(LOCAL_SALES_KEY, []);
+      if (Array.isArray(localDbSales) && localDbSales.length > 0) {
+        fallback.counterSales = localDbSales.map((s) => fromDbCounterSale(s));
       }
     } catch {}
 
@@ -3652,7 +3678,13 @@ class StoreService {
       amountReceived,
       balanceAmount,
       items: saleItems,
-      notes: data.notes?.trim() || '',
+      notes: (() => {
+        const rawNotes = data.notes?.trim() || '';
+        const branchTag = data.branchId ? `[branch: ${data.branchId}]` : '';
+        return rawNotes.includes('[branch:')
+          ? rawNotes
+          : (branchTag ? `${rawNotes ? rawNotes + ' ' : ''}${branchTag}` : rawNotes);
+      })(),
       createdAt: now,
       updatedAt: now,
     };
