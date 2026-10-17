@@ -217,6 +217,7 @@ export interface StockTransfer {
   createdAt: string;
   completedAt?: string;
   updatedAt?: string;
+  idempotencyKey?: string;
   items?: StockTransferItem[];
 }
 

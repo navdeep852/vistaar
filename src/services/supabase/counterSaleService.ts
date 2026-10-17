@@ -79,36 +79,22 @@ export class CounterSaleService {
               .eq('id', productId);
           }
 
-          // 2b. Deduct strictly from branch_inventory
-          if (branchId) {
-            // Local branch inventory storage update
-            const allLocalBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
-            const targetBEntry = allLocalBInv.find((bi: any) => (bi.branchId === branchId || bi.branch_id === branchId) && (bi.productId === productId || bi.product_id === productId));
-            if (targetBEntry) {
-              const curB = Number(targetBEntry.currentStock ?? targetBEntry.current_stock ?? 0);
-              const nextB = Math.max(0, curB - quantity);
-              targetBEntry.currentStock = nextB;
-              targetBEntry.current_stock = nextB;
-              targetBEntry.updatedAt = new Date().toISOString();
-              safeSaveTenantStorage('vistaar_local_branch_inventory_db', allLocalBInv);
-            }
+          // 2b. Deduct strictly from remote branch_inventory if online
+          if (branchId && isValidUuid(branchId)) {
+            const { data: bProd } = await supabase
+              .from('branch_inventory')
+              .select('current_stock')
+              .eq('branch_id', branchId)
+              .eq('product_id', productId)
+              .maybeSingle();
 
-            if (isValidUuid(branchId)) {
-              const { data: bProd } = await supabase
+            if (bProd) {
+              const newBStock = Math.max(0, (Number(bProd.current_stock) || 0) - quantity);
+              await supabase
                 .from('branch_inventory')
-                .select('current_stock')
+                .update({ current_stock: newBStock, updated_at: new Date().toISOString() })
                 .eq('branch_id', branchId)
-                .eq('product_id', productId)
-                .maybeSingle();
-
-              if (bProd) {
-                const newBStock = Math.max(0, (Number(bProd.current_stock) || 0) - quantity);
-                await supabase
-                  .from('branch_inventory')
-                  .update({ current_stock: newBStock, updated_at: new Date().toISOString() })
-                  .eq('branch_id', branchId)
-                  .eq('product_id', productId);
-              }
+                .eq('product_id', productId);
             }
           }
 
@@ -422,6 +408,7 @@ export class CounterSaleService {
 
     // 1. PRE-FINALIZATION AUTHORITATIVE STOCK VALIDATION FOR ALL ITEMS
     const { productService } = await import('./productService');
+    let stockAlreadyDeducted = false;
     let saleBranchId = sale.branchId;
     if (!saleBranchId || saleBranchId === 'ALL') {
       try {
@@ -706,7 +693,10 @@ export class CounterSaleService {
               }
 
               // Deduct stock
-              await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate, saleBranchId);
+              if (!stockAlreadyDeducted) {
+                await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate, saleBranchId);
+                stockAlreadyDeducted = true;
+              }
 
               // 1. Authoritative Daybook Sale Entry
               try {
@@ -851,7 +841,10 @@ export class CounterSaleService {
     local.unshift(offlineSale);
     safeStorageSave(LOCAL_SALES_KEY, local);
 
-    await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate, saleBranchId);
+    if (!stockAlreadyDeducted) {
+      await this.deductCounterSaleStock(items, invoiceNumber, sale.saleDate, saleBranchId);
+      stockAlreadyDeducted = true;
+    }
 
     // Synchronize Daybook and Cashbook for offline/local mode
     try {

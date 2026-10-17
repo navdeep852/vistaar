@@ -237,7 +237,7 @@ export class InventoryService {
             product_id: data.product_id,
             current_stock: prevBranchStock + qty,
             updated_at: new Date().toISOString(),
-          }, { onConflict: 'branch_id,product_id' });
+          }, { onConflict: 'workspace_id,branch_id,product_id' });
 
           updateLocalBranchInventory(data.product_id, targetBranchId, qty);
         }

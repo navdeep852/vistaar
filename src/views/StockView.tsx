@@ -744,7 +744,7 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
                     </th>
                   ))}
                   <th className="px-6 py-3.5 min-w-[120px] text-right font-extrabold text-blue-600 dark:text-blue-400 whitespace-nowrap">
-                    Total Enterprise Stock
+                    Total Stock Across All Branches
                   </th>
                 </tr>
               </thead>
@@ -770,9 +770,16 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
                           const biEntry = branchInventory.find(
                             (bi) => (bi.branchId || bi.branch_id) === b.id && (bi.productId || bi.product_id) === prod.id
                           );
-                          const bStock = biEntry != null
-                            ? Number(biEntry.currentStock ?? biEntry.current_stock ?? 0)
-                            : (b.isMainBranch ? Number(prod.currentStock || 0) : 0);
+                          let bStock = 0;
+                          if (biEntry != null) {
+                            bStock = Number(biEntry.currentStock ?? biEntry.current_stock ?? 0);
+                          } else if (b.isMainBranch) {
+                            // When Main Branch doesn't have an explicit entry, calculate by subtracting other branch allocations
+                            const otherBranchAllocations = branchInventory
+                              .filter((bi) => (bi.productId || bi.product_id) === prod.id && (bi.branchId || bi.branch_id) !== b.id)
+                              .reduce((sum, bi) => sum + Number(bi.currentStock ?? bi.current_stock ?? 0), 0);
+                            bStock = Math.max(0, Number(prod.currentStock || 0) - otherBranchAllocations);
+                          }
                           totalStock += bStock;
                           return (
                             <td key={b.id} className="px-6 py-4 text-center font-bold">

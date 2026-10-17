@@ -87,7 +87,19 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
 }) => {
   const { currentBranch } = useBranch();
   const settings = store.getSettings();
-  const [products, setProducts] = useState<Product[]>(() => store.getProducts());
+  const [products, setProducts] = useState<Product[]>(() => store.getProducts(currentBranch?.id));
+
+  useEffect(() => {
+    let isMounted = true;
+    productService.getProducts({ branchId: currentBranch?.id }).then((res) => {
+      if (isMounted && res.data) {
+        setProducts(res.data);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [currentBranch?.id]);
 
   // Async customer state
   const [customersList, setCustomersList] = useState<Customer[]>(() => store.getCustomers() || []);
@@ -1519,6 +1531,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
                 currency={settings.currency}
                 fallbackProducts={products}
                 usesPartNumber={usesPartNumber}
+                branchId={currentBranch?.id}
               />
 
               {/* Step Navigation Actions */}

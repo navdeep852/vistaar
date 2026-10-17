@@ -40,12 +40,14 @@ export const StockTransferModal: React.FC<StockTransferModalProps> = ({
     { productId: '', quantity: 1 },
   ]);
   const [submitting, setSubmitting] = useState(false);
+  const [idempotencyKey, setIdempotencyKey] = useState<string>(() => `xfer-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`);
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
   const [completedTransfer, setCompletedTransfer] = useState<StockTransfer | null>(null);
   const [previewTransfer, setPreviewTransfer] = useState<StockTransfer | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
+    setIdempotencyKey(`xfer-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`);
 
     const init = async () => {
       try {
@@ -159,6 +161,7 @@ export const StockTransferModal: React.FC<StockTransferModalProps> = ({
         destinationBranchId: destBranchId,
         transferDate,
         notes: notes.trim(),
+        idempotencyKey,
         items: validItems.map((it) => ({
           productId: it.productId,
           quantity: it.quantity,
@@ -172,9 +175,10 @@ export const StockTransferModal: React.FC<StockTransferModalProps> = ({
           'success'
         );
         onSuccess();
-        // Reset line items and notes for subsequent transfers
+        // Reset line items, notes, and idempotency key for subsequent transfers
         setItems([{ productId: '', quantity: 1 }]);
         setNotes('');
+        setIdempotencyKey(`xfer-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`);
         // Open the post-transfer confirmation modal
         if (res.transfer) {
           setCompletedTransfer(res.transfer);

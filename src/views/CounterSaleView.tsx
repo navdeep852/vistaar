@@ -607,6 +607,7 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
                 currency="₹"
                 fallbackProducts={products}
                 usesPartNumber={usesPartNumber}
+                branchId={currentBranch?.id}
               />
             </div>
 

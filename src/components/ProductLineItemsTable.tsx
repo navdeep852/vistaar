@@ -41,6 +41,7 @@ export interface ProductLineItemsTableProps {
   fallbackProducts?: Product[];
   usesPartNumber?: boolean | null;
   onStockWarning?: (warning: string) => void;
+  branchId?: string;
 }
 
 export const ProductLineItemsTable: React.FC<ProductLineItemsTableProps> = ({
@@ -50,6 +51,7 @@ export const ProductLineItemsTable: React.FC<ProductLineItemsTableProps> = ({
   currency = '₹',
   fallbackProducts = [],
   usesPartNumber = false,
+  branchId,
 }) => {
   const isInvoice = mode === 'invoice' || mode === 'quotation';
   const isQuotation = mode === 'quotation';
@@ -398,6 +400,7 @@ export const ProductLineItemsTable: React.FC<ProductLineItemsTableProps> = ({
                           prioritizePartNumber={true}
                           allowCustomProduct={isQuotation}
                           onAddCustomProduct={(typed) => handleOpenCustomModal(typed, idx)}
+                          branchId={branchId}
                           inputClassName={
                             hasNoProduct
                               ? 'border-slate-300 dark:border-slate-700'
@@ -688,6 +691,7 @@ export const ProductLineItemsTable: React.FC<ProductLineItemsTableProps> = ({
                       prioritizePartNumber={true}
                       allowCustomProduct={isQuotation}
                       onAddCustomProduct={(typed) => handleOpenCustomModal(typed, idx)}
+                      branchId={branchId}
                     />
                   </div>
 

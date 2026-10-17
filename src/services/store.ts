@@ -2768,7 +2768,11 @@ class StoreService {
           const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
           prod = local.find((p) => p.id === productId);
         }
-        return prod ? Math.max(0, Number(prod.currentStock) || 0) : 0;
+        const masterStock = prod ? Math.max(0, Number(prod.currentStock) || 0) : 0;
+        const otherBranchAllocations = allInv
+          .filter((bi: any) => (bi.productId || bi.product_id) === productId && (bi.branchId || bi.branch_id) !== effectiveBranchId)
+          .reduce((sum: number, bi: any) => sum + (Number(bi.currentStock ?? bi.current_stock) || 0), 0);
+        return Math.max(0, masterStock - otherBranchAllocations);
       }
       return 0;
     }
@@ -2816,14 +2820,15 @@ class StoreService {
   }
 
 
-  public getProducts(): Product[] {
+  public getProducts(branchId?: string): Product[] {
     if (!this.state.products) this.state.products = [];
     if (!this.state.stockReceipts) this.state.stockReceipts = [];
 
     // Recalculate availableStock dynamically for every active product
     this.state.products.forEach((p) => {
-      const avail = this.getProductAvailableStock(p.id);
+      const avail = this.getProductAvailableStock(p.id, branchId);
       p.currentStock = avail;
+      (p as any).stock = avail;
       p.productName = p.productName || p.name;
       p.partNumber = p.partNumber || p.sku;
       p.currentBuyPrice = p.currentBuyPrice || p.buyPrice;

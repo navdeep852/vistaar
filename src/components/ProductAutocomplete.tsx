@@ -21,6 +21,7 @@ export interface ProductAutocompleteProps {
   onEnterWithoutSelection?: () => void;
   allowCustomProduct?: boolean;
   onAddCustomProduct?: (searchTerm: string) => void;
+  branchId?: string;
 }
 
 export const ProductAutocomplete = forwardRef<HTMLInputElement, ProductAutocompleteProps>(({
@@ -39,6 +40,7 @@ export const ProductAutocomplete = forwardRef<HTMLInputElement, ProductAutocompl
   onEnterWithoutSelection,
   allowCustomProduct = false,
   onAddCustomProduct,
+  branchId,
 }, ref) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(false);
@@ -121,7 +123,7 @@ export const ProductAutocomplete = forwardRef<HTMLInputElement, ProductAutocompl
         }
 
         // Search via backend service
-        const searchRes = await productService.searchProducts(trimmed, 30);
+        const searchRes = await productService.searchProducts(trimmed, 30, branchId);
         if (searchRes.data && searchRes.data.length > 0) {
           const remoteProds = searchRes.data;
           const merged = [...remoteProds];
