@@ -6,6 +6,7 @@ import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem, safeSaveTenantItem } from './safeStorage';
 import { auditLogService } from './auditLogService';
 import { store } from '../store';
+import { generateStockTransferNumber } from '../stockTransferDocumentService';
 
 const LOCAL_BRANCHES_KEY = 'vistaar_local_branches_db';
 const LOCAL_USER_BRANCH_ACCESS_KEY = 'vistaar_local_user_branch_access_db';
@@ -1149,6 +1150,7 @@ export class BranchService {
    */
   public async getStockTransfers(branchId?: string): Promise<{ data: StockTransfer[]; error?: string }> {
     const wsId = await this.getWorkspaceId();
+    let remoteMapped: StockTransfer[] = [];
 
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
       try {
@@ -1156,64 +1158,142 @@ export class BranchService {
           .from('stock_transfers')
           .select(`
             *,
-            source_branch:branches!stock_transfers_source_branch_id_fkey(branch_name, branch_code),
-            destination_branch:branches!stock_transfers_destination_branch_id_fkey(branch_name, branch_code),
-            stock_transfer_items(*, products(name, sku, part_number))
+            source_branch:branches!stock_transfers_source_branch_id_fkey(branch_name, branch_code, address, city, state, pincode, phone, gstin),
+            destination_branch:branches!stock_transfers_destination_branch_id_fkey(branch_name, branch_code, address, city, state, pincode, phone, gstin),
+            stock_transfer_items(*, products(name, sku, part_number, hsn_sac, unit, buy_price))
           `)
           .eq('workspace_id', wsId)
           .order('transfer_date', { ascending: false })
           .order('created_at', { ascending: false });
 
         if (branchId && branchId !== 'ALL') {
-          query = query.or(`source_branch_id.eq.${branchId},destination_branch_id.eq.${branchId}`);
+          query = query.or(`source_branch_id.eq.${branchId},destination_branch_id.eq.${branchId},from_branch_id.eq.${branchId},to_branch_id.eq.${branchId}`);
         }
 
         const { data, error } = await query;
         if (!error && data) {
-          const mapped: StockTransfer[] = data.map((row: any) => ({
-            id: row.id,
-            workspaceId: row.workspace_id,
-            transferNumber: row.transfer_number,
-            sourceBranchId: row.source_branch_id,
-            sourceBranchName: row.source_branch?.branch_name,
-            destinationBranchId: row.destination_branch_id,
-            destinationBranchName: row.destination_branch?.branch_name,
-            transferDate: row.transfer_date,
-            status: row.status,
-            requestedBy: row.requested_by,
-            approvedBy: row.approved_by,
-            notes: row.notes,
-            createdAt: row.created_at,
-            completedAt: row.completed_at,
-            updatedAt: row.updated_at,
-            items: (row.stock_transfer_items || []).map((it: any) => ({
-              id: it.id,
-              workspaceId: it.workspace_id,
-              transferId: it.transfer_id,
-              productId: it.product_id,
-              productName: it.products?.name,
-              partNumber: it.products?.part_number,
-              sku: it.products?.sku,
-              quantity: Number(it.quantity) || 0,
-              unitCost: it.unit_cost ? Number(it.unit_cost) : undefined,
-              notes: it.notes,
-            })),
-          }));
+          remoteMapped = data.map((row: any) => {
+            const sBranch = row.source_branch || row.from_branch;
+            const dBranch = row.destination_branch || row.to_branch;
+            const items = (row.stock_transfer_items || []).map((it: any) => {
+              const qty = Number(it.quantity) || 0;
+              const cost = Number(it.unit_cost ?? it.products?.buy_price ?? 0);
+              return {
+                id: it.id,
+                workspaceId: it.workspace_id,
+                transferId: it.transfer_id,
+                productId: it.product_id,
+                productName: it.products?.name,
+                partNumber: it.products?.part_number,
+                sku: it.products?.sku,
+                hsnCode: it.products?.hsn_sac,
+                unit: it.products?.unit || 'PCS',
+                quantity: qty,
+                unitCost: cost,
+                transferValue: cost * qty,
+                sourceStockBefore: it.source_stock_before ? Number(it.source_stock_before) : undefined,
+                sourceStockAfter: it.source_stock_after ? Number(it.source_stock_after) : undefined,
+                destStockBefore: it.dest_stock_before ? Number(it.dest_stock_before) : undefined,
+                destStockAfter: it.dest_stock_after ? Number(it.dest_stock_after) : undefined,
+                notes: it.notes,
+              };
+            });
 
-          safeSaveTenantStorage(LOCAL_STOCK_TRANSFERS_KEY, mapped, branchId);
-          return { data: mapped };
+            return {
+              id: row.id,
+              workspaceId: row.workspace_id,
+              transferNumber: row.transfer_number,
+              sourceBranchId: row.source_branch_id || row.from_branch_id,
+              sourceBranchName: sBranch?.branch_name,
+              sourceBranchCode: sBranch?.branch_code,
+              sourceBranchAddress: sBranch?.address,
+              sourceBranchCity: sBranch?.city,
+              sourceBranchState: sBranch?.state,
+              sourceBranchPincode: sBranch?.pincode,
+              sourceBranchPhone: sBranch?.phone,
+              sourceBranchGstin: sBranch?.gstin,
+              destinationBranchId: row.destination_branch_id || row.to_branch_id,
+              destinationBranchName: dBranch?.branch_name,
+              destinationBranchCode: dBranch?.branch_code,
+              destinationBranchAddress: dBranch?.address,
+              destinationBranchCity: dBranch?.city,
+              destinationBranchState: dBranch?.state,
+              destinationBranchPincode: dBranch?.pincode,
+              destinationBranchPhone: dBranch?.phone,
+              destinationBranchGstin: dBranch?.gstin,
+              transferDate: row.transfer_date,
+              status: row.status,
+              requestedBy: row.requested_by,
+              approvedBy: row.approved_by,
+              dispatchedBy: row.dispatched_by,
+              receivedBy: row.received_by,
+              notes: row.notes,
+              totalQuantity: items.reduce((a: number, c: any) => a + c.quantity, 0),
+              totalLineItems: items.length,
+              totalTransferValue: items.reduce((a: number, c: any) => a + (c.transferValue || 0), 0),
+              createdAt: row.created_at,
+              completedAt: row.completed_at,
+              updatedAt: row.updated_at,
+              items,
+            };
+          });
         }
       } catch (e: any) {
-        // Fall through
+        // Fall through to local merge
       }
     }
 
     const local = safeGetTenantStorage<StockTransfer>(LOCAL_STOCK_TRANSFERS_KEY, []);
-    let filtered = local;
+
+    // Merge remote and local records (deduped by ID and transferNumber)
+    const seenIds = new Set<string>();
+    const seenNums = new Set<string>();
+    const merged: StockTransfer[] = [];
+
+    // Local records first as they contain full client-side enriched snapshots
+    for (const item of local) {
+      if (item.id) seenIds.add(item.id.toLowerCase());
+      if (item.transferNumber) seenNums.add(item.transferNumber.toLowerCase());
+      merged.push(item);
+    }
+
+    for (const item of remoteMapped) {
+      const idKey = item.id ? item.id.toLowerCase() : '';
+      const numKey = item.transferNumber ? item.transferNumber.toLowerCase() : '';
+      if ((idKey && seenIds.has(idKey)) || (numKey && seenNums.has(numKey))) {
+        continue;
+      }
+      if (idKey) seenIds.add(idKey);
+      if (numKey) seenNums.add(numKey);
+      merged.push(item);
+    }
+
+    // Sort descending by date & created_at
+    merged.sort((a, b) => new Date(b.createdAt || b.transferDate).getTime() - new Date(a.createdAt || a.transferDate).getTime());
+
+    safeSaveTenantStorage(LOCAL_STOCK_TRANSFERS_KEY, merged, branchId);
+
+    let filtered = merged;
     if (branchId && branchId !== 'ALL') {
       filtered = filtered.filter((t) => t.sourceBranchId === branchId || t.destinationBranchId === branchId);
     }
     return { data: filtered };
+  }
+
+  /**
+   * Helper to fetch a single stock transfer by its ID or Transfer Number
+   */
+  public async getSingleStockTransfer(
+    transferIdOrNumber: string
+  ): Promise<{ data: StockTransfer | null; error?: string }> {
+    if (!transferIdOrNumber) return { data: null };
+    const res = await this.getStockTransfers();
+    const cleanKey = transferIdOrNumber.trim().toLowerCase();
+    const found = res.data.find(
+      (t) => (t.id && t.id.toLowerCase() === cleanKey) ||
+             (t.transferNumber && t.transferNumber.toLowerCase() === cleanKey)
+    );
+    return { data: found || null };
   }
 
   /**
@@ -1225,7 +1305,7 @@ export class BranchService {
     transferDate?: string;
     notes?: string;
     items: Array<{ productId: string; quantity: number; unitCost?: number; notes?: string }>;
-  }): Promise<{ success: boolean; transferId?: string; transferNumber?: string; error?: string }> {
+  }): Promise<{ success: boolean; transferId?: string; transferNumber?: string; transfer?: StockTransfer; error?: string }> {
     const wsId = await this.getWorkspaceId();
 
     if (!payload.sourceBranchId || !payload.destinationBranchId) {
@@ -1264,8 +1344,21 @@ export class BranchService {
     }
 
     const transferId = generateUuid();
-    const trfNum = `TRF-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`;
+    const existingTransfers = safeGetTenantStorage<StockTransfer>(LOCAL_STOCK_TRANSFERS_KEY, []);
+    const trfNum = generateStockTransferNumber(existingTransfers);
     const transferDate = payload.transferDate || new Date().toISOString().split('T')[0];
+
+    // Snapshot pre-transfer stock levels and products
+    const stockMapBefore: Record<string, number> = {};
+    const destStockMapBefore: Record<string, number> = {};
+    for (const item of payload.items) {
+      stockMapBefore[item.productId] = await this.getAuthoritativeStock(item.productId, payload.sourceBranchId);
+      destStockMapBefore[item.productId] = await this.getAuthoritativeStock(item.productId, payload.destinationBranchId);
+    }
+
+    const localProds = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+    const user = supabaseAuthService.getUser();
+    const userName = user?.name || user?.email || 'Authorized Officer';
 
     // Step 2: Try Remote Supabase RPC first if configured
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
@@ -1449,29 +1542,76 @@ export class BranchService {
     safeSaveTenantStorage(LOCAL_RECEIPTS_KEY, localReceipts);
     safeSaveTenantStorage(LOCAL_MOVEMENTS_KEY, localMovements);
 
-    // Save StockTransfer record
+    // Build rich line items with snapshots
+    const enrichedItems: StockTransferItem[] = payload.items.map((it) => {
+      const prod = localProds.find((p) => p.id === it.productId);
+      const qty = Math.abs(Number(it.quantity) || 0);
+      const cost = Number(it.unitCost ?? prod?.buyPrice ?? 0);
+      const srcBefore = stockMapBefore[it.productId] ?? 0;
+      const srcAfter = Math.max(0, srcBefore - qty);
+      const dstBefore = destStockMapBefore[it.productId] ?? 0;
+      const dstAfter = dstBefore + qty;
+
+      return {
+        id: generateUuid(),
+        workspaceId: wsId || 'default',
+        transferId,
+        productId: it.productId,
+        productName: prod?.name || 'Product Item',
+        partNumber: prod?.partNumber || '',
+        sku: prod?.sku || '',
+        hsnCode: prod?.hsnSac || '',
+        unit: prod?.unit || 'PCS',
+        quantity: qty,
+        unitCost: cost,
+        transferValue: cost * qty,
+        sourceStockBefore: srcBefore,
+        sourceStockAfter: srcAfter,
+        destStockBefore: dstBefore,
+        destStockAfter: dstAfter,
+        notes: it.notes,
+      };
+    });
+
+    const totalQty = enrichedItems.reduce((acc, it) => acc + it.quantity, 0);
+    const totalVal = enrichedItems.reduce((acc, it) => acc + (it.transferValue || 0), 0);
+
+    // Save StockTransfer record with complete header & branch information
     const newTrf: StockTransfer = {
       id: transferId,
       workspaceId: wsId || 'default',
       transferNumber: trfNum,
       sourceBranchId: payload.sourceBranchId,
       sourceBranchName: sourceBranch?.branchName,
+      sourceBranchCode: sourceBranch?.branchCode,
+      sourceBranchAddress: sourceBranch?.address || '',
+      sourceBranchCity: sourceBranch?.city || '',
+      sourceBranchState: sourceBranch?.state || '',
+      sourceBranchPincode: sourceBranch?.pincode || '',
+      sourceBranchPhone: sourceBranch?.phone || '',
+      sourceBranchGstin: sourceBranch?.gstin || '',
       destinationBranchId: payload.destinationBranchId,
       destinationBranchName: destBranch?.branchName,
+      destinationBranchCode: destBranch?.branchCode,
+      destinationBranchAddress: destBranch?.address || '',
+      destinationBranchCity: destBranch?.city || '',
+      destinationBranchState: destBranch?.state || '',
+      destinationBranchPincode: destBranch?.pincode || '',
+      destinationBranchPhone: destBranch?.phone || '',
+      destinationBranchGstin: destBranch?.gstin || '',
       transferDate,
       status: 'Completed',
+      requestedBy: userName,
+      approvedBy: userName,
+      dispatchedBy: userName,
+      receivedBy: 'Pending Branch Acknowledgment',
       notes: payload.notes,
+      totalQuantity: totalQty,
+      totalLineItems: enrichedItems.length,
+      totalTransferValue: totalVal,
       createdAt: nowIso,
       completedAt: nowIso,
-      items: payload.items.map((it) => ({
-        id: generateUuid(),
-        workspaceId: wsId || 'default',
-        transferId,
-        productId: it.productId,
-        quantity: Math.abs(Number(it.quantity) || 0),
-        unitCost: it.unitCost,
-        notes: it.notes,
-      })),
+      items: enrichedItems,
     };
 
     const transfersList = safeGetTenantStorage<StockTransfer>(LOCAL_STOCK_TRANSFERS_KEY, []);
@@ -1486,6 +1626,7 @@ export class BranchService {
           transferNumber: trfNum,
           sourceBranchId: payload.sourceBranchId,
           destinationBranchId: payload.destinationBranchId,
+          transfer: newTrf,
         },
       }));
       window.dispatchEvent(new CustomEvent('vistaar:branch_changed', {
@@ -1493,7 +1634,7 @@ export class BranchService {
       }));
     }
 
-    return { success: true, transferId, transferNumber: trfNum };
+    return { success: true, transferId, transferNumber: trfNum, transfer: newTrf };
   }
 
   /**

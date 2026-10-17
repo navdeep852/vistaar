@@ -1,8 +1,29 @@
-import React, { useState, useEffect } from 'react';
-import { Boxes, Plus, ArrowUpRight, ArrowDownRight, ArrowRight, RefreshCw, AlertTriangle, Lock, ShieldAlert, ArrowLeftRight, CheckCircle2 } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Boxes,
+  Plus,
+  ArrowUpRight,
+  ArrowDownRight,
+  ArrowRight,
+  RefreshCw,
+  AlertTriangle,
+  Lock,
+  ShieldAlert,
+  ArrowLeftRight,
+  CheckCircle2,
+  Search,
+  Download,
+  Printer,
+  Eye,
+  X,
+  RotateCcw,
+  FileText,
+  Loader2,
+  Copy,
+} from 'lucide-react';
 import { store } from '../services/store';
 import { productService } from '../services/supabase';
-import { Product, InventoryTransaction, StockMovementReason, StockTransfer } from '../types';
+import { Product, InventoryTransaction, StockMovementReason, StockTransfer, Branch } from '../types';
 import { Modal } from '../components/Modal';
 import { showToast } from '../components/Toast';
 import { DedicatedWorkspace } from '../components/DedicatedWorkspace';
@@ -13,6 +34,9 @@ import { auditLogService } from '../services/supabase/auditLogService';
 import { useBranch } from '../context/BranchContext';
 import { branchService } from '../services/supabase/branchService';
 import { StockTransferModal } from '../components/StockTransferModal';
+import { StockTransferPreviewModal } from '../components/stock/StockTransferPreviewModal';
+import { saveStockTransferPdf, printStockTransferNote } from '../services/stockTransferDocumentService';
+import { clipboardService } from '../platform';
 
 interface StockViewProps {
   onNavigateTab?: (tab: string) => void;
@@ -34,6 +58,14 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
   const [actualStock, setActualStock] = useState<number>(0);
   const [notes, setNotes] = useState('');
   const [adjusting, setAdjusting] = useState(false);
+
+  // Transfer History Filters & Preview States
+  const [selectedTransferForPreview, setSelectedTransferForPreview] = useState<StockTransfer | null>(null);
+  const [transferSearch, setTransferSearch] = useState('');
+  const [transferSourceFilter, setTransferSourceFilter] = useState('ALL');
+  const [transferDestFilter, setTransferDestFilter] = useState('ALL');
+  const [transferStatusFilter, setTransferStatusFilter] = useState('ALL');
+  const [isGeneratingPdfTransferId, setIsGeneratingPdfTransferId] = useState<string | null>(null);
 
   const canAdjustStock = hasCurrentUserPermission('inventory.adjust_stock');
   const canTransferStock = hasCurrentUserPermission('stock_transfers.create') || hasCurrentUserPermission('inventory.adjust_stock');
@@ -129,6 +161,86 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
     } finally {
       setAdjusting(false);
     }
+  };
+
+  // Filtered Stock Transfers for Transfer History tab
+  const filteredTransfers = useMemo(() => {
+    return transfers.filter((trf) => {
+      // 1. Search filter: transfer number, product names, sku, part number, notes
+      const q = transferSearch.trim().toLowerCase();
+      if (q) {
+        const numMatch = (trf.transferNumber || '').toLowerCase().includes(q);
+        const notesMatch = (trf.notes || '').toLowerCase().includes(q);
+        const srcMatch = (trf.sourceBranchName || '').toLowerCase().includes(q);
+        const dstMatch = (trf.destinationBranchName || '').toLowerCase().includes(q);
+        const itemsMatch = (trf.items || []).some(
+          (it) =>
+            (it.productName || '').toLowerCase().includes(q) ||
+            (it.sku || '').toLowerCase().includes(q) ||
+            (it.partNumber || '').toLowerCase().includes(q)
+        );
+        if (!numMatch && !notesMatch && !srcMatch && !dstMatch && !itemsMatch) return false;
+      }
+
+      // 2. Source Branch filter
+      if (transferSourceFilter !== 'ALL' && trf.sourceBranchId !== transferSourceFilter) {
+        return false;
+      }
+
+      // 3. Destination Branch filter
+      if (transferDestFilter !== 'ALL' && trf.destinationBranchId !== transferDestFilter) {
+        return false;
+      }
+
+      // 4. Status filter
+      if (transferStatusFilter !== 'ALL' && trf.status !== transferStatusFilter) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [transfers, transferSearch, transferSourceFilter, transferDestFilter, transferStatusFilter]);
+
+  // Aggregate metrics for transfers
+  const transferStats = useMemo(() => {
+    const totalTransfers = filteredTransfers.length;
+    const totalUnits = filteredTransfers.reduce(
+      (acc, t) => acc + (t.totalQuantity ?? (t.items || []).reduce((sum, it) => sum + it.quantity, 0)),
+      0
+    );
+    const totalValue = filteredTransfers.reduce(
+      (acc, t) => acc + (t.totalTransferValue ?? 0),
+      0
+    );
+    return { totalTransfers, totalUnits, totalValue };
+  }, [filteredTransfers]);
+
+  const handleDownloadTransferPdf = async (trf: StockTransfer) => {
+    if (isGeneratingPdfTransferId) return;
+    setIsGeneratingPdfTransferId(trf.id || trf.transferNumber);
+    try {
+      const srcB = branches.find((b) => b.id === trf.sourceBranchId);
+      const dstB = branches.find((b) => b.id === trf.destinationBranchId);
+      await saveStockTransferPdf({
+        transfer: trf,
+        sourceBranch: srcB,
+        destBranch: dstB,
+        settings,
+      });
+    } finally {
+      setIsGeneratingPdfTransferId(null);
+    }
+  };
+
+  const handlePrintTransfer = (trf: StockTransfer) => {
+    const srcB = branches.find((b) => b.id === trf.sourceBranchId);
+    const dstB = branches.find((b) => b.id === trf.destinationBranchId);
+    printStockTransferNote({
+      transfer: trf,
+      sourceBranch: srcB,
+      destBranch: dstB,
+      settings,
+    });
   };
 
   return (
@@ -317,69 +429,284 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
         </div>
       )}
 
-      {/* TRANSFERS TABLE */}
+      {/* INTER-BRANCH STOCK TRANSFERS HISTORY & DOCUMENT RETRIEVAL */}
       {activeSubSection === 'transfers' && (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card overflow-hidden transition-colors">
-          <ScrollableTable minWidth="850px">
-            <table className="w-full min-w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                  <th className="px-6 py-3.5 whitespace-nowrap">Transfer #</th>
-                  <th className="px-6 py-3.5 whitespace-nowrap">Date</th>
-                  <th className="px-6 py-3.5">Source → Destination</th>
-                  <th className="px-6 py-3.5">Items Transferred</th>
-                  <th className="px-6 py-3.5">Status</th>
-                  <th className="px-6 py-3.5">Notes</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-                {transfers.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500">
-                      No inter-branch transfers recorded yet.
-                    </td>
+        <div className="space-y-4">
+          {/* TRANSFER HISTORY TOOLBAR & FILTERS */}
+          <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card transition-colors space-y-3">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2.5 flex-1">
+                {/* Search Bar */}
+                <div className="relative flex-1 sm:w-60 min-w-[200px]">
+                  <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400 dark:text-slate-500" />
+                  <input
+                    type="text"
+                    value={transferSearch}
+                    onChange={(e) => setTransferSearch(e.target.value)}
+                    placeholder="Search STN #, product, SKU, note..."
+                    className="w-full pl-9 pr-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* Source Branch Filter */}
+                <select
+                  value={transferSourceFilter}
+                  onChange={(e) => setTransferSourceFilter(e.target.value)}
+                  className="px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
+                >
+                  <option value="ALL">From: All Branches</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      From: {b.branchName} ({b.branchCode})
+                    </option>
+                  ))}
+                </select>
+
+                {/* Destination Branch Filter */}
+                <select
+                  value={transferDestFilter}
+                  onChange={(e) => setTransferDestFilter(e.target.value)}
+                  className="px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
+                >
+                  <option value="ALL">To: All Branches</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      To: {b.branchName} ({b.branchCode})
+                    </option>
+                  ))}
+                </select>
+
+                {/* Status Filter */}
+                <select
+                  value={transferStatusFilter}
+                  onChange={(e) => setTransferStatusFilter(e.target.value)}
+                  className="px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
+                >
+                  <option value="ALL">All Statuses</option>
+                  <option value="Completed">Completed</option>
+                  <option value="In Transit">In Transit</option>
+                  <option value="Approved">Approved</option>
+                  <option value="Draft">Draft</option>
+                  <option value="Cancelled">Cancelled</option>
+                </select>
+              </div>
+
+              {canTransferStock && (
+                <button
+                  type="button"
+                  onClick={() => setTransferModalOpen(true)}
+                  className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm shadow-blue-600/20 cursor-pointer shrink-0"
+                >
+                  <ArrowLeftRight className="w-3.5 h-3.5" />
+                  <span>+ New Transfer</span>
+                </button>
+              )}
+            </div>
+
+            {/* Active Filters Row & Summary Counters */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400">
+              <div className="flex items-center gap-3">
+                <span>
+                  Showing <strong>{filteredTransfers.length}</strong> of {transfers.length} transfers
+                </span>
+                <span>•</span>
+                <span>
+                  Total Units Moved: <strong className="text-emerald-600 dark:text-emerald-400">{transferStats.totalUnits.toLocaleString()}</strong>
+                </span>
+                {transferStats.totalValue > 0 && (
+                  <>
+                    <span>•</span>
+                    <span>
+                      Internal Valuation: <strong className="text-slate-700 dark:text-slate-300">{settings.currency}{transferStats.totalValue.toLocaleString()}</strong>
+                    </span>
+                  </>
+                )}
+              </div>
+
+              {(transferSearch.trim() !== '' || transferSourceFilter !== 'ALL' || transferDestFilter !== 'ALL' || transferStatusFilter !== 'ALL') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTransferSearch('');
+                    setTransferSourceFilter('ALL');
+                    setTransferDestFilter('ALL');
+                    setTransferStatusFilter('ALL');
+                  }}
+                  className="text-rose-600 dark:text-rose-400 hover:underline flex items-center gap-1 font-semibold cursor-pointer ml-auto"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Reset Filters</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* TRANSFERS TABLE */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card overflow-hidden transition-colors">
+            <ScrollableTable minWidth="980px">
+              <table className="w-full min-w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    <th className="px-5 py-3.5 whitespace-nowrap">Transfer Note #</th>
+                    <th className="px-5 py-3.5 whitespace-nowrap">Date & Time</th>
+                    <th className="px-5 py-3.5 min-w-[200px]">Origin → Destination</th>
+                    <th className="px-5 py-3.5 min-w-[220px]">Items Transferred</th>
+                    <th className="px-5 py-3.5 text-center whitespace-nowrap">Total Qty</th>
+                    <th className="px-5 py-3.5 text-center whitespace-nowrap">Status</th>
+                    <th className="px-5 py-3.5 text-right whitespace-nowrap">Document Actions</th>
                   </tr>
-                ) : (
-                  transfers.map((trf) => (
-                    <tr key={trf.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                      <td className="px-6 py-4 font-mono font-bold text-blue-600 dark:text-blue-400 whitespace-nowrap">
-                        {trf.transferNumber}
-                      </td>
-                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                        {new Date(trf.transferDate).toLocaleDateString()}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-1.5 font-bold text-slate-900 dark:text-slate-100">
-                          <span>{trf.sourceBranchName || 'Origin'}</span>
-                          <ArrowRight className="w-3.5 h-3.5 text-blue-500" />
-                          <span>{trf.destinationBranchName || 'Destination'}</span>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                  {filteredTransfers.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <FileText className="w-8 h-8 text-slate-300 dark:text-slate-600" />
+                          <p>No inter-branch transfers found matching active filters.</p>
+                          {(transferSearch || transferSourceFilter !== 'ALL' || transferDestFilter !== 'ALL' || transferStatusFilter !== 'ALL') ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTransferSearch('');
+                                setTransferSourceFilter('ALL');
+                                setTransferDestFilter('ALL');
+                                setTransferStatusFilter('ALL');
+                              }}
+                              className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                            >
+                              Clear all filters
+                            </button>
+                          ) : (
+                            canTransferStock && (
+                              <button
+                                type="button"
+                                onClick={() => setTransferModalOpen(true)}
+                                className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                              >
+                                + Create your first stock transfer
+                              </button>
+                            )
+                          )}
                         </div>
                       </td>
-                      <td className="px-6 py-4">
-                        <span className="font-semibold text-slate-800 dark:text-slate-200 block">
-                          {trf.items?.length || 0} Products
-                        </span>
-                        {trf.items && trf.items.length > 0 && (
-                          <span className="text-[10px] text-slate-400 dark:text-slate-500 block truncate max-w-xs">
-                            {trf.items.map((it) => `${it.productName || 'Item'} (${it.quantity})`).join(', ')}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900/60">
-                          <CheckCircle2 className="w-3 h-3" />
-                          {trf.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
-                        {trf.notes || '—'}
-                      </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </ScrollableTable>
+                  ) : (
+                    filteredTransfers.map((trf) => {
+                      const totalTransferQty = trf.totalQuantity ?? (trf.items || []).reduce((a, it) => a + (Number(it.quantity) || 0), 0);
+                      const isGeneratingThisPdf = isGeneratingPdfTransferId === (trf.id || trf.transferNumber);
+
+                      return (
+                        <tr key={trf.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                          {/* Transfer Number */}
+                          <td className="px-5 py-3.5 whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedTransferForPreview(trf)}
+                              className="group inline-flex items-center gap-1.5 text-blue-600 dark:text-blue-400 font-mono font-bold hover:underline cursor-pointer"
+                              title="Click to view Stock Transfer Note"
+                            >
+                              <span>{trf.transferNumber}</span>
+                              <FileText className="w-3.5 h-3.5 opacity-60 group-hover:opacity-100" />
+                            </button>
+                          </td>
+
+                          {/* Date */}
+                          <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400 whitespace-nowrap text-[11px]">
+                            <div>{new Date(trf.transferDate).toLocaleDateString()}</div>
+                            {trf.createdAt && (
+                              <div className="text-[10px] text-slate-400">
+                                {new Date(trf.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Origin -> Destination */}
+                          <td className="px-5 py-3.5">
+                            <div className="flex items-center gap-1.5 font-bold text-slate-900 dark:text-slate-100">
+                              <span className="truncate max-w-[110px]" title={trf.sourceBranchName || 'Origin'}>
+                                {trf.sourceBranchName || 'Origin'}
+                              </span>
+                              <ArrowRight className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                              <span className="truncate max-w-[110px]" title={trf.destinationBranchName || 'Destination'}>
+                                {trf.destinationBranchName || 'Destination'}
+                              </span>
+                            </div>
+                            {trf.notes && (
+                              <p className="text-[10px] text-slate-400 truncate max-w-xs mt-0.5" title={trf.notes}>
+                                Note: {trf.notes}
+                              </p>
+                            )}
+                          </td>
+
+                          {/* Items Transferred */}
+                          <td className="px-5 py-3.5">
+                            <span className="font-semibold text-slate-800 dark:text-slate-200 block text-xs">
+                              {trf.items?.length || 0} Products
+                            </span>
+                            {trf.items && trf.items.length > 0 && (
+                              <span className="text-[10px] text-slate-400 dark:text-slate-500 block truncate max-w-xs" title={trf.items.map((it) => `${it.productName || 'Item'} (${it.quantity})`).join(', ')}>
+                                {trf.items.map((it) => `${it.productName || 'Item'} (${it.quantity})`).join(', ')}
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Total Quantity */}
+                          <td className="px-5 py-3.5 text-center font-black text-slate-900 dark:text-slate-100">
+                            {totalTransferQty.toLocaleString()}
+                          </td>
+
+                          {/* Status */}
+                          <td className="px-5 py-3.5 text-center">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900/60">
+                              <CheckCircle2 className="w-3 h-3" />
+                              {trf.status}
+                            </span>
+                          </td>
+
+                          {/* Actions: View, PDF, Print */}
+                          <td className="px-5 py-3.5 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedTransferForPreview(trf)}
+                                className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-950/50 text-slate-600 dark:text-slate-300 hover:text-blue-600 transition-colors cursor-pointer"
+                                title="View Stock Transfer Note"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadTransferPdf(trf)}
+                                disabled={isGeneratingThisPdf}
+                                className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/50 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-600 dark:text-blue-400 transition-colors cursor-pointer"
+                                title="Download A4 PDF Note"
+                              >
+                                {isGeneratingThisPdf ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Download className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handlePrintTransfer(trf)}
+                                className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-colors cursor-pointer"
+                                title="Print Stock Transfer Note"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </ScrollableTable>
+          </div>
         </div>
       )}
 
@@ -477,7 +804,17 @@ export const StockView: React.FC<StockViewProps> = ({ onNavigateTab, activeTab }
         isOpen={transferModalOpen}
         onClose={() => setTransferModalOpen(false)}
         onSuccess={loadData}
+        onViewHistory={() => setActiveSubSection('transfers')}
         currentBranch={currentBranch}
+      />
+
+      {/* Stock Transfer Note Preview Modal */}
+      <StockTransferPreviewModal
+        isOpen={!!selectedTransferForPreview}
+        onClose={() => setSelectedTransferForPreview(null)}
+        transfer={selectedTransferForPreview}
+        sourceBranch={branches.find((b) => b.id === selectedTransferForPreview?.sourceBranchId)}
+        destBranch={branches.find((b) => b.id === selectedTransferForPreview?.destinationBranchId)}
       />
 
       {/* OWNER-AUTHORIZED STOCK ADJUSTMENT WORKSPACE */}

@@ -170,8 +170,15 @@ export interface StockTransferItem {
   productName?: string;
   partNumber?: string;
   sku?: string;
+  hsnCode?: string;
+  unit?: string;
   quantity: number;
+  sourceStockBefore?: number;
+  sourceStockAfter?: number;
+  destStockBefore?: number;
+  destStockAfter?: number;
   unitCost?: number;
+  transferValue?: number;
   notes?: string;
 }
 
@@ -181,13 +188,32 @@ export interface StockTransfer {
   transferNumber: string;
   sourceBranchId: string;
   sourceBranchName?: string;
+  sourceBranchCode?: string;
+  sourceBranchAddress?: string;
+  sourceBranchCity?: string;
+  sourceBranchState?: string;
+  sourceBranchPincode?: string;
+  sourceBranchPhone?: string;
+  sourceBranchGstin?: string;
   destinationBranchId: string;
   destinationBranchName?: string;
+  destinationBranchCode?: string;
+  destinationBranchAddress?: string;
+  destinationBranchCity?: string;
+  destinationBranchState?: string;
+  destinationBranchPincode?: string;
+  destinationBranchPhone?: string;
+  destinationBranchGstin?: string;
   transferDate: string;
   status: StockTransferStatus;
   requestedBy?: string;
   approvedBy?: string;
+  dispatchedBy?: string;
+  receivedBy?: string;
   notes?: string;
+  totalQuantity?: number;
+  totalLineItems?: number;
+  totalTransferValue?: number;
   createdAt: string;
   completedAt?: string;
   updatedAt?: string;

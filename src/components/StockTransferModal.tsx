@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowRight, Plus, Trash2, Boxes, AlertCircle, RefreshCw } from 'lucide-react';
 import { Modal } from './Modal';
-import { Branch, Product } from '../types';
+import { Branch, Product, StockTransfer } from '../types';
 import { branchService } from '../services/supabase/branchService';
 import { productService } from '../services/supabase/productService';
 import { showToast } from './Toast';
+import { StockTransferSuccessModal } from './stock/StockTransferSuccessModal';
+import { StockTransferPreviewModal } from './stock/StockTransferPreviewModal';
 
 interface StockTransferModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
+  onViewHistory?: () => void;
   currentBranch?: Branch | null;
 }
 
@@ -24,6 +27,7 @@ export const StockTransferModal: React.FC<StockTransferModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
+  onViewHistory,
   currentBranch,
 }) => {
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -37,6 +41,8 @@ export const StockTransferModal: React.FC<StockTransferModalProps> = ({
   ]);
   const [submitting, setSubmitting] = useState(false);
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
+  const [completedTransfer, setCompletedTransfer] = useState<StockTransfer | null>(null);
+  const [previewTransfer, setPreviewTransfer] = useState<StockTransfer | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -166,7 +172,15 @@ export const StockTransferModal: React.FC<StockTransferModalProps> = ({
           'success'
         );
         onSuccess();
-        onClose();
+        // Reset line items and notes for subsequent transfers
+        setItems([{ productId: '', quantity: 1 }]);
+        setNotes('');
+        // Open the post-transfer confirmation modal
+        if (res.transfer) {
+          setCompletedTransfer(res.transfer);
+        } else {
+          onClose();
+        }
       } else {
         showToast(res.error || 'Stock transfer failed.', 'error');
       }
@@ -181,8 +195,9 @@ export const StockTransferModal: React.FC<StockTransferModalProps> = ({
   const destBranch = branches.find((b) => b.id === destBranchId);
 
   return (
-    <Modal
-      isOpen={isOpen}
+    <>
+      <Modal
+        isOpen={isOpen}
       onClose={() => !submitting && onClose()}
       title="📦 Inter-Branch Stock Transfer"
       maxWidth="2xl"
@@ -365,5 +380,33 @@ export const StockTransferModal: React.FC<StockTransferModalProps> = ({
         </div>
       </form>
     </Modal>
+
+    {/* POST-TRANSFER SUCCESS CONFIRMATION MODAL */}
+    <StockTransferSuccessModal
+      isOpen={!!completedTransfer}
+      onClose={() => {
+        setCompletedTransfer(null);
+        onClose();
+      }}
+      transfer={completedTransfer}
+      sourceBranch={sourceBranch}
+      destBranch={destBranch}
+      onViewNote={(trf) => setPreviewTransfer(trf)}
+      onViewHistory={() => {
+        setCompletedTransfer(null);
+        onClose();
+        if (onViewHistory) onViewHistory();
+      }}
+    />
+
+    {/* STOCK TRANSFER NOTE PREVIEW MODAL */}
+    <StockTransferPreviewModal
+      isOpen={!!previewTransfer}
+      onClose={() => setPreviewTransfer(null)}
+      transfer={previewTransfer}
+      sourceBranch={branches.find((b) => b.id === previewTransfer?.sourceBranchId) || sourceBranch}
+      destBranch={branches.find((b) => b.id === previewTransfer?.destinationBranchId) || destBranch}
+    />
+    </>
   );
 };
