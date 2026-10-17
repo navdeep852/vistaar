@@ -50,21 +50,40 @@ const IST_OFFSET_HOURS = 5.5; // UTC+5:30
  * - ISO strings (e.g. "2026-07-10T...")
  * - Date objects
  */
-export function normalizeToYyyyMmDd(input?: string | Date | null): string {
+export function normalizeToYyyyMmDd(input?: string | Date | number | null): string {
   if (!input) return getIstTodayString();
+
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  if (typeof input === 'number') {
+    const d = new Date(input);
+    if (!isNaN(d.getTime())) return formatter.format(d);
+    return getIstTodayString();
+  }
 
   if (input instanceof Date) {
     if (isNaN(input.getTime())) return getIstTodayString();
-    const y = input.getFullYear();
-    const m = String(input.getMonth() + 1).padStart(2, '0');
-    const d = String(input.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
+    return formatter.format(input);
   }
 
   const str = String(input).trim();
   if (!str) return getIstTodayString();
 
-  // If ISO string with T
+  // If it is an ISO or timestamp string with time or timezone indicator (e.g. "T", ":", "Z")
+  if (str.includes('T') || str.includes(':') || str.endsWith('Z')) {
+    try {
+      const parsed = new Date(str);
+      if (!isNaN(parsed.getTime())) {
+        return formatter.format(parsed);
+      }
+    } catch {}
+  }
+
   const datePart = str.split('T')[0].trim();
 
   // Pattern 1: YYYY-MM-DD or YYYY/MM/DD
@@ -85,18 +104,53 @@ export function normalizeToYyyyMmDd(input?: string | Date | null): string {
     return `${y}-${m}-${d}`;
   }
 
-  // Fallback try Date.parse
+  // Fallback try Date.parse with Asia/Kolkata formatter
   try {
     const parsed = new Date(str);
     if (!isNaN(parsed.getTime())) {
-      const y = parsed.getFullYear();
-      const m = String(parsed.getMonth() + 1).padStart(2, '0');
-      const d = String(parsed.getDate()).padStart(2, '0');
-      return `${y}-${m}-${d}`;
+      return formatter.format(parsed);
     }
   } catch {}
 
   return getIstTodayString();
+}
+
+/**
+ * Determines whether a transaction date or timestamp falls on today in Indian Standard Time (IST).
+ */
+export function isTransactionInTodayIst(
+  transactionDateOrTimestamp?: string | Date | number | null
+): boolean {
+  if (!transactionDateOrTimestamp) return false;
+  const todayStr = getIstTodayString();
+  const txDateStr = normalizeToYyyyMmDd(transactionDateOrTimestamp);
+  return txDateStr === todayStr;
+}
+
+/**
+ * Determines whether a transaction date or timestamp falls in the current billing month in IST.
+ */
+export function isTransactionInMonthIst(
+  transactionDateOrTimestamp?: string | Date | number | null
+): boolean {
+  if (!transactionDateOrTimestamp) return false;
+  const todayStr = getIstTodayString();
+  const currentMonthStr = todayStr.substring(0, 7);
+  const txDateStr = normalizeToYyyyMmDd(transactionDateOrTimestamp);
+  return txDateStr.startsWith(currentMonthStr);
+}
+
+/**
+ * Determines whether a transaction date or timestamp falls within a specific date range [startDateStr, endDateStr].
+ */
+export function isTransactionInDateRange(
+  transactionDateOrTimestamp: string | Date | number | null,
+  startDateStr: string,
+  endDateStr: string
+): boolean {
+  if (!transactionDateOrTimestamp) return false;
+  const txDateStr = normalizeToYyyyMmDd(transactionDateOrTimestamp);
+  return txDateStr >= startDateStr && txDateStr <= endDateStr;
 }
 
 /**

@@ -50,6 +50,8 @@ import {
 } from './financialCalculationService';
 import { filterValidLineItems } from '../lib/productHelpers';
 import { fromDbInvoice, fromDbCounterSale } from './supabase/types';
+import { getIstTodayString, normalizeToYyyyMmDd, isTransactionInTodayIst, isTransactionInMonthIst } from '../lib/dateRange';
+import { isRecordInBranch } from '../lib/branchUtils';
 
 const LOCAL_PRODUCTS_KEY = 'vistaar_local_products_db';
 const LOCAL_INVOICES_KEY = 'vistaar_local_invoices_db';
@@ -3523,8 +3525,8 @@ class StoreService {
     if (!this.state.stockMovements) this.state.stockMovements = [];
 
     const now = new Date().toISOString();
-    const todayStr = now.split('T')[0];
-    const saleDate = data.saleDate || todayStr;
+    const todayStr = getIstTodayString();
+    const saleDate = data.saleDate ? normalizeToYyyyMmDd(data.saleDate) : todayStr;
 
     // 1. Customer Name Validation
     const customerName = data.customerName?.trim() || 'Walk-in Customer';
@@ -3865,20 +3867,25 @@ class StoreService {
     this.notify();
   }
 
-  public getCounterSaleMetrics() {
-    const sales = (this.state.counterSales || []).filter((s) => s.status === 'COMPLETED');
-    const todayStr = new Date().toISOString().split('T')[0];
-    const currentMonth = todayStr.substring(0, 7); // YYYY-MM
+  public getCounterSaleMetrics(branchId?: string) {
+    let sales = (this.state.counterSales || []).filter((s) => {
+      const st = String(s.status || '').toUpperCase();
+      return st === 'COMPLETED' || (st !== 'CANCELLED' && st !== 'DRAFT');
+    });
 
-    const todaySales = sales.filter((s) => s.saleDate === todayStr);
-    const monthSales = sales.filter((s) => s.saleDate.startsWith(currentMonth));
+    if (branchId && branchId !== 'ALL') {
+      sales = sales.filter((s) => isRecordInBranch(branchId, s.branchId, s.notes));
+    }
 
-    const todayTotal = todaySales.reduce((acc, s) => acc + s.finalTotal, 0);
+    const todaySales = sales.filter((s) => isTransactionInTodayIst(s.saleDate || s.createdAt));
+    const monthSales = sales.filter((s) => isTransactionInMonthIst(s.saleDate || s.createdAt));
+
+    const todayTotal = todaySales.reduce((acc, s) => acc + (Number(s.finalTotal) || 0), 0);
     const todayCount = todaySales.length;
-    const monthTotal = monthSales.reduce((acc, s) => acc + s.finalTotal, 0);
+    const monthTotal = monthSales.reduce((acc, s) => acc + (Number(s.finalTotal) || 0), 0);
 
-    const netSales = sales.reduce((acc, s) => acc + s.finalTotal, 0);
-    const totalDiscounts = sales.reduce((acc, s) => acc + s.discountAmount, 0);
+    const netSales = sales.reduce((acc, s) => acc + (Number(s.finalTotal) || 0), 0);
+    const totalDiscounts = sales.reduce((acc, s) => acc + (Number(s.discountAmount) || 0), 0);
 
     return {
       todayTotal,

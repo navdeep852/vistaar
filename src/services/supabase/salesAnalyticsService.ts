@@ -2,7 +2,7 @@ import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { safeGetTenantStorage, safeGetTenantItem } from './safeStorage';
-import { ResolvedDateRange, resolveDateRange } from '../../lib/dateRange';
+import { ResolvedDateRange, resolveDateRange, normalizeToYyyyMmDd } from '../../lib/dateRange';
 import { isRecordInBranch } from '../../lib/branchUtils';
 
 export interface SalesMetrics {
@@ -171,7 +171,7 @@ export class SalesAnalyticsService {
         const notes = li.notes || li.terms || '';
         if (!isRecordInBranch(effectiveBranchId, b, notes)) continue;
       }
-      const d = (li.date ?? li.created_at ?? '').split('T')[0];
+      const d = normalizeToYyyyMmDd(li.date ?? li.created_at ?? (li as any).createdAt);
       if (d < range.startDateStr || d > range.endDateStr) continue;
       const k1 = li.id ? String(li.id).toLowerCase() : '';
       const k2 = (li.invoice_number || li.invoiceNumber) ? String(li.invoice_number || li.invoiceNumber).toLowerCase() : '';
@@ -193,7 +193,7 @@ export class SalesAnalyticsService {
           const notes = si.notes || si.terms || '';
           if (!isRecordInBranch(effectiveBranchId, b, notes)) continue;
         }
-        const d = (si.date || '').split('T')[0];
+        const d = normalizeToYyyyMmDd(si.date || si.createdAt);
         if (d < range.startDateStr || d > range.endDateStr) continue;
         const k1 = si.id ? String(si.id).toLowerCase() : '';
         const k2 = si.invoiceNumber ? String(si.invoiceNumber).toLowerCase() : '';
@@ -233,7 +233,7 @@ export class SalesAnalyticsService {
         const notes = s.notes || '';
         if (!isRecordInBranch(effectiveBranchId, b, notes)) continue;
       }
-      const d = (s.sale_date ?? s.saleDate ?? s.created_at ?? '').split('T')[0];
+      const d = normalizeToYyyyMmDd(s.sale_date ?? s.saleDate ?? s.created_at ?? s.createdAt);
       if (d < range.startDateStr || d > range.endDateStr) continue;
       const k = s.id ? String(s.id).toLowerCase() : '';
       if (!k || !seenCsIds.has(k)) {
@@ -252,7 +252,7 @@ export class SalesAnalyticsService {
           const notes = scs.notes || '';
           if (!isRecordInBranch(effectiveBranchId, b, notes)) continue;
         }
-        const d = (scs.saleDate || (scs as any).sale_date || '').split('T')[0];
+        const d = normalizeToYyyyMmDd(scs.saleDate || (scs as any).sale_date || (scs as any).createdAt || (scs as any).created_at);
         if (d < range.startDateStr || d > range.endDateStr) continue;
         const k = scs.id ? String(scs.id).toLowerCase() : '';
         if (!k || !seenCsIds.has(k)) {

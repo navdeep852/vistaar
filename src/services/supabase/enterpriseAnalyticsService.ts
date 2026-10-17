@@ -2,7 +2,7 @@ import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { supabaseAuthService } from '../supabaseAuth';
 import { isValidUuid } from '../../lib/supabaseError';
 import { safeGetTenantStorage, safeGetTenantItem } from './safeStorage';
-import { ResolvedDateRange, resolveDateRange, formatFriendlyDate, formatIndianDate, addDays } from '../../lib/dateRange';
+import { ResolvedDateRange, resolveDateRange, formatFriendlyDate, formatIndianDate, addDays, normalizeToYyyyMmDd } from '../../lib/dateRange';
 import { salesAnalyticsService } from './salesAnalyticsService';
 import { udhariService } from './udhariService';
 import { quotationService } from './quotationService';
@@ -576,7 +576,7 @@ export class EnterpriseAnalyticsService {
           const notes = exp.notes || '';
           if (!isRecordInBranch(effectiveBranchId, b, notes)) return false;
         }
-        const d = (exp.date || exp.expense_date || exp.createdAt || '').split('T')[0];
+        const d = normalizeToYyyyMmDd(exp.date || exp.expense_date || exp.createdAt);
         return d >= dateRange.startDateStr && d <= dateRange.endDateStr;
       });
     }
@@ -605,7 +605,7 @@ export class EnterpriseAnalyticsService {
         const notes = (inv as any).notes || (inv as any).terms || '';
         if (!isRecordInBranch(effectiveBranchId, b, notes)) return;
       }
-      const d = (inv.date || inv.createdAt || '').split('T')[0];
+      const d = normalizeToYyyyMmDd(inv.date || inv.createdAt);
       if (d < dateRange.startDateStr || d > dateRange.endDateStr) return;
       const k1 = inv.id ? String(inv.id).toLowerCase() : '';
       const k2 = inv.invoiceNumber ? String(inv.invoiceNumber).toLowerCase() : '';
@@ -636,7 +636,7 @@ export class EnterpriseAnalyticsService {
         const notes = cs.notes || '';
         if (!isRecordInBranch(effectiveBranchId, b, notes)) return;
       }
-      const d = (cs.sale_date ?? cs.saleDate ?? cs.created_at ?? '').split('T')[0];
+      const d = normalizeToYyyyMmDd(cs.sale_date ?? cs.saleDate ?? cs.created_at ?? cs.createdAt);
       if (d < dateRange.startDateStr || d > dateRange.endDateStr) return;
       const k = cs.id ? String(cs.id).toLowerCase() : '';
       if (!k || !seenCsIds.has(k)) {
@@ -667,7 +667,7 @@ export class EnterpriseAnalyticsService {
         const notes = p.notes || '';
         if (!isRecordInBranch(effectiveBranchId, b, notes)) return;
       }
-      const d = (p.date || p.payment_date || p.createdAt || '').split('T')[0];
+      const d = normalizeToYyyyMmDd(p.date || p.payment_date || p.createdAt);
       if (d < dateRange.startDateStr || d > dateRange.endDateStr) return;
       const k1 = p.id ? String(p.id).toLowerCase() : '';
       const k2 = (p.paymentNumber || p.payment_number) ? String(p.paymentNumber || p.payment_number).toLowerCase() : '';

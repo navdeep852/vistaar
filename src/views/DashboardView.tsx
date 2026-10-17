@@ -20,6 +20,7 @@ import {
   salesAnalyticsService,
   SalesMetrics,
   udhariService,
+  invoiceService,
 } from '../services/supabase';
 import {
   enterpriseAnalyticsService,
@@ -30,6 +31,7 @@ import { supabaseAuthService, AuthResolutionState } from '../services/supabaseAu
 import { useBranch } from '../context/BranchContext';
 import { isValidUuid } from '../lib/supabaseError';
 import { hasCurrentUserPermission } from '../lib/permissions';
+import { isRecordInBranch } from '../lib/branchUtils';
 import {
   DatePresetType,
   ResolvedDateRange,
@@ -195,10 +197,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     async (forceFresh = false) => {
       const currentRequestId = ++activeRequestIdRef.current;
 
-      // Always enter loading state when initiating query (clears old scope metrics)
+      // Keep previous data during loading to prevent flash of zero/empty state
       setKpiState((prev) => ({
         status: 'loading',
-        data: null,
+        data: prev.data,
         error: null,
       }));
 
@@ -241,8 +243,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           error: null,
         });
 
-        // Synchronize local period invoices & followups
-        setInvoices(store.getInvoices());
+        // Authoritatively synchronize period invoices & followups
+        try {
+          const invRes = await invoiceService.getInvoices({ branchId: bId });
+          if (invRes.data && invRes.data.length > 0) {
+            setInvoices(invRes.data);
+          } else {
+            setInvoices(store.getInvoices());
+          }
+        } catch {
+          setInvoices(store.getInvoices());
+        }
         setFollowUps(store.getFollowUps());
 
         // Optional Executive Analytics if user has analytics.view permission
@@ -259,11 +270,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       } catch (err: any) {
         if (currentRequestId !== activeRequestIdRef.current) return;
         console.error(`[Dashboard KPI]\nQUERY FAILED\nerror: ${err?.message || err}`);
-        setKpiState({
+        setKpiState((prev) => ({
           status: 'error',
-          data: null,
+          data: prev.data,
           error: err?.message || 'Unable to load Dashboard metrics. Please verify network and database connectivity.',
-        });
+        }));
       }
     },
     [effectiveWorkspaceId, isAllBranchesSelected, currentBranch?.id, rangePreset, dateRange]
@@ -334,12 +345,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Filter invoices for the Recent Sales table strictly scoped by date AND branch
   const periodInvoices = useMemo(() => {
     return invoices.filter((inv) => {
-      const invDate = (inv.date || inv.createdAt || '').split('T')[0];
+      const invDate = normalizeToYyyyMmDd(inv.date || inv.createdAt);
       const inDate = invDate >= dateRange.startDateStr && invDate <= dateRange.endDateStr;
       if (!inDate) return false;
       if (isAllBranchesSelected) return true;
       const bId = inv.branchId || (inv as any).branch_id;
-      return bId === currentBranch?.id;
+      const notes = (inv as any).notes || (inv as any).terms || '';
+      return isRecordInBranch(currentBranch?.id, bId, notes);
     });
   }, [invoices, dateRange.startDateStr, dateRange.endDateStr, currentBranch?.id, isAllBranchesSelected]);
 

@@ -8,7 +8,7 @@ import { productService } from './productService';
 import { CounterSale } from '../../types';
 import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from './safeStorage';
 import { isRecordInBranch, resolveBranch } from '../../lib/branchUtils';
-import { normalizeToYyyyMmDd, getIstTodayString } from '../../lib/dateRange';
+import { normalizeToYyyyMmDd, getIstTodayString, isTransactionInTodayIst, isTransactionInMonthIst } from '../../lib/dateRange';
 
 const LOCAL_SALES_KEY = 'vistaar_local_counter_sales_db';
 
@@ -427,6 +427,13 @@ export class CounterSaleService {
     };
   }
 
+  public invalidateCache(): void {
+    salesAnalyticsService.invalidateCache();
+    try {
+      import('./enterpriseAnalyticsService').then((m) => m.enterpriseAnalyticsService.invalidateCache()).catch(() => {});
+    } catch {}
+  }
+
   public async getCounterSaleMetrics(options?: { branchId?: string }): Promise<{
     todayTotal: number;
     todayCount: number;
@@ -436,17 +443,22 @@ export class CounterSaleService {
     totalDiscounts: number;
   }> {
     const { data } = await this.getCounterSales(options);
-    const sales = (data || []).filter((s) => s.status !== 'CANCELLED');
-    const todayStr = getIstTodayString();
-    const currentMonthStr = todayStr.substring(0, 7);
+    const sales = (data || []).filter((s) => {
+      const st = String(s.status || '').toUpperCase();
+      return st === 'COMPLETED' || (st !== 'CANCELLED' && st !== 'DRAFT');
+    });
 
-    const todaySales = sales.filter((s) => normalizeToYyyyMmDd(s.saleDate || (s as any).sale_date) === todayStr);
-    const monthSales = sales.filter((s) => normalizeToYyyyMmDd(s.saleDate || (s as any).sale_date).startsWith(currentMonthStr));
+    const todaySales = sales.filter((s) =>
+      isTransactionInTodayIst(s.saleDate || (s as any).sale_date || s.createdAt || (s as any).created_at)
+    );
+    const monthSales = sales.filter((s) =>
+      isTransactionInMonthIst(s.saleDate || (s as any).sale_date || s.createdAt || (s as any).created_at)
+    );
 
-    const todayTotal = todaySales.reduce((acc, s) => acc + (s.finalTotal || 0), 0);
-    const monthTotal = monthSales.reduce((acc, s) => acc + (s.finalTotal || 0), 0);
-    const netSales = sales.reduce((acc, s) => acc + (s.finalTotal || 0), 0);
-    const totalDiscounts = sales.reduce((acc, s) => acc + (s.discountAmount || 0), 0);
+    const todayTotal = todaySales.reduce((acc, s) => acc + (Number(s.finalTotal) || 0), 0);
+    const monthTotal = monthSales.reduce((acc, s) => acc + (Number(s.finalTotal) || 0), 0);
+    const netSales = sales.reduce((acc, s) => acc + (Number(s.finalTotal) || 0), 0);
+    const totalDiscounts = sales.reduce((acc, s) => acc + (Number(s.discountAmount) || 0), 0);
 
     return {
       todayTotal,
@@ -486,6 +498,7 @@ export class CounterSaleService {
     const isCredit = paymentMethod === 'Credit / Udhari' || paymentMethod === 'Credit';
     const amountReceived = sale.amountReceived !== undefined ? Number(sale.amountReceived) : (isCredit ? 0 : finalTotal);
     const balanceAmount = sale.balanceAmount !== undefined ? Number(sale.balanceAmount) : Math.max(0, finalTotal - amountReceived);
+    const canonicalSaleDate = sale.saleDate ? normalizeToYyyyMmDd(sale.saleDate) : getIstTodayString();
 
     if (!items || items.length === 0) {
       return { success: false, error: 'Please select at least one product for the counter sale.' };
@@ -562,7 +575,7 @@ export class CounterSaleService {
       invoice_number: invoiceNumber,
       customer_name: sale.customerName || 'Walk-in Customer',
       phone_number: sale.phoneNumber || '',
-      sale_date: sale.saleDate || new Date().toISOString().split('T')[0],
+      sale_date: canonicalSaleDate,
       estimate_reference: sale.estimateReference || null,
       subtotal: sale.subtotal || 0,
       discount_type: sale.discountType || 'fixed',
@@ -649,7 +662,7 @@ export class CounterSaleService {
           invoice_number: invoiceNumber,
           customer_name: sale.customerName || 'Walk-in Customer',
           phone_number: sale.phoneNumber || '',
-          sale_date: sale.saleDate || new Date().toISOString().split('T')[0],
+          sale_date: canonicalSaleDate,
           estimate_reference: sale.estimateReference || null,
           subtotal: sale.subtotal || 0,
           discount_type: sale.discountType || 'fixed',
@@ -763,7 +776,7 @@ export class CounterSaleService {
             partyId: sale.customerId || undefined,
             partyName: sale.customerName || 'Walk-in Customer',
             description: `Counter Sale #${invoiceNumber}`,
-            transactionDate: sale.saleDate || new Date().toISOString().split('T')[0],
+            transactionDate: canonicalSaleDate,
           });
         } catch (dbErr) {
           console.warn('[counterSaleService] Daybook record notice:', dbErr);
@@ -782,7 +795,7 @@ export class CounterSaleService {
               paymentMethod: paymentMethod,
               partyName: sale.customerName || 'Walk-in Customer',
               description: `Counter sale payment #${invoiceNumber}`,
-              transactionDate: sale.saleDate || new Date().toISOString().split('T')[0],
+              transactionDate: canonicalSaleDate,
             });
           } catch (cbErr) {
             console.warn('[counterSaleService] Cashbook record notice:', cbErr);
@@ -890,7 +903,7 @@ export class CounterSaleService {
         partyId: sale.customerId || undefined,
         partyName: sale.customerName || 'Walk-in Customer',
         description: `Counter Sale #${invoiceNumber}`,
-        transactionDate: sale.saleDate || new Date().toISOString().split('T')[0],
+        transactionDate: canonicalSaleDate,
       });
     } catch {}
 
@@ -907,7 +920,7 @@ export class CounterSaleService {
           paymentMethod: paymentMethod,
           partyName: sale.customerName || 'Walk-in Customer',
           description: `Counter sale payment #${invoiceNumber}`,
-          transactionDate: sale.saleDate || new Date().toISOString().split('T')[0],
+          transactionDate: canonicalSaleDate,
         });
       } catch {}
 
@@ -923,7 +936,7 @@ export class CounterSaleService {
           invoiceNumber,
           referenceNo: sale.paymentReference,
           notes: sale.paymentNotes || `Counter Sale payment #${invoiceNumber}`,
-          date: sale.saleDate,
+          date: canonicalSaleDate,
         });
       } catch {}
     }
