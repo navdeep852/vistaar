@@ -284,31 +284,34 @@ export class CounterSaleService {
           error = fbQuery.error;
         }
 
-        if (error) {
-          const errStr = handleSupabaseError(error, 'getCounterSales');
-          const fallback = safeStorageGet(LOCAL_SALES_KEY);
-          const storeSales = store.getCounterSales();
-          let merged = [...(fallback || [])];
-          const seenIds = new Set(merged.map((s: any) => s.id));
-          for (const ss of storeSales) {
-            if (!seenIds.has(ss.id)) {
-              merged.push(ss);
-              seenIds.add(ss.id);
-            }
+        const fallback = safeStorageGet(LOCAL_SALES_KEY);
+        const storeSales = store.getCounterSales();
+        let merged = [...(data || [])];
+        const seenIds = new Set(merged.map((s: any) => s.id));
+        for (const ss of [...(fallback || []), ...storeSales]) {
+          if (ss?.id && !seenIds.has(ss.id)) {
+            merged.push(ss);
+            seenIds.add(ss.id);
           }
-          if (options?.branchId && options.branchId !== 'ALL') {
-            const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
-            const bObj = branches.find((b: any) => b.id === options.branchId);
-            const isMain = Boolean(bObj?.isMainBranch);
-            merged = merged.filter((s: any) => {
-              const bId = s.branchId || s.branch_id;
-              if (bId) return bId === options.branchId;
-              return isMain;
-            });
-          }
-          return { data: merged.map((row: any) => fromDbCounterSale(row)), error: errStr };
         }
-        return { data: (data || []).map((row: any) => fromDbCounterSale(row)) };
+
+        if (options?.branchId && options.branchId !== 'ALL') {
+          const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+          const bObj = branches.find((b: any) => b.id === options.branchId);
+          const isMain = Boolean(bObj?.isMainBranch);
+          merged = merged.filter((s: any) => {
+            const bId = s.branchId || s.branch_id;
+            if (bId) return bId === options.branchId;
+            return isMain;
+          });
+        }
+
+        if (error && merged.length === 0) {
+          const errStr = handleSupabaseError(error, 'getCounterSales');
+          return { data: [], error: errStr };
+        }
+
+        return { data: merged.map((row: any) => fromDbCounterSale(row)) };
       }
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getCounterSales');

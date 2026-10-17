@@ -65,6 +65,8 @@ export interface BranchPerformance {
   invoice_sales: number;
   pos_sales: number;
   collections: number;
+  cash_collections?: number;
+  upi_collections?: number;
   gross_profit: number;
   outstanding_udhari: number;
   transactions: number;
@@ -103,6 +105,7 @@ export interface OrganizationAnalytics {
   sales_by_branch: Array<{ branch_name: string; branch_code: string; amount: number }>;
   collections_by_branch: Array<{ branch_name: string; branch_code: string; amount: number }>;
   outstanding_by_branch: Array<{ branch_name: string; branch_code: string; amount: number }>;
+  gross_profit_by_branch?: Array<{ branch_name: string; branch_code: string; amount: number }>;
 }
 
 export interface Branch {
@@ -694,6 +697,7 @@ export type PaymentMethod =
 
 export interface Payment {
   id: string;
+  workspaceId?: string;
   branchId?: string;
   branchName?: string;
   paymentNumber: string;
@@ -704,12 +708,91 @@ export interface Payment {
   udhariId?: string;
   counterSaleId?: string;
   amount: number;
+  cashAmount?: number;
+  upiAmount?: number;
   date: string;
   method: PaymentMethod;
   referenceNo?: string;
   notes?: string;
   createdAt: string;
 }
+
+export type BackupType =
+  | 'MANUAL'
+  | 'SCHEDULED'
+  | 'SAFETY_PRE_RESTORE'
+  | 'manual'
+  | 'automatic'
+  | 'safety';
+
+export type BackupStatus =
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'completed'
+  | 'failed'
+  | 'in_progress';
+
+export interface BackupRecord {
+  id: string;
+  workspaceId: string;
+  branchId?: string;
+  backupName?: string;
+  backupType: BackupType;
+  status: BackupStatus;
+  sizeBytes: number;
+  fileSizeBytes?: number;
+  storageLocation?: string;
+  checksumSha256: string;
+  schemaVersion: string;
+  recordCounts: Record<string, number>;
+  errorMessage?: string;
+  notes?: string;
+  createdBy?: string;
+  createdAt: string;
+  verifiedAt?: string;
+  expiresAt?: string;
+}
+
+export interface BackupDataPayload {
+  version?: string;
+  workspaceId?: string;
+  branchId?: string;
+  businessName?: string;
+  timestamp?: string;
+  schemaVersion?: string;
+  metadata?: {
+    backupId?: string;
+    workspaceId?: string;
+    branchId?: string;
+    timestamp?: string;
+    schemaVersion?: string;
+    checksumSha256?: string;
+    recordCounts?: Record<string, number>;
+  };
+  data?: any;
+  invoices?: any[];
+  invoiceItems?: any[];
+  payments?: any[];
+  customers?: any[];
+  suppliers?: any[];
+  categories?: any[];
+  products?: any[];
+  stockReceipts?: any[];
+  stockMovements?: any[];
+  udhariRecords?: any[];
+  udhariPayments?: any[];
+  counterSales?: any[];
+  counterSaleItems?: any[];
+  expenses?: any[];
+  quotations?: any[];
+  quotationItems?: any[];
+  daybookTransactions?: any[];
+  cashbookEntries?: any[];
+  branches?: any[];
+  settings?: any;
+}
+
 
 export type UdhariStatus = 'UNPAID' | 'PARTIALLY PAID' | 'PAID' | 'OVERDUE';
 

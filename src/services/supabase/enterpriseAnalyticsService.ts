@@ -8,7 +8,8 @@ import { udhariService } from './udhariService';
 import { quotationService } from './quotationService';
 import { financialStatementService } from '../financialStatementService';
 import { store } from '../store';
-import { Invoice, Product, Expense } from '../../types';
+import { Invoice, Product, Expense, Payment } from '../../types';
+import { fromDbInvoice } from './types';
 import { hasCurrentUserPermission, AuthorizationError } from '../../lib/permissions';
 import { auditLogService } from './auditLogService';
 
@@ -233,7 +234,8 @@ export class EnterpriseAnalyticsService {
 
     const { totalCollections, cashCollections, upiCollections } = this.computeCollections(
       raw.payments,
-      raw.counterSales
+      raw.counterSales,
+      raw.invoices
     );
 
     const periodFinancials = financialStatementService.computePeriodFinancials(dateRange, {
@@ -265,7 +267,8 @@ export class EnterpriseAnalyticsService {
    */
   public computeCollections(
     payments: any[],
-    counterSales: any[]
+    counterSales: any[],
+    invoices: any[] = []
   ): {
     totalCollections: number;
     cashCollections: number;
@@ -274,6 +277,7 @@ export class EnterpriseAnalyticsService {
     let cashCollectionsVal = 0;
     let upiCollectionsVal = 0;
     const seenCsIdsInPayments = new Set<string>();
+    const seenInvIdsInPayments = new Set<string>();
 
     // 1. Process customer/invoice/udhari payments received in this period
     payments.forEach((p) => {
@@ -283,6 +287,14 @@ export class EnterpriseAnalyticsService {
       const csId = p.counter_sale_id || p.counterSaleId;
       if (csId) {
         seenCsIdsInPayments.add(String(csId).toLowerCase());
+      }
+      const invId = p.invoice_id || p.invoiceId;
+      if (invId) {
+        seenInvIdsInPayments.add(String(invId).toLowerCase());
+      }
+      const invNum = p.invoice_number || p.invoiceNumber;
+      if (invNum) {
+        seenInvIdsInPayments.add(String(invNum).toLowerCase());
       }
 
       const splitCash = Number(p.cash_amount ?? p.cashAmount ?? 0);
@@ -328,6 +340,30 @@ export class EnterpriseAnalyticsService {
         } else {
           upiCollectionsVal += rec;
         }
+      }
+    });
+
+    // 3. Process paid / partially-paid invoices in this period (reconciliation guarantee if payment row was dropped)
+    (invoices || []).forEach((inv) => {
+      const s = String(inv.status || '').toLowerCase();
+      if (s === 'draft' || s === 'cancelled') return;
+      const paid = Number(inv.paid_amount ?? inv.paidAmount ?? 0);
+      if (paid <= 0) return;
+
+      const id = inv.id ? String(inv.id).toLowerCase() : '';
+      const num = (inv.invoice_number || inv.invoiceNumber) ? String(inv.invoice_number || inv.invoiceNumber).toLowerCase() : '';
+      if ((id && seenInvIdsInPayments.has(id)) || (num && seenInvIdsInPayments.has(num))) {
+        return; // Already accounted for in payments
+      }
+
+      if (id) seenInvIdsInPayments.add(id);
+      if (num) seenInvIdsInPayments.add(num);
+
+      const method = String(inv.payment_method || inv.paymentMethod || inv.payment_mode || inv.paymentMode || 'Cash').toLowerCase();
+      if (method.includes('cash')) {
+        cashCollectionsVal += paid;
+      } else {
+        upiCollectionsVal += paid;
       }
     });
 
@@ -494,11 +530,16 @@ export class EnterpriseAnalyticsService {
 
     // Read-only fallback to local store/storage if Supabase offline or empty
     if (productsList.length === 0) {
-      productsList = store.getProducts() || [];
+      productsList = (store.getProducts() || []).filter((prod: any) => {
+        const w = prod.workspaceId || prod.workspace_id;
+        return !w || w === wsId;
+      });
     }
     if (expensesList.length === 0) {
       const localExps = store.getExpenses() || [];
       expensesList = localExps.filter((exp: any) => {
+        const w = exp.workspaceId || exp.workspace_id;
+        if (w && w !== wsId) return false;
         if (effectiveBranchId && effectiveBranchId !== 'ALL') {
           const b = exp.branchId || exp.branch_id;
           if (b && b !== effectiveBranchId) return false;
@@ -508,23 +549,38 @@ export class EnterpriseAnalyticsService {
       });
     }
 
-    // Fallback to local storage / memory if empty or offline
-    if (invoices.length === 0) {
-      const localInvoices: Invoice[] = store.getInvoices().length > 0
-        ? store.getInvoices()
-        : safeGetTenantStorage<Invoice>(LOCAL_INVOICES_KEY, []);
+    // Always merge remote invoices with in-memory and local tenant storage with deduplication
+    const seenInvIds = new Set<string>();
+    invoices.forEach((inv) => {
+      const k1 = inv.id ? String(inv.id).toLowerCase() : '';
+      const k2 = (inv as any).invoiceNumber || (inv as any).invoice_number ? String((inv as any).invoiceNumber || (inv as any).invoice_number).toLowerCase() : '';
+      if (k1) seenInvIds.add(k1);
+      if (k2) seenInvIds.add(k2);
+    });
 
-      invoices = localInvoices.filter((inv) => {
-        const s = String(inv.status || '').toLowerCase();
-        if (s === 'draft' || s === 'cancelled') return false;
-        if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-          const b = inv.branchId || (inv as any).branch_id;
-          if (b ? b !== effectiveBranchId : !isMainBranch) return false;
-        }
-        const d = (inv.date || inv.createdAt || '').split('T')[0];
-        return d >= dateRange.startDateStr && d <= dateRange.endDateStr;
-      });
-    }
+    const localInvoices: Invoice[] = [
+      ...store.getInvoices(),
+      ...safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []).map((r: any) => fromDbInvoice(r)),
+    ];
+
+    localInvoices.forEach((inv) => {
+      const w = (inv as any).workspaceId || (inv as any).workspace_id;
+      if (w && w !== wsId) return;
+      const s = String(inv.status || '').toLowerCase();
+      if (s === 'draft' || s === 'cancelled') return;
+      if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+        const b = inv.branchId || (inv as any).branch_id;
+        if (b ? b !== effectiveBranchId : !isMainBranch) return;
+      }
+      const d = (inv.date || inv.createdAt || '').split('T')[0];
+      if (d < dateRange.startDateStr || d > dateRange.endDateStr) return;
+      const k1 = inv.id ? String(inv.id).toLowerCase() : '';
+      const k2 = inv.invoiceNumber ? String(inv.invoiceNumber).toLowerCase() : '';
+      if ((k1 && seenInvIds.has(k1)) || (k2 && seenInvIds.has(k2))) return;
+      if (k1) seenInvIds.add(k1);
+      if (k2) seenInvIds.add(k2);
+      invoices.push(inv);
+    });
 
     // Always merge in-memory and local counter sales with deduplication
     const seenCsIds = new Set<string>();
@@ -538,6 +594,8 @@ export class EnterpriseAnalyticsService {
       : safeGetTenantStorage<any>(LOCAL_SALES_KEY, []);
 
     localCS.forEach((cs: any) => {
+      const w = cs.workspaceId || cs.workspace_id;
+      if (w && w !== wsId) return;
       if (String(cs.status || '').toUpperCase() === 'CANCELLED') return;
       if (effectiveBranchId && effectiveBranchId !== 'ALL') {
         const b = cs.branchId || cs.branch_id;
@@ -552,19 +610,36 @@ export class EnterpriseAnalyticsService {
       }
     });
 
-    if (payments.length === 0) {
-      const localPayments = store.getPayments().length > 0
-        ? store.getPayments()
-        : safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
-      payments = localPayments.filter((p: any) => {
-        if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-          const b = p.branchId || p.branch_id;
-          if (b ? b !== effectiveBranchId : !isMainBranch) return false;
-        }
-        const d = (p.date || p.payment_date || p.createdAt || '').split('T')[0];
-        return d >= dateRange.startDateStr && d <= dateRange.endDateStr;
-      });
-    }
+    // Always merge in-memory and local payments with deduplication
+    const seenPayIds = new Set<string>();
+    payments.forEach((p) => {
+      const k1 = p.id ? String(p.id).toLowerCase() : '';
+      const k2 = (p.payment_number || p.paymentNumber) ? String(p.payment_number || p.paymentNumber).toLowerCase() : '';
+      if (k1) seenPayIds.add(k1);
+      if (k2) seenPayIds.add(k2);
+    });
+
+    const localPayments: Payment[] = [
+      ...store.getPayments(),
+      ...safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []),
+    ];
+
+    localPayments.forEach((p: any) => {
+      const w = p.workspaceId || p.workspace_id;
+      if (w && w !== wsId) return;
+      if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+        const b = p.branchId || p.branch_id;
+        if (b ? b !== effectiveBranchId : !isMainBranch) return;
+      }
+      const d = (p.date || p.payment_date || p.createdAt || '').split('T')[0];
+      if (d < dateRange.startDateStr || d > dateRange.endDateStr) return;
+      const k1 = p.id ? String(p.id).toLowerCase() : '';
+      const k2 = (p.paymentNumber || p.payment_number) ? String(p.paymentNumber || p.payment_number).toLowerCase() : '';
+      if ((k1 && seenPayIds.has(k1)) || (k2 && seenPayIds.has(k2))) return;
+      if (k1) seenPayIds.add(k1);
+      if (k2) seenPayIds.add(k2);
+      payments.push(p);
+    });
 
     return {
       invoices,
@@ -1174,7 +1249,8 @@ export class EnterpriseAnalyticsService {
     // -------------------------------------------------------------
     const { totalCollections, cashCollections: roundedCash, upiCollections: roundedUpi } = this.computeCollections(
       payments,
-      counterSales
+      counterSales,
+      invoices
     );
 
     const kpis: AnalyticsKPIs = {

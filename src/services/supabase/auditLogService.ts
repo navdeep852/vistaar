@@ -55,8 +55,35 @@ export interface InventoryAuditRecord {
   timestamp?: string;
 }
 
+export type FinancialAuditAction =
+  | 'INVOICE_CREATED'
+  | 'INVOICE_FINALIZED'
+  | 'PAYMENT_RECEIVED'
+  | 'PAYMENT_REVERSED'
+  | 'PAYMENT_REFUNDED'
+  | 'INVOICE_RECOVERED'
+  | 'BACKUP_CREATED'
+  | 'BACKUP_VERIFIED'
+  | 'BACKUP_VERIFICATION_FAILED'
+  | 'BACKUP_RESTORED';
+
+export interface FinancialAuditEvent {
+  id?: string;
+  workspaceId?: string;
+  branchId?: string;
+  actorId?: string;
+  action: FinancialAuditAction;
+  entityType: 'INVOICE' | 'PAYMENT' | 'BACKUP' | 'UDHARI' | 'DAYBOOK' | 'SYSTEM';
+  entityId?: string;
+  invoiceNumber?: string;
+  amount?: number;
+  details?: Record<string, any>;
+  timestamp?: string;
+}
+
 const LOCAL_SECURITY_LOGS_KEY = 'vistaar_security_audit_logs';
 const LOCAL_INVENTORY_AUDIT_KEY = 'vistaar_inventory_audit_logs';
+const LOCAL_FINANCIAL_AUDIT_KEY = 'vistaar_financial_audit_logs';
 
 export class AuditLogService {
   /**
@@ -293,6 +320,98 @@ export class AuditLogService {
       ...sec.map((s) => ({ eventType: s.action, details: s.details, action: s.action, result: s.result, timestamp: s.timestamp })),
       ...inv.map((i) => ({ eventType: i.movementType, details: { reason: i.reason, delta: i.quantityDelta, requestedBy: i.performedByEmployeeId }, action: i.movementType, result: 'SUCCESS', timestamp: i.timestamp })),
     ];
+  }
+
+  /**
+   * Records a financial integrity audit event (Invoice/Payment/Recovery/Backup lifecycle)
+   */
+  public async logFinancialEvent(event: FinancialAuditEvent): Promise<void> {
+    const user = supabaseAuthService.getUser();
+    const wsId = event.workspaceId || supabaseAuthService.getCurrentCompanyId();
+    const actorId = event.actorId || user?.employeeId || user?.id || 'SYSTEM';
+    const nowIso = new Date().toISOString();
+
+    const record: FinancialAuditEvent = {
+      id: event.id || `fin-log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      workspaceId: wsId,
+      branchId: event.branchId,
+      actorId,
+      action: event.action,
+      entityType: event.entityType,
+      entityId: event.entityId,
+      invoiceNumber: event.invoiceNumber,
+      amount: event.amount,
+      details: event.details || {},
+      timestamp: nowIso,
+    };
+
+    // 1. Always save to local tenant storage for immediate auditability
+    try {
+      const localFin = safeGetTenantStorage<FinancialAuditEvent>(LOCAL_FINANCIAL_AUDIT_KEY, []);
+      localFin.unshift(record);
+      safeSaveTenantStorage(LOCAL_FINANCIAL_AUDIT_KEY, localFin.slice(0, 2000));
+    } catch {
+      // ignore
+    }
+
+    // 2. Persist to Supabase if configured and valid workspace
+    if (isSupabaseConfigured() && isValidUuid(wsId)) {
+      try {
+        await supabase.from('financial_audit_logs').insert([
+          {
+            workspace_id: wsId,
+            branch_id: event.branchId && isValidUuid(event.branchId) ? event.branchId : null,
+            actor_id: actorId,
+            action: event.action,
+            entity_type: event.entityType,
+            entity_id: event.entityId || null,
+            invoice_number: event.invoiceNumber || null,
+            amount: event.amount ?? null,
+            details: event.details || {},
+            created_at: nowIso,
+          },
+        ]);
+      } catch (err) {
+        console.warn('[AUDIT_LOG_REMOTE_NOTICE] Could not push financial audit log to Supabase:', err);
+      }
+    }
+  }
+
+  /**
+   * Retrieve financial audit logs
+   */
+  public async getFinancialLogs(limit = 100): Promise<FinancialAuditEvent[]> {
+    const wsId = supabaseAuthService.getCurrentCompanyId();
+    if (isSupabaseConfigured() && isValidUuid(wsId)) {
+      try {
+        const { data, error } = await supabase
+          .from('financial_audit_logs')
+          .select('*')
+          .eq('workspace_id', wsId)
+          .order('created_at', { ascending: false })
+          .limit(limit);
+
+        if (!error && data) {
+          return (data as any[]).map((d: any) => ({
+            id: d.id,
+            workspaceId: d.workspace_id,
+            branchId: d.branch_id,
+            actorId: d.actor_id,
+            action: d.action,
+            entityType: d.entity_type,
+            entityId: d.entity_id,
+            invoiceNumber: d.invoice_number,
+            amount: d.amount ? Number(d.amount) : undefined,
+            details: d.details,
+            timestamp: d.created_at,
+          }));
+        }
+      } catch {
+        // fallback to local
+      }
+    }
+    const local = safeGetTenantStorage<FinancialAuditEvent>(LOCAL_FINANCIAL_AUDIT_KEY, []);
+    return local.slice(0, limit);
   }
 }
 

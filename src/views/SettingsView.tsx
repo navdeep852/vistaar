@@ -29,7 +29,9 @@ import {
   ChevronLeft,
   ChevronRight,
   MapPin,
+  Database,
 } from 'lucide-react';
+import { BackupRestoreView } from './BackupRestoreView';
 import { BranchSettingsTab } from '../components/BranchSettingsTab';
 import { businessSettingsService } from '../services/supabase';
 import { supabaseAuthService as auth } from '../services/supabaseAuth';
@@ -130,6 +132,7 @@ export const SETTINGS_TABS = [
   { id: 'security', label: '8. Security & Password', icon: ShieldCheck },
   { id: 'terms', label: '9. Default Terms', icon: FileText },
   { id: 'preview', label: '10. Document Preview', icon: Eye },
+  { id: 'backup', label: '11. Backup & Restore', icon: Database },
 ] as const;
 
 export type SettingsSubTabId = typeof SETTINGS_TABS[number]['id'];
@@ -166,6 +169,8 @@ export const SettingsView: React.FC = () => {
         return hasCurrentUserPermission('settings.terms.edit');
       case 'preview':
         return hasCurrentUserPermission('settings.preview.view');
+      case 'backup':
+        return true;
       default:
         return false;
     }
@@ -2455,7 +2460,7 @@ export const SettingsView: React.FC = () => {
         )}
 
         {/* Save Bar */}
-        {activeSubTab !== 'preview' && activeSubTab !== 'branches' && (
+        {activeSubTab !== 'preview' && activeSubTab !== 'branches' && activeSubTab !== 'backup' && (
           <div className="flex justify-end pt-4 border-t border-slate-200 dark:border-slate-800">
             <button
               type="submit"
@@ -2471,6 +2476,13 @@ export const SettingsView: React.FC = () => {
       {/* 7. BRANCHES & LOCATIONS TAB (Independent View - Outside Business Settings Form) */}
       {activeSubTab === 'branches' && isTabAllowed('branches') && (
         <BranchSettingsTab employees={employees} />
+      )}
+
+      {/* 11. BACKUP & RESTORE TAB */}
+      {activeSubTab === 'backup' && isTabAllowed('backup') && (
+        <div className="mt-4">
+          <BackupRestoreView />
+        </div>
       )}
 
       {/* ==================== ADD EMPLOYEE MODAL ==================== */}

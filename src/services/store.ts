@@ -234,6 +234,40 @@ class StoreService {
           console.warn('[loadFromStorage] Failed merging local invoices DB:', mErr);
         }
 
+        // Merge fallback payments from LOCAL_PAYMENTS_KEY (vistaar_local_payments_db)
+        try {
+          const LOCAL_PAYMENTS_KEY = 'vistaar_local_payments_db';
+          const localDbPayments = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
+          if (Array.isArray(localDbPayments) && localDbPayments.length > 0) {
+            for (const lPay of localDbPayments) {
+              const pId = lPay.id;
+              const pNum = lPay.payment_number || lPay.paymentNumber;
+              const exists = stateObj.payments.some(
+                (p) => (pId && p.id === pId) || (pNum && p.paymentNumber === pNum)
+              );
+              if (!exists) {
+                stateObj.payments.push({
+                  id: pId || `pay-${Date.now()}`,
+                  paymentNumber: pNum || `PAY-${Date.now()}`,
+                  customerId: lPay.customer_id || lPay.customerId || '',
+                  customerName: lPay.customer_name || lPay.customerName || 'Customer',
+                  invoiceId: lPay.invoice_id || lPay.invoiceId || '',
+                  invoiceNumber: lPay.invoice_number || lPay.invoiceNumber || '',
+                  branchId: lPay.branch_id || lPay.branchId,
+                  amount: Number(lPay.amount) || 0,
+                  date: lPay.payment_date || lPay.date || new Date().toISOString().split('T')[0],
+                  method: lPay.payment_method || lPay.method || 'Cash',
+                  referenceNo: lPay.reference_no || lPay.reference_number || lPay.referenceNo,
+                  notes: lPay.notes || '',
+                  createdAt: lPay.created_at || lPay.createdAt || new Date().toISOString(),
+                });
+              }
+            }
+          }
+        } catch (pErr) {
+          console.warn('[loadFromStorage] Failed merging local payments DB:', pErr);
+        }
+
         this.reconcileStateLedgers(stateObj);
         return stateObj;
       }
@@ -246,6 +280,28 @@ class StoreService {
       const localDbInvoices = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
       if (Array.isArray(localDbInvoices) && localDbInvoices.length > 0) {
         fallback.invoices = localDbInvoices.map((i) => fromDbInvoice(i));
+      }
+    } catch {}
+
+    try {
+      const LOCAL_PAYMENTS_KEY = 'vistaar_local_payments_db';
+      const localDbPayments = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
+      if (Array.isArray(localDbPayments) && localDbPayments.length > 0) {
+        fallback.payments = localDbPayments.map((lPay: any) => ({
+          id: lPay.id || `pay-${Date.now()}`,
+          paymentNumber: lPay.payment_number || lPay.paymentNumber || `PAY-${Date.now()}`,
+          customerId: lPay.customer_id || lPay.customerId || '',
+          customerName: lPay.customer_name || lPay.customerName || 'Customer',
+          invoiceId: lPay.invoice_id || lPay.invoiceId || '',
+          invoiceNumber: lPay.invoice_number || lPay.invoiceNumber || '',
+          branchId: lPay.branch_id || lPay.branchId,
+          amount: Number(lPay.amount) || 0,
+          date: lPay.payment_date || lPay.date || new Date().toISOString().split('T')[0],
+          method: lPay.payment_method || lPay.method || 'Cash',
+          referenceNo: lPay.reference_no || lPay.reference_number || lPay.referenceNo,
+          notes: lPay.notes || '',
+          createdAt: lPay.created_at || lPay.createdAt || new Date().toISOString(),
+        }));
       }
     } catch {}
 
@@ -301,8 +357,27 @@ class StoreService {
         }
         sumPaid = Number(sumPaid.toFixed(2));
       } else {
-        // If payments array does not contain explicit transaction records, preserve existing confirmed paidAmount
+        // If payments array does not contain explicit transaction records, preserve existing confirmed paidAmount and synthesize payment record
         sumPaid = Math.min(inv.grandTotal, Number(inv.paidAmount) || 0);
+        if (sumPaid > 0) {
+          const count = payments.length + 1;
+          const year = new Date().getFullYear();
+          const autoPay: Payment = {
+            id: `pay-reconciled-${inv.id}`,
+            paymentNumber: `PAY-${year}-${String(count).padStart(4, '0')}`,
+            customerId: inv.customerId || '',
+            customerName: inv.customerName || 'Customer',
+            invoiceId: inv.id,
+            invoiceNumber: inv.invoiceNumber,
+            branchId: inv.branchId,
+            amount: sumPaid,
+            date: inv.date || new Date().toISOString().split('T')[0],
+            method: ((inv as any).paymentMethod || (inv as any).paymentMode || 'Cash') as any,
+            notes: `Reconciled payment for Invoice #${inv.invoiceNumber}`,
+            createdAt: inv.createdAt || new Date().toISOString(),
+          };
+          payments.push(autoPay);
+        }
       }
 
       const fin = calculateInvoiceFinancials(inv.grandTotal, sumPaid, inv.status);
@@ -460,8 +535,53 @@ class StoreService {
     }
     if (changed) {
       this.reconcileStateLedgers(this.state);
-      this.saveToStorage();
     }
+  }
+
+  public addPayment(paymentData: Payment): Payment {
+    if (!Array.isArray(this.state.payments)) {
+      this.state.payments = [];
+    }
+    const exists = this.state.payments.some(
+      (p) => (paymentData.id && p.id === paymentData.id) ||
+             (paymentData.paymentNumber && p.paymentNumber === paymentData.paymentNumber)
+    );
+    if (!exists) {
+      this.state.payments.unshift(paymentData);
+    }
+    try {
+      const LOCAL_PAYMENTS_KEY = 'vistaar_local_payments_db';
+      const localPays = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
+      const pIdx = localPays.findIndex(
+        (p: any) => (paymentData.id && p.id === paymentData.id) ||
+                    (paymentData.paymentNumber && (p.paymentNumber === paymentData.paymentNumber || p.payment_number === paymentData.paymentNumber))
+      );
+      const row = {
+        ...paymentData,
+        payment_number: paymentData.paymentNumber,
+        customer_id: paymentData.customerId,
+        customer_name: paymentData.customerName,
+        invoice_id: paymentData.invoiceId,
+        invoice_number: paymentData.invoiceNumber,
+        payment_date: paymentData.date,
+        method: paymentData.method,
+        payment_method: paymentData.method,
+        reference_no: paymentData.referenceNo,
+        reference_number: paymentData.referenceNo,
+        created_at: paymentData.createdAt || new Date().toISOString(),
+      };
+      if (pIdx >= 0) {
+        localPays[pIdx] = row;
+      } else {
+        localPays.unshift(row);
+      }
+      safeSaveTenantStorage(LOCAL_PAYMENTS_KEY, localPays);
+    } catch {
+      // ignore
+    }
+    this.reconcileStateLedgers(this.state);
+    this.saveToStorage();
+    return paymentData;
   }
 
   public getAuthoritativeInvoiceOutstanding(invoiceIdOrNumber: string): number {
@@ -1458,6 +1578,73 @@ class StoreService {
     }
 
     this.state.invoices[invIndex] = updatedInvoice;
+
+    if (updatedInvoice.paidAmount > 0) {
+      if (!this.state.payments) this.state.payments = [];
+      const hasInitPay = this.state.payments.some(
+        (p) => (p.invoiceId === updatedInvoice.id || (updatedInvoice.invoiceNumber && p.invoiceNumber === updatedInvoice.invoiceNumber))
+      );
+      if (!hasInitPay) {
+        const count = this.state.payments.length + 1;
+        const year = new Date().getFullYear();
+        const initPay: Payment = {
+          id: `pay-init-${updatedInvoice.id}`,
+          paymentNumber: `PAY-${year}-${String(count).padStart(4, '0')}`,
+          customerId: updatedInvoice.customerId || '',
+          customerName: updatedInvoice.customerName || 'Customer',
+          invoiceId: updatedInvoice.id,
+          invoiceNumber: updatedInvoice.invoiceNumber,
+          branchId: updatedInvoice.branchId,
+          amount: updatedInvoice.paidAmount,
+          date: updatedInvoice.date || new Date().toISOString().split('T')[0],
+          method: ((updatedInvoice as any).paymentMethod || (updatedInvoice as any).paymentMode || 'Cash') as any,
+          notes: `Payment for Invoice #${updatedInvoice.invoiceNumber}`,
+          createdAt: updatedInvoice.updatedAt || new Date().toISOString(),
+        };
+        this.state.payments.unshift(initPay);
+
+        try {
+          const LOCAL_PAYMENTS_KEY = 'vistaar_local_payments_db';
+          const localPays = safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []);
+          localPays.unshift({
+            ...initPay,
+            payment_number: initPay.paymentNumber,
+            customer_id: initPay.customerId,
+            customer_name: initPay.customerName,
+            invoice_id: initPay.invoiceId,
+            invoice_number: initPay.invoiceNumber,
+            payment_date: initPay.date,
+            payment_method: initPay.method,
+            created_at: initPay.createdAt,
+          });
+          safeSaveTenantStorage(LOCAL_PAYMENTS_KEY, localPays);
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    try {
+      const LOCAL_INVOICES_KEY = 'vistaar_local_invoices_db';
+      const localInvs = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
+      const idx = localInvs.findIndex((i: any) => i.id === updatedInvoice.id || i.invoiceNumber === updatedInvoice.invoiceNumber);
+      const row = {
+        ...updatedInvoice,
+        invoice_number: updatedInvoice.invoiceNumber,
+        grand_total: updatedInvoice.grandTotal,
+        paid_amount: updatedInvoice.paidAmount,
+        balance_amount: updatedInvoice.balanceAmount,
+      };
+      if (idx >= 0) {
+        localInvs[idx] = row;
+      } else {
+        localInvs.unshift(row);
+      }
+      safeSaveTenantStorage(LOCAL_INVOICES_KEY, localInvs);
+    } catch {
+      // ignore
+    }
+
     this.saveToStorage();
     return updatedInvoice;
   }

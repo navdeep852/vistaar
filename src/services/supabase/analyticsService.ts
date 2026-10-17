@@ -7,9 +7,12 @@ import {
   BranchPerformance,
   SalesTrendPoint,
 } from '../../types';
-import { ResolvedDateRange, resolveDateRange } from '../../lib/dateRange';
-import { safeGetTenantStorage, safeGetTenantItem } from './safeStorage';
+import { resolveDateRange, formatIndianDate } from '../../lib/dateRange';
+import { safeGetTenantItem } from './safeStorage';
 import { udhariService } from './udhariService';
+import { branchService } from './branchService';
+import { enterpriseAnalyticsService } from './enterpriseAnalyticsService';
+import { financialStatementService } from '../financialStatementService';
 
 export interface AnalyticsQueryOptions {
   workspaceId?: string;
@@ -28,6 +31,7 @@ export class AnalyticsService {
   public invalidateCache(): void {
     this.branchMetricsCache.clear();
     this.orgAnalyticsCache.clear();
+    enterpriseAnalyticsService.invalidateCache();
   }
 
   private async getWorkspaceId(): Promise<string> {
@@ -42,13 +46,14 @@ export class AnalyticsService {
   }
 
   /**
-   * Authoritative Branch-Scoped Dashboard Metrics (PART 7, 8, 9, 10, 11)
-   * Aggregates completed Counter Sales + Issued/Paid Invoices within the active workspace and date range.
-   * Strictly excludes Draft, Cancelled, and Voided records.
-   * Eliminates double-counting and incorporates realized POS collections.
+   * Authoritative Branch-Scoped Dashboard Metrics
+   * Delegates to enterpriseAnalyticsService for consistent, authoritative calculations.
    */
   public async getBranchDashboardMetrics(options: AnalyticsQueryOptions): Promise<BranchDashboardMetrics> {
-    const wsId = options.workspaceId && isValidUuid(options.workspaceId) ? options.workspaceId : await this.getWorkspaceId();
+    if (options.workspaceId !== undefined && !isValidUuid(options.workspaceId)) {
+      throw new Error('[WORKSPACE RESOLUTION FAILED] Valid workspace ID is required for getBranchDashboardMetrics.');
+    }
+    const wsId = options.workspaceId || await this.getWorkspaceId();
     if (!wsId || !isValidUuid(wsId)) {
       throw new Error('[WORKSPACE RESOLUTION FAILED] Valid workspace ID is required for getBranchDashboardMetrics.');
     }
@@ -63,150 +68,19 @@ export class AnalyticsService {
       }
     }
 
-    let invoiceSales = 0;
-    let counterSales = 0;
-    let invoiceCount = 0;
-    let counterSaleCount = 0;
+    const dateRange = resolveDateRange('custom', options.startDate, options.endDate);
+    const [kpis, raw] = await Promise.all([
+      enterpriseAnalyticsService.getDashboardKpis(dateRange, options.forceFresh, options.branchId, wsId),
+      enterpriseAnalyticsService.fetchRawTransactionsForPeriod(wsId, dateRange, options.branchId),
+    ]);
+
     let totalDiscounts = 0;
-    let cashCollections = 0;
-    let upiCollections = 0;
-    let outstandingUdhari = 0;
-    let overdueUdhari = 0;
-    const seenCounterInvoiceNumbers = new Set<string>();
-    const seenCsIdsInPayments = new Set<string>();
-
-    const todayStr = new Date().toISOString().split('T')[0];
-
-    if (isSupabaseConfigured() && isValidUuid(wsId)) {
-      try {
-        // 1. Authoritative Completed Counter Sales for this branch workspace
-        let csQuery = supabase
-          .from('counter_sales')
-          .select('id, sale_number, invoice_number, sale_date, final_total, status, payment_method, amount_received, balance_amount, discount_amount, cash_amount, upi_amount, branch_id')
-          .eq('workspace_id', wsId)
-          .eq('status', 'COMPLETED')
-          .gte('sale_date', options.startDate)
-          .lte('sale_date', options.endDate);
-
-        if (options.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
-          csQuery = csQuery.or(`branch_id.eq.${options.branchId},branch_id.is.null,branch_id.eq.${wsId}`);
-        }
-
-        const { data: csData, error: csErr } = await csQuery;
-        if (!csErr && csData) {
-          for (const cs of csData) {
-            const num = cs.invoice_number || cs.sale_number;
-            if (num) seenCounterInvoiceNumbers.add(String(num).trim().toLowerCase());
-            const total = Number(cs.final_total || 0);
-            const rec = Number(cs.amount_received !== undefined ? cs.amount_received : total);
-            const disc = Number(cs.discount_amount || 0);
-
-            counterSales += total;
-            counterSaleCount += 1;
-            totalDiscounts += disc;
-
-            const method = String(cs.payment_method || 'Cash').toLowerCase();
-            if (!method.includes('credit') && !method.includes('udhari')) {
-              const splitCash = Number(cs.cash_amount || 0);
-              const splitUpi = Number(cs.upi_amount || 0);
-              if (splitCash > 0 || splitUpi > 0) {
-                cashCollections += splitCash;
-                upiCollections += splitUpi;
-              } else if (method.includes('cash')) {
-                cashCollections += rec;
-              } else {
-                upiCollections += rec;
-              }
-            }
-          }
-        }
-
-        // 2. Authoritative Issued/Paid Invoices for this branch workspace
-        let invQuery = supabase
-          .from('invoices')
-          .select('id, invoice_number, date, due_date, grand_total, paid_amount, balance_amount, status, branch_id')
-          .eq('workspace_id', wsId)
-          .in('status', ['Issued', 'Partially Paid', 'Paid', 'issued', 'partially paid', 'paid'])
-          .gte('date', options.startDate)
-          .lte('date', options.endDate);
-
-        if (options.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
-          invQuery = invQuery.or(`branch_id.eq.${options.branchId},branch_id.is.null,branch_id.eq.${wsId}`);
-        }
-
-        const { data: invData, error: invErr } = await invQuery;
-        if (!invErr && invData) {
-          for (const inv of invData) {
-            const invNum = String(inv.invoice_number || '').trim().toLowerCase();
-            // Prevent double-counting if an invoice mirrors a counter sale
-            if (invNum && seenCounterInvoiceNumbers.has(invNum)) {
-              continue;
-            }
-
-            const total = Number(inv.grand_total || 0);
-            invoiceSales += total;
-            invoiceCount += 1;
-          }
-        }
-
-        // 3. Customer Payments received in this period (excluding duplicate counter sale payments)
-        let payQuery = supabase
-          .from('payments')
-          .select('id, amount, cash_amount, upi_amount, payment_method, counter_sale_id, branch_id')
-          .eq('workspace_id', wsId)
-          .gte('payment_date', options.startDate)
-          .lte('payment_date', options.endDate);
-
-        if (options.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
-          payQuery = payQuery.eq('branch_id', options.branchId);
-        }
-
-        const { data: payData, error: payErr } = await payQuery;
-        if (!payErr && payData) {
-          for (const p of payData) {
-            if (p.counter_sale_id) {
-              seenCsIdsInPayments.add(String(p.counter_sale_id).toLowerCase());
-              continue; // Handled directly in counter sales
-            }
-            const amt = Number(p.amount || 0);
-            if (amt <= 0) continue;
-            const splitCash = Number(p.cash_amount || 0);
-            const splitUpi = Number(p.upi_amount || 0);
-
-            if (splitCash > 0 || splitUpi > 0) {
-              cashCollections += splitCash;
-              upiCollections += splitUpi;
-            } else {
-              const m = String(p.payment_method || 'Cash').toLowerCase();
-              if (m.includes('cash')) {
-                cashCollections += amt;
-              } else {
-                upiCollections += amt;
-              }
-            }
-          }
-        }
-
-        // 4. Authoritative Udhari Outstanding Balance
-        const udhRes = await udhariService.getAuthoritativeUdhariMetricsAsOf(
-          options.endDate,
-          wsId,
-          options.branchId
-        );
-        outstandingUdhari = udhRes.outstanding;
-        overdueUdhari = udhRes.overdue;
-      } catch (e) {
-        console.warn('[AnalyticsService] Supabase query notice:', e);
-      }
-    }
-
-    // Mathematical Totals
-    const totalSales = Math.round((invoiceSales + counterSales) * 100) / 100;
-    const collections = Math.round((cashCollections + upiCollections) * 100) / 100;
-    const totalTransactions = invoiceCount + counterSaleCount;
-    // Standard retail margin baseline if exact COGS lookup isn't in scope
-    const grossProfit = Math.round(totalSales * 0.28 * 100) / 100;
-    const profitMarginPercent = totalSales > 0 ? Math.round((grossProfit / totalSales) * 1000) / 10 : 0;
+    raw.invoices.forEach((inv: any) => {
+      totalDiscounts += Number(inv.discount_total ?? inv.discountTotal ?? 0);
+    });
+    raw.counterSales.forEach((cs: any) => {
+      totalDiscounts += Number(cs.discount_amount ?? cs.discountAmount ?? 0);
+    });
 
     const result: BranchDashboardMetrics = {
       workspaceId: wsId,
@@ -214,19 +88,19 @@ export class AnalyticsService {
       branchCode: 'ACTIVE',
       startDate: options.startDate,
       endDate: options.endDate,
-      totalSales,
-      invoiceSales: Math.round(invoiceSales * 100) / 100,
-      counterSales: Math.round(counterSales * 100) / 100,
-      collections,
-      cashCollections: Math.round(cashCollections * 100) / 100,
-      upiCollections: Math.round(upiCollections * 100) / 100,
-      grossProfit,
-      profitMarginPercent,
-      outstandingUdhari: Math.round(outstandingUdhari * 100) / 100,
-      overdueUdhari: Math.round(overdueUdhari * 100) / 100,
-      totalTransactions,
-      invoiceTransactions: invoiceCount,
-      counterSaleTransactions: counterSaleCount,
+      totalSales: kpis.totalSales,
+      invoiceSales: kpis.invoiceSales,
+      counterSales: kpis.counterSales,
+      collections: kpis.collections,
+      cashCollections: kpis.cashCollections,
+      upiCollections: kpis.upiCollections,
+      grossProfit: kpis.grossProfit,
+      profitMarginPercent: kpis.profitMarginPercent,
+      outstandingUdhari: kpis.outstandingUdhari,
+      overdueUdhari: kpis.overdueUdhari,
+      totalTransactions: raw.invoices.length + raw.counterSales.length,
+      invoiceTransactions: raw.invoices.length,
+      counterSaleTransactions: raw.counterSales.length,
       totalDiscounts: Math.round(totalDiscounts * 100) / 100,
     };
 
@@ -235,8 +109,9 @@ export class AnalyticsService {
   }
 
   /**
-   * Secure Organization Analytics for All Branches Analysis (PART 12, 13, 14, 15, 16, 22)
-   * Invokes the server-side RPC `get_organization_analytics` with SQL-level authorization & aggregation.
+   * Secure Organization Analytics for All Branches Analysis
+   * Aggregates authorized branch records across the workspace.
+   * Uses authoritative KPI definitions identical to the Main Branch Dashboard.
    */
   public async getOrganizationAnalytics(options: {
     organizationId?: string;
@@ -244,38 +119,15 @@ export class AnalyticsService {
     endDate: string;
     forceFresh?: boolean;
   }): Promise<OrganizationAnalytics> {
-    let orgId = options.organizationId;
-
-    if (!orgId || !isValidUuid(orgId)) {
-      // Resolve organization ID from current user context
-      try {
-        if (isSupabaseConfigured()) {
-          const { data: rpcOrgId } = await supabase.rpc('current_user_organization_id');
-          if (rpcOrgId && isValidUuid(rpcOrgId)) {
-            orgId = rpcOrgId;
-          }
-        }
-      } catch (e) {
-        console.warn('Failed to resolve current_user_organization_id via RPC:', e);
-      }
+    if (options.organizationId !== undefined && !isValidUuid(options.organizationId)) {
+      throw new Error('[WORKSPACE RESOLUTION FAILED] Valid workspace ID is required for getOrganizationAnalytics.');
+    }
+    const wsId = options.organizationId || await this.getWorkspaceId();
+    if (!wsId || !isValidUuid(wsId)) {
+      throw new Error('[WORKSPACE RESOLUTION FAILED] Valid workspace ID is required for getOrganizationAnalytics.');
     }
 
-    if (!orgId || !isValidUuid(orgId)) {
-      // Fallback: lookup organization from workspaces where user's workspace belongs
-      const wsId = await this.getWorkspaceId();
-      if (wsId && isValidUuid(wsId) && isSupabaseConfigured()) {
-        const { data: wsRow } = await supabase
-          .from('workspaces')
-          .select('organization_id')
-          .eq('id', wsId)
-          .maybeSingle();
-        if (wsRow?.organization_id && isValidUuid(wsRow.organization_id)) {
-          orgId = wsRow.organization_id;
-        }
-      }
-    }
-
-    const cacheKey = `${orgId || 'default'}:${options.startDate}:${options.endDate}`;
+    const cacheKey = `${wsId}:${options.startDate}:${options.endDate}`;
     const now = Date.now();
 
     if (!options.forceFresh && this.orgAnalyticsCache.has(cacheKey)) {
@@ -285,114 +137,289 @@ export class AnalyticsService {
       }
     }
 
-    // Production Server-Side RPC execution
-    if (isSupabaseConfigured() && orgId && isValidUuid(orgId)) {
-      try {
-        const { data, error } = await supabase.rpc('get_organization_analytics', {
-          p_organization_id: orgId,
-          p_start_date: options.startDate,
-          p_end_date: options.endDate,
+    const dateRange = resolveDateRange('custom', options.startDate, options.endDate);
+
+    // 1. Resolve authorized branches for the authenticated user
+    const { data: authorizedBranches = [] } = await branchService.getUserAuthorizedBranches();
+    let activeBranches = authorizedBranches.filter((b) => b.status === 'Active');
+    if (activeBranches.length === 0) {
+      const { data: allB = [] } = await branchService.getBranches({ activeOnly: true });
+      activeBranches = allB;
+    }
+    if (activeBranches.length === 0) {
+      activeBranches = [
+        {
+          id: wsId,
+          workspaceId: wsId,
+          branchCode: 'MAIN',
+          branchName: 'Main Branch',
+          branchType: 'Store',
+          isMainBranch: true,
+          status: 'Active',
+        } as any,
+      ];
+    }
+
+    // Identify main branch
+    let mainBranchObj = activeBranches.find((b) => b.isMainBranch) || null;
+    if (!mainBranchObj) {
+      const savedMainId = safeGetTenantItem<string>('main_branch_id');
+      if (savedMainId) {
+        mainBranchObj = activeBranches.find((b) => b.id === savedMainId) || activeBranches[0];
+      } else {
+        mainBranchObj = activeBranches[0];
+      }
+    }
+    const mainBranchId = mainBranchObj?.id;
+
+    // 2. Fetch raw authoritative transactions across ALL branches
+    const allRaw = await enterpriseAnalyticsService.fetchRawTransactionsForPeriod(wsId, dateRange, 'ALL');
+    const { invoices: allInvoices, counterSales: allCounterSales, payments: allPayments, productsList, expensesList: allExpenses } = allRaw;
+
+    // 3. Partition and compute metrics for each branch
+    const branchPerformances: BranchPerformance[] = [];
+    let orgTotalDiscounts = 0;
+
+    for (const branch of activeBranches) {
+      const isMain = branch.id === mainBranchId || Boolean(branch.isMainBranch);
+
+      const branchInvoices = allInvoices.filter((inv: any) => {
+        const w = inv.workspaceId || inv.workspace_id;
+        if (w && w !== wsId) return false;
+        const b = inv.branchId || inv.branch_id;
+        if (b) return b === branch.id;
+        return isMain;
+      });
+
+      const branchCounterSales = allCounterSales.filter((cs: any) => {
+        const w = cs.workspaceId || cs.workspace_id;
+        if (w && w !== wsId) return false;
+        const b = cs.branchId || cs.branch_id;
+        if (b) return b === branch.id;
+        return isMain;
+      });
+
+      const branchPayments = allPayments.filter((p: any) => {
+        const w = p.workspaceId || p.workspace_id;
+        if (w && w !== wsId) return false;
+        const b = p.branchId || p.branch_id;
+        if (b) return b === branch.id;
+        return isMain;
+      });
+
+      const branchExpenses = allExpenses.filter((exp: any) => {
+        const w = exp.workspaceId || exp.workspace_id;
+        if (w && w !== wsId) return false;
+        const b = exp.branchId || exp.branch_id;
+        if (b) return b === branch.id;
+        return isMain;
+      });
+
+      // Invoice Sales & Discounts
+      let branchInvSales = 0;
+      let branchInvCount = 0;
+      const seenCsInvoiceNumbers = new Set<string>();
+
+      branchCounterSales.forEach((cs: any) => {
+        const num = cs.invoice_number || cs.invoiceNumber || cs.sale_number || cs.saleNumber;
+        if (num) seenCsInvoiceNumbers.add(String(num).trim().toLowerCase());
+        const disc = Number(cs.discount_amount ?? cs.discountAmount ?? 0);
+        orgTotalDiscounts += disc;
+      });
+
+      branchInvoices.forEach((inv: any) => {
+        const num = String(inv.invoice_number ?? inv.invoiceNumber ?? '').trim().toLowerCase();
+        if (num && seenCsInvoiceNumbers.has(num)) {
+          return; // Prevent double-counting duplicate counter-sale invoice representation
+        }
+        branchInvSales += Number(inv.grand_total ?? inv.grandTotal ?? 0);
+        branchInvCount += 1;
+        const disc = Number(inv.discount_total ?? inv.discountTotal ?? 0);
+        orgTotalDiscounts += disc;
+      });
+
+      // POS / Counter Sales
+      let branchPosSales = 0;
+      branchCounterSales.forEach((cs: any) => {
+        branchPosSales += Number(cs.final_total ?? cs.finalTotal ?? 0);
+      });
+      const branchCsCount = branchCounterSales.length;
+
+      const branchTotalSales = Math.round((branchInvSales + branchPosSales) * 100) / 100;
+
+      // Collections (Cash vs UPI receipts)
+      const { totalCollections: branchCol, cashCollections: branchCash, upiCollections: branchUpi } =
+        enterpriseAnalyticsService.computeCollections(branchPayments, branchCounterSales, branchInvoices);
+
+      // Gross profit using FIFO / catalog costing
+      const branchFinancials = financialStatementService.computePeriodFinancials(dateRange, {
+        invoices: branchInvoices,
+        counterSales: branchCounterSales,
+        expenses: branchExpenses,
+        products: productsList,
+      });
+      const branchGrossProfit = branchFinancials.grossProfit.grossProfit;
+
+      // Outstanding Udhari for this branch
+      const branchUdhariRes = await udhariService.getAuthoritativeUdhariMetricsAsOf(
+        options.endDate,
+        wsId,
+        branch.id
+      );
+
+      branchPerformances.push({
+        workspace_id: branch.id,
+        branch_name: branch.branchName || 'Branch',
+        branch_code: branch.branchCode || 'BR',
+        is_main_branch: Boolean(branch.isMainBranch),
+        sales: branchTotalSales,
+        invoice_sales: Math.round(branchInvSales * 100) / 100,
+        pos_sales: Math.round(branchPosSales * 100) / 100,
+        collections: branchCol,
+        cash_collections: branchCash,
+        upi_collections: branchUpi,
+        gross_profit: branchGrossProfit,
+        outstanding_udhari: branchUdhariRes.outstanding,
+        transactions: branchInvCount + branchCsCount,
+        invoice_count: branchInvCount,
+        counter_sale_count: branchCsCount,
+      });
+    }
+
+    // Sort branch performance: Main branch first, then by sales descending
+    branchPerformances.sort((a, b) => {
+      if (a.is_main_branch) return -1;
+      if (b.is_main_branch) return 1;
+      return b.sales - a.sales;
+    });
+
+    // 4. Calculate Authoritative Organization Totals
+    const totalSales = Math.round(branchPerformances.reduce((acc, b) => acc + b.sales, 0) * 100) / 100;
+    const invoiceSales = Math.round(branchPerformances.reduce((acc, b) => acc + b.invoice_sales, 0) * 100) / 100;
+    const counterSales = Math.round(branchPerformances.reduce((acc, b) => acc + b.pos_sales, 0) * 100) / 100;
+    const cashCollections = branchPerformances.reduce((acc, b) => acc + (b.cash_collections || 0), 0);
+    const upiCollections = branchPerformances.reduce((acc, b) => acc + (b.upi_collections || 0), 0);
+    const collections = cashCollections + upiCollections;
+    const grossProfit = Math.round(branchPerformances.reduce((acc, b) => acc + b.gross_profit, 0) * 100) / 100;
+
+    // Overall Organization Udhari
+    const orgUdhariRes = await udhariService.getAuthoritativeUdhariMetricsAsOf(
+      options.endDate,
+      wsId,
+      'ALL'
+    );
+    const outstandingUdhari = orgUdhariRes.outstanding;
+
+    const totalTransactions = branchPerformances.reduce((acc, b) => acc + b.transactions, 0);
+    const totalInvoices = branchPerformances.reduce((acc, b) => acc + b.invoice_count, 0);
+    const totalCounterSales = branchPerformances.reduce((acc, b) => acc + b.counter_sale_count, 0);
+
+    // 5. Visualizations Data
+    const sales_by_branch = branchPerformances.map((b) => ({
+      branch_name: b.branch_name,
+      branch_code: b.branch_code,
+      amount: b.sales,
+    }));
+
+    const collections_by_branch = branchPerformances.map((b) => ({
+      branch_name: b.branch_name,
+      branch_code: b.branch_code,
+      amount: b.collections,
+    }));
+
+    const outstanding_by_branch = branchPerformances.map((b) => ({
+      branch_name: b.branch_name,
+      branch_code: b.branch_code,
+      amount: b.outstanding_udhari,
+    }));
+
+    const gross_profit_by_branch = branchPerformances.map((b) => ({
+      branch_name: b.branch_name,
+      branch_code: b.branch_code,
+      amount: b.gross_profit,
+    }));
+
+    // Sales Trend: timeline across dateRange
+    const sales_trend: SalesTrendPoint[] = [];
+    const isSingleDay = options.startDate === options.endDate;
+
+    if (isSingleDay) {
+      sales_trend.push({
+        date: options.startDate,
+        label: formatIndianDate(options.startDate),
+        sales: totalSales,
+        invoice_sales: invoiceSales,
+        counter_sales: counterSales,
+        transactions: totalTransactions,
+      });
+    } else {
+      // Generate daily timeline points between startDate and endDate
+      const cur = new Date(options.startDate);
+      const end = new Date(options.endDate);
+
+      while (cur <= end) {
+        const dStr = cur.toISOString().split('T')[0];
+
+        let dInv = 0;
+        let dCs = 0;
+        let dTx = 0;
+
+        allInvoices.forEach((inv: any) => {
+          const invD = (inv.date || inv.createdAt || '').split('T')[0];
+          if (invD === dStr) {
+            dInv += Number(inv.grand_total ?? inv.grandTotal ?? 0);
+            dTx += 1;
+          }
         });
 
-        if (!error && data) {
-          const result: OrganizationAnalytics = {
-            organization_id: data.organization_id || orgId,
-            organization_name: data.organization_name || 'My Organization',
-            start_date: data.start_date || options.startDate,
-            end_date: data.end_date || options.endDate,
-            total_sales: Number(data.total_sales || 0),
-            invoice_sales: Number(data.invoice_sales || 0),
-            counter_sales: Number(data.counter_sales || 0),
-            collections: Number(data.collections || 0),
-            cash_collections: Number(data.cash_collections || 0),
-            upi_collections: Number(data.upi_collections || 0),
-            gross_profit: Number(data.gross_profit || 0),
-            outstanding_udhari: Number(data.outstanding_udhari || 0),
-            total_transactions: Number(data.total_transactions || 0),
-            total_discounts: Number(data.total_discounts || 0),
-            total_invoices: Number(data.total_invoices || 0),
-            total_counter_sales: Number(data.total_counter_sales || 0),
-            branch_performance: Array.isArray(data.branch_performance) ? data.branch_performance : [],
-            sales_trend: Array.isArray(data.sales_trend) ? data.sales_trend : [],
-            sales_by_branch: Array.isArray(data.sales_by_branch) ? data.sales_by_branch : [],
-            collections_by_branch: Array.isArray(data.collections_by_branch) ? data.collections_by_branch : [],
-            outstanding_by_branch: Array.isArray(data.outstanding_by_branch) ? data.outstanding_by_branch : [],
-          };
+        allCounterSales.forEach((cs: any) => {
+          const csD = (cs.sale_date ?? cs.saleDate ?? cs.created_at ?? '').split('T')[0];
+          if (csD === dStr) {
+            dCs += Number(cs.final_total ?? cs.finalTotal ?? 0);
+            dTx += 1;
+          }
+        });
 
-          this.orgAnalyticsCache.set(cacheKey, { data: result, timestamp: now });
-          return result;
-        }
-      } catch (err) {
-        console.warn('[AnalyticsService] RPC get_organization_analytics notice:', err);
+        sales_trend.push({
+          date: dStr,
+          label: formatIndianDate(dStr),
+          sales: Math.round((dInv + dCs) * 100) / 100,
+          invoice_sales: Math.round(dInv * 100) / 100,
+          counter_sales: Math.round(dCs * 100) / 100,
+          transactions: dTx,
+        });
+
+        cur.setDate(cur.getDate() + 1);
       }
     }
 
-    // Local / Offline fallback calculation using available workspace branches
-    const wsId = await this.getWorkspaceId();
-    const branchMetrics = await this.getBranchDashboardMetrics({
-      workspaceId: wsId,
-      startDate: options.startDate,
-      endDate: options.endDate,
-      forceFresh: options.forceFresh,
-    });
-
-    const fallbackResult: OrganizationAnalytics = {
-      organization_id: orgId || wsId || 'default',
+    const result: OrganizationAnalytics = {
+      organization_id: wsId,
       organization_name: 'All Branches',
       start_date: options.startDate,
       end_date: options.endDate,
-      total_sales: branchMetrics.totalSales,
-      invoice_sales: branchMetrics.invoiceSales,
-      counter_sales: branchMetrics.counterSales,
-      collections: branchMetrics.collections,
-      cash_collections: branchMetrics.cashCollections,
-      upi_collections: branchMetrics.upiCollections,
-      gross_profit: branchMetrics.grossProfit,
-      outstanding_udhari: branchMetrics.outstandingUdhari,
-      total_transactions: branchMetrics.totalTransactions,
-      total_discounts: branchMetrics.totalDiscounts,
-      total_invoices: branchMetrics.invoiceTransactions,
-      total_counter_sales: branchMetrics.counterSaleTransactions,
-      branch_performance: [
-        {
-          workspace_id: wsId,
-          branch_name: 'Main Branch',
-          branch_code: 'MAIN',
-          is_main_branch: true,
-          sales: branchMetrics.totalSales,
-          invoice_sales: branchMetrics.invoiceSales,
-          pos_sales: branchMetrics.counterSales,
-          collections: branchMetrics.collections,
-          gross_profit: branchMetrics.grossProfit,
-          outstanding_udhari: branchMetrics.outstandingUdhari,
-          transactions: branchMetrics.totalTransactions,
-          invoice_count: branchMetrics.invoiceTransactions,
-          counter_sale_count: branchMetrics.counterSaleTransactions,
-        },
-      ],
-      sales_trend: [
-        {
-          date: options.startDate,
-          label: options.startDate,
-          sales: branchMetrics.totalSales,
-          invoice_sales: branchMetrics.invoiceSales,
-          counter_sales: branchMetrics.counterSales,
-          transactions: branchMetrics.totalTransactions,
-        },
-      ],
-      sales_by_branch: [
-        { branch_name: 'Main Branch', branch_code: 'MAIN', amount: branchMetrics.totalSales },
-      ],
-      collections_by_branch: [
-        { branch_name: 'Main Branch', branch_code: 'MAIN', amount: branchMetrics.collections },
-      ],
-      outstanding_by_branch: [
-        { branch_name: 'Main Branch', branch_code: 'MAIN', amount: branchMetrics.outstandingUdhari },
-      ],
+      total_sales: totalSales,
+      invoice_sales: invoiceSales,
+      counter_sales: counterSales,
+      collections,
+      cash_collections: cashCollections,
+      upi_collections: upiCollections,
+      gross_profit: grossProfit,
+      outstanding_udhari: outstandingUdhari,
+      total_transactions: totalTransactions,
+      total_discounts: Math.round(orgTotalDiscounts * 100) / 100,
+      total_invoices: totalInvoices,
+      total_counter_sales: totalCounterSales,
+      branch_performance: branchPerformances,
+      sales_trend,
+      sales_by_branch,
+      collections_by_branch,
+      outstanding_by_branch,
+      gross_profit_by_branch,
     };
 
-    this.orgAnalyticsCache.set(cacheKey, { data: fallbackResult, timestamp: now });
-    return fallbackResult;
+    this.orgAnalyticsCache.set(cacheKey, { data: result, timestamp: now });
+    return result;
   }
 }
 

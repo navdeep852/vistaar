@@ -706,6 +706,7 @@ export function fromDbCounterSale(row: any): CounterSale {
 export function fromDbPayment(row: any): Payment {
   return {
     id: row.id,
+    workspaceId: row.workspace_id || row.workspaceId || undefined,
     branchId: row.branch_id || row.branchId || undefined,
     paymentNumber: row.payment_number || row.paymentNumber || `PAY-${row.id?.substring(0, 8) || Date.now()}`,
     customerId: row.customer_id || row.customerId || '',
@@ -714,9 +715,11 @@ export function fromDbPayment(row: any): Payment {
     invoiceNumber: row.invoice_number || row.invoiceNumber || undefined,
     counterSaleId: row.counter_sale_id || row.counterSaleId || undefined,
     amount: Number(row.amount) || 0,
+    cashAmount: row.cash_amount !== undefined ? Number(row.cash_amount) : (row.cashAmount !== undefined ? Number(row.cashAmount) : undefined),
+    upiAmount: row.upi_amount !== undefined ? Number(row.upi_amount) : (row.upiAmount !== undefined ? Number(row.upiAmount) : undefined),
     date: row.payment_date || row.date || (row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
-    method: row.method || row.payment_method || 'Cash',
-    referenceNo: row.reference_no || row.referenceNo || undefined,
+    method: row.method || row.payment_method || row.payment_mode || 'Cash',
+    referenceNo: row.reference_no || row.referenceNo || row.reference_number || undefined,
     notes: row.notes || undefined,
     createdAt: row.created_at || row.createdAt || new Date().toISOString(),
   };

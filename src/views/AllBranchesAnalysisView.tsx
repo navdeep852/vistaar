@@ -51,6 +51,7 @@ interface AllBranchesAnalysisViewProps {
 }
 
 const DONUT_COLORS = ['#3b82f6', '#10b981'];
+const PAYMENT_METHOD_COLORS = ['#10b981', '#6366f1'];
 
 export const AllBranchesAnalysisView: React.FC<AllBranchesAnalysisViewProps> = ({ onNavigateTab }) => {
   const { switchBranch, allWorkspaceBranches } = useBranch();
@@ -142,6 +143,15 @@ export const AllBranchesAnalysisView: React.FC<AllBranchesAnalysisViewProps> = (
     return [
       { name: 'Invoices', value: analytics.invoice_sales },
       { name: 'POS / Counter', value: analytics.counter_sales },
+    ];
+  }, [analytics]);
+
+  // Payment method breakdown donut data
+  const paymentMethodData = useMemo(() => {
+    if (!analytics) return [];
+    return [
+      { name: 'Cash', value: analytics.cash_collections },
+      { name: 'UPI', value: analytics.upi_collections },
     ];
   }, [analytics]);
 
@@ -272,7 +282,11 @@ export const AllBranchesAnalysisView: React.FC<AllBranchesAnalysisViewProps> = (
             analytics && (
               <div className="flex justify-between items-center text-[10px] sm:text-[11px]">
                 <span>Margin Est.</span>
-                <strong className="text-indigo-600 dark:text-indigo-400">28.0%</strong>
+                <strong className="text-indigo-600 dark:text-indigo-400">
+                  {analytics.total_sales > 0
+                    ? `${((analytics.gross_profit / analytics.total_sales) * 100).toFixed(1)}%`
+                    : '0.0%'}
+                </strong>
               </div>
             )
           }
@@ -438,6 +452,54 @@ export const AllBranchesAnalysisView: React.FC<AllBranchesAnalysisViewProps> = (
             </ResponsiveContainer>
           </div>
         </div>
+
+        {/* Chart 5: Collections by Payment Method (Donut) */}
+        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3">
+          <h3 className="text-sm font-extrabold text-slate-900 dark:text-slate-100 flex items-center justify-between">
+            <span>Collections by Payment Method</span>
+            <span className="text-[10px] text-emerald-500 font-mono">Cash vs UPI</span>
+          </h3>
+          <div className="h-64 w-full flex items-center justify-center">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={paymentMethodData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={90}
+                  paddingAngle={4}
+                  dataKey="value"
+                >
+                  {paymentMethodData.map((entry, index) => (
+                    <Cell key={`pm-cell-${index}`} fill={PAYMENT_METHOD_COLORS[index % PAYMENT_METHOD_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: any) => [formatInr(Number(value)), 'Collections']} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Chart 6: Outstanding Udhari by Branch */}
+        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3">
+          <h3 className="text-sm font-extrabold text-slate-900 dark:text-slate-100 flex items-center justify-between">
+            <span>Outstanding Udhari by Branch</span>
+            <span className="text-[10px] text-amber-500 font-mono">Customer Credit</span>
+          </h3>
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={analytics?.outstanding_by_branch || []} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                <XAxis dataKey="branch_name" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} tickFormatter={(val) => `₹${val >= 1000 ? `${(val / 1000).toFixed(0)}k` : val}`} />
+                <Tooltip formatter={(value: any) => [formatInr(Number(value)), 'Outstanding']} />
+                <Bar dataKey="amount" fill="#f59e0b" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </div>
 
       {/* ========================================================================= */}
@@ -504,8 +566,15 @@ export const AllBranchesAnalysisView: React.FC<AllBranchesAnalysisViewProps> = (
                     <td className="p-3 text-right font-medium text-blue-600 dark:text-blue-400">
                       {formatInr(b.invoice_sales)}
                     </td>
-                    <td className="p-3 text-right font-semibold text-emerald-700 dark:text-emerald-300">
-                      {formatInr(b.collections)}
+                    <td className="p-3 text-right">
+                      <div className="font-semibold text-emerald-700 dark:text-emerald-300">
+                        {formatInr(b.collections)}
+                      </div>
+                      {(b.cash_collections !== undefined || b.upi_collections !== undefined) && (
+                        <div className="text-[10px] text-slate-400 font-mono">
+                          C: {formatInr(b.cash_collections || 0)} · U: {formatInr(b.upi_collections || 0)}
+                        </div>
+                      )}
                     </td>
                     <td className="p-3 text-right font-semibold text-slate-700 dark:text-slate-300">
                       {formatInr(b.gross_profit)}

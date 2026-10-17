@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { Branch, UserBranchAccess, BranchInventory, StockTransfer, StockTransferItem, Product, StockReceipt, StockMovement } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
+import { hasCurrentUserPermission } from '../../lib/permissions';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem, safeSaveTenantItem } from './safeStorage';
 import { auditLogService } from './auditLogService';
@@ -246,9 +247,10 @@ export class BranchService {
       }
     }
 
-    if (typeof localStorage !== 'undefined') {
+    const ls = typeof localStorage !== 'undefined' ? localStorage : (globalThis as any)?.localStorage;
+    if (ls) {
       try {
-        const savedSession = localStorage.getItem('vistaar_user_session');
+        const savedSession = ls.getItem('vistaar_user_session');
         if (savedSession) {
           const parsed = JSON.parse(savedSession);
           if (parsed && (!targetUserId || parsed.id === targetUserId)) {
@@ -260,7 +262,15 @@ export class BranchService {
       } catch {}
     }
 
-    const isOwner = role === 'owner';
+    if (!role) {
+      try {
+        if (hasCurrentUserPermission('branches.manage')) {
+          role = 'owner';
+        }
+      } catch {}
+    }
+
+    const isOwner = role === 'owner' || role === 'admin';
 
     // Business Owner sees all branches for multi-location switching & administration
     if (isOwner) {

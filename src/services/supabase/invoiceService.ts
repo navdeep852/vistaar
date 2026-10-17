@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { Invoice, Product, InvoiceStatus } from '../../types';
+import { Invoice, Product, InvoiceStatus, Payment } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { store } from '../store';
@@ -98,25 +98,82 @@ export class InvoiceService {
       if (error) {
         const errStr = handleSupabaseError(error, 'getInvoices');
         let fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
+        const storeInvs = store.getInvoices();
+        const combinedFallback = [...storeInvs, ...fallback.map((i: any) => fromDbInvoice(i))];
+        const seenF = new Set<string>();
+        const dedupFallback: any[] = [];
+        for (const item of combinedFallback) {
+          const k1 = item.id ? item.id.toLowerCase() : '';
+          const k2 = item.invoiceNumber ? item.invoiceNumber.toLowerCase() : '';
+          if ((k1 && seenF.has(k1)) || (k2 && seenF.has(k2))) continue;
+          if (k1) seenF.add(k1);
+          if (k2) seenF.add(k2);
+          dedupFallback.push(item);
+        }
+
+        let filtered = dedupFallback;
         if (options?.branchId && options.branchId !== 'ALL') {
           const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
           const bObj = branches.find((b: any) => b.id === options.branchId);
-          const isMain = Boolean(bObj?.isMainBranch);
-          fallback = fallback.filter((inv: any) => {
+          const isMain = Boolean(bObj?.isMainBranch) || options.branchId === 'main';
+          filtered = filtered.filter((inv: any) => {
             const bId = inv.branchId || inv.branch_id || inv.snapshot?.branch_id;
             if (bId) return bId === options.branchId;
             return isMain;
           });
         }
-        const mappedFallback = fallback.map((inv: any) => fromDbInvoice(inv));
-        return { data: mappedFallback, count: mappedFallback.length, error: errStr };
+        if (options?.search) {
+          const s = options.search.trim().toLowerCase();
+          filtered = filtered.filter((inv: any) => {
+            const num = (inv.invoiceNumber || inv.invoice_number || '').toLowerCase();
+            const cust = (inv.customerName || inv.customer_name || '').toLowerCase();
+            return num.includes(s) || cust.includes(s);
+          });
+        }
+        if (options?.status) {
+          filtered = filtered.filter((inv: any) => inv.status === options.status);
+        }
+        return { data: filtered, count: filtered.length, error: errStr };
       }
 
-      let mapped = (data || []).map((row: any) => fromDbInvoice(row));
+      // Merge remote records with local store and local storage
+      const seenIds = new Set<string>();
+      const combined: any[] = [];
+
+      // 1. Add remote data first
+      for (const row of (data || [])) {
+        const inv = fromDbInvoice(row);
+        const k1 = inv.id ? inv.id.toLowerCase() : '';
+        const k2 = inv.invoiceNumber ? inv.invoiceNumber.toLowerCase() : '';
+        if (k1) seenIds.add(k1);
+        if (k2) seenIds.add(k2);
+        combined.push(inv);
+      }
+
+      // 2. Merge local storage and store.state invoices
+      const localInvs = [
+        ...store.getInvoices(),
+        ...safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []).map((r: any) => fromDbInvoice(r)),
+      ];
+
+      for (const inv of localInvs) {
+        const k1 = inv.id ? inv.id.toLowerCase() : '';
+        const k2 = inv.invoiceNumber ? inv.invoiceNumber.toLowerCase() : '';
+        if ((k1 && seenIds.has(k1)) || (k2 && seenIds.has(k2))) {
+          continue;
+        }
+        if (k1) seenIds.add(k1);
+        if (k2) seenIds.add(k2);
+        combined.push(inv);
+      }
+
+      let mapped = combined;
+
+      // Filter by branch
       if (options?.branchId && options.branchId !== 'ALL') {
         const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
         const bObj = branches.find((b: any) => b.id === options.branchId);
-        const isMain = Boolean(bObj?.isMainBranch);
+        const isMain = Boolean(bObj?.isMainBranch) || options.branchId === 'main';
         mapped = mapped.filter((inv: any) => {
           const bId = inv.branchId || inv.branch_id || inv.snapshot?.branch_id;
           if (bId) return bId === options.branchId;
@@ -124,22 +181,61 @@ export class InvoiceService {
         });
       }
 
+      // Filter by search query (e.g. Soldier, INV-...)
+      if (options?.search) {
+        const s = options.search.trim().toLowerCase();
+        mapped = mapped.filter((inv: any) => {
+          const num = (inv.invoiceNumber || inv.invoice_number || '').toLowerCase();
+          const cust = (inv.customerName || inv.customer_name || '').toLowerCase();
+          return num.includes(s) || cust.includes(s);
+        });
+      }
+
+      // Filter by status
+      if (options?.status) {
+        mapped = mapped.filter((inv: any) => inv.status === options.status);
+      }
+
       return { data: mapped, count: mapped.length };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getInvoices');
       let fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
+      const storeInvs = store.getInvoices();
+      const combinedFallback = [...storeInvs, ...fallback.map((i: any) => fromDbInvoice(i))];
+      const seenF = new Set<string>();
+      const dedupFallback: any[] = [];
+      for (const item of combinedFallback) {
+        const k1 = item.id ? item.id.toLowerCase() : '';
+        const k2 = item.invoiceNumber ? item.invoiceNumber.toLowerCase() : '';
+        if ((k1 && seenF.has(k1)) || (k2 && seenF.has(k2))) continue;
+        if (k1) seenF.add(k1);
+        if (k2) seenF.add(k2);
+        dedupFallback.push(item);
+      }
+
+      let filtered = dedupFallback;
       if (options?.branchId && options.branchId !== 'ALL') {
         const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
         const bObj = branches.find((b: any) => b.id === options.branchId);
-        const isMain = Boolean(bObj?.isMainBranch);
-        fallback = fallback.filter((inv: any) => {
+        const isMain = Boolean(bObj?.isMainBranch) || options.branchId === 'main';
+        filtered = filtered.filter((inv: any) => {
           const bId = inv.branchId || inv.branch_id || inv.snapshot?.branch_id;
           if (bId) return bId === options.branchId;
           return isMain;
         });
       }
-      const mappedFallback = fallback.map((inv: any) => fromDbInvoice(inv));
-      return { data: mappedFallback, count: mappedFallback.length, error: errStr };
+      if (options?.search) {
+        const s = options.search.trim().toLowerCase();
+        filtered = filtered.filter((inv: any) => {
+          const num = (inv.invoiceNumber || inv.invoice_number || '').toLowerCase();
+          const cust = (inv.customerName || inv.customer_name || '').toLowerCase();
+          return num.includes(s) || cust.includes(s);
+        });
+      }
+      if (options?.status) {
+        filtered = filtered.filter((inv: any) => inv.status === options.status);
+      }
+      return { data: filtered, count: filtered.length, error: errStr };
     }
   }
 
@@ -195,7 +291,9 @@ export class InvoiceService {
         invoice.paidAmount
       );
 
+      const assignedId = (invoice.id && isValidUuid(invoice.id)) ? invoice.id : crypto.randomUUID();
       const invInsertPayload: Record<string, any> = {
+        id: assignedId,
         workspace_id: wsId,
         customer_id: (invoice.customerId && isValidUuid(invoice.customerId)) ? invoice.customerId : null,
         invoice_number: invNumber,
@@ -212,6 +310,14 @@ export class InvoiceService {
         grand_total: normGrandTotal,
         paid_amount: normPaidAmount,
         balance_amount: normBalanceAmount,
+        notes: invoice.notes,
+        terms: invoice.terms,
+        footer_text: invoice.footerText,
+        template_id: invoice.templateId || 'inv-modern-blue',
+        branding: invoice.branding,
+        theme: invoice.theme,
+        customization: invoice.customization,
+        snapshot: invoice.snapshot,
       };
 
       if (invoice.branchId && isValidUuid(invoice.branchId)) {
@@ -225,15 +331,22 @@ export class InvoiceService {
         .single();
 
       // Resilience against unmigrated schema: if branch_id does not exist, strip and retry
-      if (parentErr && (parentErr.code === 'PGRST204' || parentErr.code === '42703') && invInsertPayload.branch_id !== undefined) {
-        console.warn('[createInvoice] invoices.branch_id not found in schema cache (PGRST204); retrying without branch_id');
+      if (parentErr && (parentErr.code === 'PGRST204' || parentErr.code === '42703')) {
+        console.warn('[createInvoice] Invoices column not found in schema cache (PGRST204); retrying without unmigrated columns');
         const stashedBranchId = invInsertPayload.branch_id;
         delete invInsertPayload.branch_id;
-        invInsertPayload.snapshot = {
-          ...(typeof invInsertPayload.snapshot === 'object' && invInsertPayload.snapshot ? invInsertPayload.snapshot : {}),
-          branch_id: stashedBranchId,
-          branchId: stashedBranchId,
-        };
+        delete invInsertPayload.payment_mode;
+        delete invInsertPayload.payment_method;
+        delete invInsertPayload.payment_reference;
+        delete invInsertPayload.payment_notes;
+        delete invInsertPayload.is_stock_finalized;
+        if (stashedBranchId) {
+          invInsertPayload.snapshot = {
+            ...(typeof invInsertPayload.snapshot === 'object' && invInsertPayload.snapshot ? invInsertPayload.snapshot : {}),
+            branch_id: stashedBranchId,
+            branchId: stashedBranchId,
+          };
+        }
         const retryRes = await supabase
           .from('invoices')
           .insert([invInsertPayload])
@@ -791,7 +904,7 @@ export class InvoiceService {
         snapshot: payload.snapshot,
       };
 
-      let authoritativeInvoiceId = payload.id || `inv-${Date.now()}`;
+      let authoritativeInvoiceId = (payload.id && isValidUuid(payload.id)) ? payload.id : crypto.randomUUID();
       let authoritativeInvoiceNumber = payload.invoiceNumber;
       let isAtomicRpcExecuted = false;
 
@@ -1099,24 +1212,77 @@ export class InvoiceService {
           }
 
           try {
+            const upfrontNotes = payload.paymentNotes || (payload.source === 'QUOTATION' ? `Payment recorded at quotation conversion (${payload.quotationNumber || inv.invoiceNumber})` : `Payment recorded at invoice finalization`);
+            const payMethod = payload.paymentMode || 'Cash';
+            const payRef = payload.paymentReference || null;
+
+            // 1. Persist to local store and local tenant storage
+            const count = (store.getPayments()?.length || 0) + 1;
+            const year = new Date().getFullYear();
+            const localPayRecord: Payment = {
+              id: `pay-init-${authoritativeInvoiceId}`,
+              paymentNumber: `PAY-${year}-${String(count).padStart(4, '0')}`,
+              customerId: payload.customerId || '',
+              customerName: payload.customerName || 'Customer',
+              invoiceId: authoritativeInvoiceId,
+              invoiceNumber: inv.invoiceNumber,
+              branchId: payload.branchId || inv.branchId,
+              amount: effectivePaid,
+              date: payload.paymentDate || inv.date,
+              method: payMethod as any,
+              referenceNo: payRef || '',
+              notes: upfrontNotes,
+              createdAt: new Date().toISOString(),
+            };
+            store.addPayment(localPayRecord);
+
+            // 2. Persist to remote Supabase payments table
             if (isSupabaseConfigured() && isValidUuid(wsId) && isValidUuid(authoritativeInvoiceId)) {
-              const upfrontNotes = payload.paymentNotes || (payload.source === 'QUOTATION' ? `Payment recorded at quotation conversion (${payload.quotationNumber || inv.invoiceNumber})` : `Payment recorded at invoice finalization`);
-              await supabase.from('payments').insert([{
+              const fullPayRow: Record<string, any> = {
                 workspace_id: wsId,
-                branch_id: payload.branchId && isValidUuid(payload.branchId) ? payload.branchId : null,
                 invoice_id: authoritativeInvoiceId,
                 invoice_number: inv.invoiceNumber,
                 customer_id: isValidUuid(payload.customerId) ? payload.customerId : null,
                 customer_name: payload.customerName || 'Customer',
                 amount: effectivePaid,
                 payment_date: payload.paymentDate || inv.date,
-                payment_method: payload.paymentMode || 'Cash',
-                reference_number: payload.paymentReference || null,
+                method: payMethod,
+                payment_method: payMethod,
+                reference_no: payRef,
+                reference_number: payRef,
                 notes: upfrontNotes,
-              }]);
+              };
+              if (payload.branchId && isValidUuid(payload.branchId)) {
+                fullPayRow.branch_id = payload.branchId;
+              }
+
+              let { error: payErr } = await supabase.from('payments').insert([fullPayRow]);
+
+              // Resilience against unmigrated schema: if branch_id, payment_method, or reference_number fail with PGRST204, strip to core columns and retry
+              if (payErr && (payErr.code === 'PGRST204' || payErr.code === '42703')) {
+                console.warn('[finalizeAuthoritativeInvoice] Payments column mismatch in schema cache (PGRST204); retrying with core columns');
+                const corePayRow = {
+                  workspace_id: wsId,
+                  invoice_id: authoritativeInvoiceId,
+                  invoice_number: inv.invoiceNumber,
+                  customer_id: isValidUuid(payload.customerId) ? payload.customerId : null,
+                  customer_name: payload.customerName || 'Customer',
+                  amount: effectivePaid,
+                  payment_date: payload.paymentDate || inv.date,
+                  method: payMethod,
+                  reference_no: payRef,
+                  notes: upfrontNotes,
+                };
+                const retryPayRes = await supabase.from('payments').insert([corePayRow]);
+                payErr = retryPayRes.error;
+              }
+
+              if (payErr) {
+                console.error('[finalizeAuthoritativeInvoice] Critical: Remote payment insert failed:', payErr);
+              }
             }
           } catch (payErr) {
-            console.warn('[finalizeAuthoritativeInvoice] Remote payment sync notice:', payErr);
+            console.error('[finalizeAuthoritativeInvoice] Upfront payment persistence notice:', payErr);
           }
         }
       }
