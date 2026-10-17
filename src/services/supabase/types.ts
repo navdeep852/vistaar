@@ -24,6 +24,7 @@ import type {
 } from '../../types';
 import { isValidUuid } from '../../lib/supabaseError';
 import { calculateInvoiceFinancials } from '../financialCalculationService';
+import { normalizeToYyyyMmDd } from '../../lib/dateRange';
 export interface DbWorkspace {
   id: string;
   company_name: string;
@@ -535,6 +536,27 @@ export function fromDbDaybookTransaction(row: DbDaybookTransaction): DaybookTran
   };
 }
 
+function parseIstDate(dateVal?: string | null, createdAtVal?: string | null): string {
+  if (dateVal) {
+    return normalizeToYyyyMmDd(dateVal);
+  }
+  if (createdAtVal) {
+    try {
+      const d = new Date(createdAtVal);
+      if (!isNaN(d.getTime())) {
+        return new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Kolkata',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(d);
+      }
+    } catch {}
+    return normalizeToYyyyMmDd(createdAtVal);
+  }
+  return normalizeToYyyyMmDd(new Date());
+}
+
 export function fromDbInvoice(row: any): Invoice {
   let rawPaid = row.paid_amount ?? row.paidAmount;
   const rawBalance = row.balance_amount ?? row.balanceAmount;
@@ -579,8 +601,26 @@ export function fromDbInvoice(row: any): Invoice {
     }
   }
 
+  const branchId =
+    row.branch_id ||
+    row.branchId ||
+    row.snapshot?.branch_id ||
+    row.snapshot?.branchId ||
+    undefined;
+  const branchName =
+    row.branch_name ||
+    row.branchName ||
+    row.snapshot?.branch_name ||
+    row.snapshot?.branchName ||
+    undefined;
+
+  const resolvedDate = parseIstDate(row.date || row.invoice_date, row.created_at || row.createdAt);
+  const resolvedDueDate = row.due_date || row.dueDate ? normalizeToYyyyMmDd(row.due_date || row.dueDate) : resolvedDate;
+
   return {
     id: row.id,
+    branchId,
+    branchName,
     invoiceNumber: row.invoice_number || row.invoiceNumber,
     quotationId: row.quotation_id || row.quotationId,
     customerId: row.customer_id || row.customerId,
@@ -591,8 +631,8 @@ export function fromDbInvoice(row: any): Invoice {
     customerAddress: row.customer_address || row.customerAddress,
     customerGstin: row.customer_gstin || row.customerGstin,
     status: status,
-    date: row.date || row.invoice_date || (row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
-    dueDate: row.due_date || row.dueDate || row.date,
+    date: resolvedDate,
+    dueDate: resolvedDueDate,
     items,
     subtotal: Number(row.subtotal) || 0,
     discountTotal: Number(row.discount_total ?? row.discountTotal) || 0,

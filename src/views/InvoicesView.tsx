@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Plus,
   Search,
@@ -75,15 +75,16 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   const settings = store.getSettings();
 
+  const updateData = useCallback(() => {
+    const all = store.getInvoices();
+    if (currentBranch && currentBranch.id !== 'ALL') {
+      setInvoices(all.filter((i) => i.branchId === currentBranch.id || (!i.branchId && currentBranch.isMainBranch)));
+    } else {
+      setInvoices(all);
+    }
+  }, [currentBranch]);
+
   useEffect(() => {
-    const updateData = () => {
-      const all = store.getInvoices();
-      if (currentBranch) {
-        setInvoices(all.filter((i) => i.branchId === currentBranch.id || (!i.branchId && (currentBranch.isMainBranch || currentBranch.id === 'ALL'))));
-      } else {
-        setInvoices(all);
-      }
-    };
     updateData();
 
     import('../services/supabase/invoiceService').then(({ invoiceService }) => {
@@ -102,7 +103,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
       unsub();
     };
-  }, [currentBranch?.id]);
+  }, [currentBranch?.id, updateData]);
 
   const handleEditDraft = (inv: Invoice) => {
     setEditingDraftInvoice(inv);
@@ -157,12 +158,13 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       showToast(`Recorded payment of ${settings.currency}${payAmount} for Invoice ${selectedInvoice.invoiceNumber}!`, 'success');
       setPaymentModalOpen(false);
 
-      // Refresh invoices from both store and Supabase
-      setInvoices(store.getInvoices());
+      // Refresh invoices from both store and Supabase respecting branch isolation
+      updateData();
       try {
-        const { data } = await invoiceService.getInvoices();
-        if (data && Array.isArray(data)) {
-          setInvoices(data);
+        const { data } = await invoiceService.getInvoices({ branchId: currentBranch?.id });
+        if (data && Array.isArray(data) && data.length > 0) {
+          store.syncRemoteInvoices(data);
+          updateData();
         }
       } catch {
         // ignore
@@ -235,11 +237,11 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
           onSuccess={() => {
             setEditingDraftInvoice(null);
             setMode('list');
-            setInvoices(store.getInvoices());
-            invoiceService.getInvoices().then((res) => {
+            updateData();
+            invoiceService.getInvoices({ branchId: currentBranch?.id }).then((res) => {
               if (res.data && res.data.length > 0) {
                 store.syncRemoteInvoices(res.data);
-                setInvoices(store.getInvoices());
+                updateData();
               }
             }).catch(() => {});
           }}

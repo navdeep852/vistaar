@@ -49,8 +49,10 @@ import {
   PAYMENT_TOLERANCE,
 } from './financialCalculationService';
 import { filterValidLineItems } from '../lib/productHelpers';
+import { fromDbInvoice } from './supabase/types';
 
 const LOCAL_PRODUCTS_KEY = 'vistaar_local_products_db';
+const LOCAL_INVOICES_KEY = 'vistaar_local_invoices_db';
 
 
 export function calculateUdhariStatus(originalAmount: number, totalReceived: number, dueDate: string): UdhariStatus {
@@ -213,6 +215,25 @@ class StoreService {
             ...(loaded.settings || {}),
           },
         };
+
+        // Merge fallback invoices from LOCAL_INVOICES_KEY (vistaar_local_invoices_db)
+        try {
+          const localDbInvoices = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
+          if (Array.isArray(localDbInvoices) && localDbInvoices.length > 0) {
+            for (const lInv of localDbInvoices) {
+              const mapped = fromDbInvoice(lInv);
+              const exists = stateObj.invoices.some(
+                (i) => i.id === mapped.id || (mapped.invoiceNumber && i.invoiceNumber === mapped.invoiceNumber)
+              );
+              if (!exists) {
+                stateObj.invoices.push(mapped);
+              }
+            }
+          }
+        } catch (mErr) {
+          console.warn('[loadFromStorage] Failed merging local invoices DB:', mErr);
+        }
+
         this.reconcileStateLedgers(stateObj);
         return stateObj;
       }
@@ -220,6 +241,14 @@ class StoreService {
       console.error('Failed to load state from tenant storage', e);
     }
     const fallback = { ...initialSeedData };
+
+    try {
+      const localDbInvoices = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
+      if (Array.isArray(localDbInvoices) && localDbInvoices.length > 0) {
+        fallback.invoices = localDbInvoices.map((i) => fromDbInvoice(i));
+      }
+    } catch {}
+
     this.reconcileStateLedgers(fallback);
     return fallback;
   }
@@ -511,22 +540,41 @@ class StoreService {
         (r.status as InvoiceStatus) || found?.status
       );
 
+      const branchId = r.branch_id || r.branchId || r.snapshot?.branch_id || r.snapshot?.branchId || found?.branchId || undefined;
+      const branchName = r.branch_name || r.branchName || r.snapshot?.branch_name || r.snapshot?.branchName || found?.branchName || undefined;
+
       if (found) {
-        if (
-          Math.abs(found.paidAmount - fin.paidAmount) > 0.001 ||
-          Math.abs(found.balanceAmount - fin.balanceAmount) > 0.001 ||
-          Math.abs(found.grandTotal - fin.grandTotal) > 0.001 ||
-          found.status !== fin.status
-        ) {
-          found.grandTotal = fin.grandTotal;
-          found.paidAmount = fin.paidAmount;
-          found.balanceAmount = fin.balanceAmount;
-          found.status = fin.status;
+        if (!found.branchId && branchId) {
+          found.branchId = branchId;
           changed = true;
+        }
+        if (!found.branchName && branchName) {
+          found.branchName = branchName;
+          changed = true;
+        }
+
+        // Do NOT downgrade an invoice that was confirmed Paid locally to Draft/0-paid if remote update was interrupted
+        const isLocallyConfirmedPaid = (found.status === 'Paid' || found.paidAmount > 0) && r.status === 'Draft' && remotePaid === 0;
+
+        if (!isLocallyConfirmedPaid) {
+          if (
+            Math.abs(found.paidAmount - fin.paidAmount) > 0.001 ||
+            Math.abs(found.balanceAmount - fin.balanceAmount) > 0.001 ||
+            Math.abs(found.grandTotal - fin.grandTotal) > 0.001 ||
+            found.status !== fin.status
+          ) {
+            found.grandTotal = fin.grandTotal;
+            found.paidAmount = fin.paidAmount;
+            found.balanceAmount = fin.balanceAmount;
+            found.status = fin.status;
+            changed = true;
+          }
         }
       } else if (id && invNum) {
         this.state.invoices.push({
           id,
+          branchId,
+          branchName,
           invoiceNumber: invNum,
           customerId: r.customer_id || r.customerId || '',
           customerName: r.customer_name || r.customerName || 'Customer',
@@ -546,7 +594,15 @@ class StoreService {
           grandTotal: fin.grandTotal,
           paidAmount: fin.paidAmount,
           balanceAmount: fin.balanceAmount,
+          notes: r.notes,
+          terms: r.terms,
+          footerText: r.footer_text || r.footerText,
           templateId: r.template_id || r.templateId || 'inv-modern-blue',
+          branding: r.branding,
+          theme: r.theme,
+          customization: r.customization,
+          snapshot: r.snapshot,
+          isSnapshotFinalized: r.is_snapshot_finalized ?? r.isSnapshotFinalized,
           createdAt: r.created_at || r.createdAt || new Date().toISOString(),
           updatedAt: r.updated_at || r.updatedAt || new Date().toISOString(),
         });

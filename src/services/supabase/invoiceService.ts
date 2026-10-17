@@ -72,7 +72,29 @@ export class InvoiceService {
     query = query.order('created_at', { ascending: false });
 
     try {
-      const { data, count, error } = await query;
+      let { data, count, error } = await query;
+
+      // Resilience against unmigrated schema: if branch_id does not exist, retry query without branch_id and filter in-memory
+      if (error && (error.code === 'PGRST204' || error.message?.includes('branch_id'))) {
+        console.warn('[getInvoices] Supabase column branch_id does not exist (PGRST204); querying workspace-wide and filtering client-side');
+        let retryQuery = supabase.from('invoices').select('*, invoice_items(*)', { count: 'exact' });
+        if (isValidUuid(wsId)) {
+          retryQuery = retryQuery.eq('workspace_id', wsId);
+        }
+        if (options?.search) {
+          const s = `%${options.search}%`;
+          retryQuery = retryQuery.or(`invoice_number.ilike.${s},customer_name.ilike.${s}`);
+        }
+        if (options?.status) {
+          retryQuery = retryQuery.eq('status', options.status);
+        }
+        retryQuery = retryQuery.order('created_at', { ascending: false });
+        const retryRes = await retryQuery;
+        data = retryRes.data;
+        count = retryRes.count;
+        error = retryRes.error;
+      }
+
       if (error) {
         const errStr = handleSupabaseError(error, 'getInvoices');
         let fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
@@ -81,7 +103,7 @@ export class InvoiceService {
           const bObj = branches.find((b: any) => b.id === options.branchId);
           const isMain = Boolean(bObj?.isMainBranch);
           fallback = fallback.filter((inv: any) => {
-            const bId = inv.branchId || inv.branch_id;
+            const bId = inv.branchId || inv.branch_id || inv.snapshot?.branch_id;
             if (bId) return bId === options.branchId;
             return isMain;
           });
@@ -89,8 +111,20 @@ export class InvoiceService {
         const mappedFallback = fallback.map((inv: any) => fromDbInvoice(inv));
         return { data: mappedFallback, count: mappedFallback.length, error: errStr };
       }
-      const mapped = (data || []).map((row: any) => fromDbInvoice(row));
-      return { data: mapped, count: count || mapped.length };
+
+      let mapped = (data || []).map((row: any) => fromDbInvoice(row));
+      if (options?.branchId && options.branchId !== 'ALL') {
+        const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+        const bObj = branches.find((b: any) => b.id === options.branchId);
+        const isMain = Boolean(bObj?.isMainBranch);
+        mapped = mapped.filter((inv: any) => {
+          const bId = inv.branchId || inv.branch_id || inv.snapshot?.branch_id;
+          if (bId) return bId === options.branchId;
+          return isMain;
+        });
+      }
+
+      return { data: mapped, count: mapped.length };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getInvoices');
       let fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
@@ -99,7 +133,7 @@ export class InvoiceService {
         const bObj = branches.find((b: any) => b.id === options.branchId);
         const isMain = Boolean(bObj?.isMainBranch);
         fallback = fallback.filter((inv: any) => {
-          const bId = inv.branchId || inv.branch_id;
+          const bId = inv.branchId || inv.branch_id || inv.snapshot?.branch_id;
           if (bId) return bId === options.branchId;
           return isMain;
         });
@@ -193,7 +227,13 @@ export class InvoiceService {
       // Resilience against unmigrated schema: if branch_id does not exist, strip and retry
       if (parentErr && (parentErr.code === 'PGRST204' || parentErr.code === '42703') && invInsertPayload.branch_id !== undefined) {
         console.warn('[createInvoice] invoices.branch_id not found in schema cache (PGRST204); retrying without branch_id');
+        const stashedBranchId = invInsertPayload.branch_id;
         delete invInsertPayload.branch_id;
+        invInsertPayload.snapshot = {
+          ...(typeof invInsertPayload.snapshot === 'object' && invInsertPayload.snapshot ? invInsertPayload.snapshot : {}),
+          branch_id: stashedBranchId,
+          branchId: stashedBranchId,
+        };
         const retryRes = await supabase
           .from('invoices')
           .insert([invInsertPayload])
@@ -875,7 +915,7 @@ export class InvoiceService {
           // Transition invoice status in database
           if (isValidUuid(authoritativeInvoiceId)) {
             try {
-              await supabase
+              const { error: invUpErr } = await supabase
                 .from('invoices')
                 .update({
                   status: effectiveStatus,
@@ -885,6 +925,9 @@ export class InvoiceService {
                 })
                 .eq('id', authoritativeInvoiceId)
                 .eq('workspace_id', wsId);
+              if (invUpErr) {
+                console.error('[finalizeAuthoritativeInvoice] Supabase invoice status update failed:', invUpErr);
+              }
             } catch (invUpErr) {
               console.warn('[finalizeAuthoritativeInvoice] Supabase invoice status update notice:', invUpErr);
             }
