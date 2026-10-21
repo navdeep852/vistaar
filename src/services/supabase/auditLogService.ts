@@ -65,7 +65,9 @@ export type FinancialAuditAction =
   | 'BACKUP_CREATED'
   | 'BACKUP_VERIFIED'
   | 'BACKUP_VERIFICATION_FAILED'
-  | 'BACKUP_RESTORED';
+  | 'BACKUP_FAILED'
+  | 'BACKUP_RESTORED'
+  | 'BACKUP_RESTORE_FAILED';
 
 export interface FinancialAuditEvent {
   id?: string;

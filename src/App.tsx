@@ -50,7 +50,15 @@ import { BranchProvider } from './context/BranchContext';
 function MainAppContent() {
   const [authStatus, setAuthStatus] = useState<AuthResolutionState>(supabaseAuthService.getAuthResolutionState());
   const [resolutionError, setResolutionError] = useState<string | null>(supabaseAuthService.getResolutionError());
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('code') && params.has('state')) {
+        return 'settings';
+      }
+    }
+    return 'dashboard';
+  });
   const [modalToOpen, setModalToOpen] = useState<string | null>(null);
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string | undefined>(undefined);
 

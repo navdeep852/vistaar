@@ -1,7 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import { handleSupabaseError } from '../../lib/supabaseError';
 
-export type StorageBucket = 'avatars' | 'business-assets' | 'product-media' | 'documents';
+export type StorageBucket = 'avatars' | 'business-assets' | 'product-media' | 'documents' | 'workspace-backups';
 
 export class SupabaseStorageService {
   public async getSignedUrl(
@@ -54,6 +54,47 @@ export class SupabaseStorageService {
       return { path: data?.path };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'uploadFile');
+      return { error: errStr };
+    }
+  }
+
+  public async downloadFile(
+    bucket: StorageBucket,
+    path: string
+  ): Promise<{ text?: string; error?: string }> {
+    try {
+      const { data, error } = await supabase.storage.from(bucket).download(path);
+      if (error) {
+        const errStr = handleSupabaseError(error, 'downloadFile');
+        return { error: errStr };
+      }
+      if (!data) {
+        return { error: 'No data returned from storage.' };
+      }
+      const text = await data.text();
+      return { text };
+    } catch (e: any) {
+      const errStr = handleSupabaseError(e, 'downloadFile');
+      return { error: errStr };
+    }
+  }
+
+  public async downloadBlob(
+    bucket: StorageBucket,
+    path: string
+  ): Promise<{ blob?: Blob; error?: string }> {
+    try {
+      const { data, error } = await supabase.storage.from(bucket).download(path);
+      if (error) {
+        const errStr = handleSupabaseError(error, 'downloadBlob');
+        return { error: errStr };
+      }
+      if (!data) {
+        return { error: 'No data returned from storage.' };
+      }
+      return { blob: data };
+    } catch (e: any) {
+      const errStr = handleSupabaseError(e, 'downloadBlob');
       return { error: errStr };
     }
   }

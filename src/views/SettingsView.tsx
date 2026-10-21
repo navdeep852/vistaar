@@ -144,7 +144,15 @@ export const SettingsView: React.FC = () => {
     ...defaultBusinessSettings,
     ...store.getSettings(),
   }));
-  const [activeSubTab, setActiveSubTab] = useState<SettingsSubTabId>('profile');
+  const [activeSubTab, setActiveSubTab] = useState<SettingsSubTabId>(() => {
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search);
+      if ((p.has('code') || p.has('state') || p.get('tab') === 'backup') && auth.getUser()?.role === 'owner') {
+        return 'backup';
+      }
+    }
+    return 'profile';
+  });
 
   // RBAC Permission Check for Settings Subtabs
   const isTabAllowed = (tabId: SettingsSubTabId): boolean => {
@@ -170,7 +178,7 @@ export const SettingsView: React.FC = () => {
       case 'preview':
         return hasCurrentUserPermission('settings.preview.view');
       case 'backup':
-        return true;
+        return currentUser?.role === 'owner';
       default:
         return false;
     }
@@ -384,7 +392,7 @@ export const SettingsView: React.FC = () => {
       setEmpIdMode('auto');
       setCustomEmpId('');
       setEmpIdValidationError(null);
-      auth.generateNextEmployeeId().then(setSuggestedEmpId).catch(() => {});
+      auth.generateNextEmployeeId().then(setSuggestedEmpId).catch(() => { });
       branchService.getBranches({ activeOnly: true }).then((res) => {
         if (res.data && res.data.length > 0) {
           setSettingBranches(res.data);
@@ -748,7 +756,7 @@ export const SettingsView: React.FC = () => {
       if (res.employee) {
         setEmployees((prev) => [...prev.filter((e) => e.id !== res.employee!.id), res.employee!]);
       } else {
-        auth.loadEmployees().then(setEmployees).catch(() => {});
+        auth.loadEmployees().then(setEmployees).catch(() => { });
       }
       setCreatedEmpCreds({
         empId: res.empId,
@@ -890,11 +898,10 @@ export const SettingsView: React.FC = () => {
                 tabIndex={isActive ? 0 : -1}
                 onClick={() => handleSwitchSubTab(tab.id)}
                 onKeyDown={(e) => handleTabKeyDown(e, idx)}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 flex-shrink-0 transition-colors border select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${
-                  isActive
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 flex-shrink-0 transition-colors border select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${isActive
                     ? 'bg-blue-600 text-white border-blue-600 shadow-md'
                     : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
-                }`}
+                  }`}
               >
                 <Icon className="w-4 h-4 shrink-0" />
                 <span>{tab.label}</span>
@@ -1447,11 +1454,10 @@ export const SettingsView: React.FC = () => {
                             key={align}
                             type="button"
                             onClick={() => setFormData({ ...formData, logoAlignment: align as any })}
-                            className={`flex-1 py-2 text-xs font-bold capitalize rounded-xl border transition-colors ${
-                              (formData.logoAlignment || 'left') === align
+                            className={`flex-1 py-2 text-xs font-bold capitalize rounded-xl border transition-colors ${(formData.logoAlignment || 'left') === align
                                 ? 'bg-blue-600 text-white border-blue-600'
                                 : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
-                            }`}
+                              }`}
                           >
                             {align}
                           </button>
@@ -1915,113 +1921,113 @@ export const SettingsView: React.FC = () => {
                 </div>
               </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Currency Symbol</label>
-                <select
-                  value={formData.currency ?? '₹'}
-                  onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
-                >
-                  <option value="₹">₹ INR (Indian Rupee)</option>
-                  <option value="$">$ USD (US Dollar)</option>
-                  <option value="€">€ EUR (Euro)</option>
-                  <option value="£">£ GBP (Pound)</option>
-                  <option value="AED">AED (UAE Dirham)</option>
-                </select>
-              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Currency Symbol</label>
+                  <select
+                    value={formData.currency ?? '₹'}
+                    onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="₹">₹ INR (Indian Rupee)</option>
+                    <option value="$">$ USD (US Dollar)</option>
+                    <option value="€">€ EUR (Euro)</option>
+                    <option value="£">£ GBP (Pound)</option>
+                    <option value="AED">AED (UAE Dirham)</option>
+                  </select>
+                </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Tax Mode</label>
-                <select
-                  value={formData.defaultTaxMode || 'Exclusive'}
-                  onChange={(e) => setFormData({ ...formData, defaultTaxMode: e.target.value as any })}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
-                >
-                  <option value="Exclusive">Tax Exclusive (Subtotal + GST)</option>
-                  <option value="Inclusive">Tax Inclusive (Prices include GST)</option>
-                  <option value="No Tax">No Tax / Tax Exempt</option>
-                </select>
-              </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Tax Mode</label>
+                  <select
+                    value={formData.defaultTaxMode || 'Exclusive'}
+                    onChange={(e) => setFormData({ ...formData, defaultTaxMode: e.target.value as any })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="Exclusive">Tax Exclusive (Subtotal + GST)</option>
+                    <option value="Inclusive">Tax Inclusive (Prices include GST)</option>
+                    <option value="No Tax">No Tax / Tax Exempt</option>
+                  </select>
+                </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Invoice Prefix</label>
-                <input
-                  type="text"
-                  value={formData.invoicePrefix || ''}
-                  onChange={(e) => setFormData({ ...formData, invoicePrefix: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
-                />
-              </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Invoice Prefix</label>
+                  <input
+                    type="text"
+                    value={formData.invoicePrefix || ''}
+                    onChange={(e) => setFormData({ ...formData, invoicePrefix: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
+                  />
+                </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Quotation Prefix</label>
-                <input
-                  type="text"
-                  value={formData.quotationPrefix || ''}
-                  onChange={(e) => setFormData({ ...formData, quotationPrefix: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
-                />
-              </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Quotation Prefix</label>
+                  <input
+                    type="text"
+                    value={formData.quotationPrefix || ''}
+                    onChange={(e) => setFormData({ ...formData, quotationPrefix: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
+                  />
+                </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Payment Terms</label>
-                <select
-                  value={formData.defaultPaymentTerms || 'Net 15'}
-                  onChange={(e) => setFormData({ ...formData, defaultPaymentTerms: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
-                >
-                  <option value="Immediate">Immediate / Due on Receipt</option>
-                  <option value="Net 7">Net 7 Days</option>
-                  <option value="Net 15">Net 15 Days</option>
-                  <option value="Net 30">Net 30 Days</option>
-                  <option value="Net 60">Net 60 Days</option>
-                </select>
-              </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Payment Terms</label>
+                  <select
+                    value={formData.defaultPaymentTerms || 'Net 15'}
+                    onChange={(e) => setFormData({ ...formData, defaultPaymentTerms: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="Immediate">Immediate / Due on Receipt</option>
+                    <option value="Net 7">Net 7 Days</option>
+                    <option value="Net 15">Net 15 Days</option>
+                    <option value="Net 30">Net 30 Days</option>
+                    <option value="Net 60">Net 60 Days</option>
+                  </select>
+                </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Quotation Validity</label>
-                <select
-                  value={formData.defaultQuotationValidity || '15 Days'}
-                  onChange={(e) => setFormData({ ...formData, defaultQuotationValidity: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
-                >
-                  <option value="7 Days">7 Days</option>
-                  <option value="15 Days">15 Days</option>
-                  <option value="30 Days">30 Days</option>
-                  <option value="60 Days">60 Days</option>
-                </select>
-              </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Quotation Validity</label>
+                  <select
+                    value={formData.defaultQuotationValidity || '15 Days'}
+                    onChange={(e) => setFormData({ ...formData, defaultQuotationValidity: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="7 Days">7 Days</option>
+                    <option value="15 Days">15 Days</option>
+                    <option value="30 Days">30 Days</option>
+                    <option value="60 Days">60 Days</option>
+                  </select>
+                </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Document Font</label>
-                <select
-                  value={formData.defaultFont || 'Inter'}
-                  onChange={(e) => setFormData({ ...formData, defaultFont: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
-                >
-                  {DOCUMENT_FONTS.map((font) => (
-                    <option key={font} value={font} style={{ fontFamily: `'${font}', sans-serif` }}>
-                      {font}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Document Font</label>
+                  <select
+                    value={formData.defaultFont || 'Inter'}
+                    onChange={(e) => setFormData({ ...formData, defaultFont: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
+                  >
+                    {DOCUMENT_FONTS.map((font) => (
+                      <option key={font} value={font} style={{ fontFamily: `'${font}', sans-serif` }}>
+                        {font}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Page Orientation</label>
-                <select
-                  value={formData.defaultOrientation || 'portrait'}
-                  onChange={(e) => setFormData({ ...formData, defaultOrientation: e.target.value as any })}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
-                >
-                  <option value="portrait">Portrait (210 × 297 mm)</option>
-                  <option value="landscape">Landscape (297 × 210 mm)</option>
-                </select>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">Default Page Orientation</label>
+                  <select
+                    value={formData.defaultOrientation || 'portrait'}
+                    onChange={(e) => setFormData({ ...formData, defaultOrientation: e.target.value as any })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="portrait">Portrait (210 × 297 mm)</option>
+                    <option value="landscape">Landscape (297 × 210 mm)</option>
+                  </select>
+                </div>
               </div>
             </div>
           </div>
-        </div>
         )}
 
         {/* 5. EMPLOYEES & TEAM MANAGEMENT TAB (OWNER ONLY - SECTION 15) */}
@@ -2091,26 +2097,24 @@ export const SettingsView: React.FC = () => {
                         </td>
                         <td className="p-3.5">
                           <span
-                            className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase ${
-                              emp.role === 'owner'
+                            className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase ${emp.role === 'owner'
                                 ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300 border border-purple-200 dark:border-purple-900/60'
                                 : emp.role === 'admin'
-                                ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300'
-                                : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200'
-                            }`}
+                                  ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300'
+                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200'
+                              }`}
                           >
                             {emp.role}
                           </span>
                         </td>
                         <td className="p-3.5">
                           <span
-                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
-                              emp.status === 'Active'
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${emp.status === 'Active'
                                 ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
                                 : emp.status === 'Suspended'
-                                ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300'
-                                : 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
-                            }`}
+                                  ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300'
+                                  : 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
+                              }`}
                           >
                             {emp.status}
                           </span>
@@ -2121,11 +2125,10 @@ export const SettingsView: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => handleToggleStatus(emp)}
-                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer ${
-                                  emp.status === 'Active'
+                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer ${emp.status === 'Active'
                                     ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 hover:bg-rose-100 border border-rose-200 dark:border-rose-900/60'
                                     : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-900/60'
-                                }`}
+                                  }`}
                               >
                                 {emp.status === 'Active' ? 'Suspend' : 'Reactivate'}
                               </button>
@@ -2289,11 +2292,10 @@ export const SettingsView: React.FC = () => {
                       </div>
 
                       <span
-                        className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase ${
-                          log.status === 'SUCCESS'
+                        className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase ${log.status === 'SUCCESS'
                             ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
                             : 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300'
-                        }`}
+                          }`}
                       >
                         {log.status}
                       </span>
@@ -2592,11 +2594,10 @@ export const SettingsView: React.FC = () => {
                     }}
                     placeholder="e.g. SALES-001, STORE_01"
                     maxLength={30}
-                    className={`w-full px-3 py-2 bg-white dark:bg-slate-950 border font-mono font-bold text-xs rounded-xl uppercase ${
-                      empIdValidationError
+                    className={`w-full px-3 py-2 bg-white dark:bg-slate-950 border font-mono font-bold text-xs rounded-xl uppercase ${empIdValidationError
                         ? 'border-rose-400 focus:ring-rose-500'
                         : 'border-slate-300 dark:border-slate-800 focus:ring-blue-500'
-                    }`}
+                      }`}
                   />
                   {empIdValidationError ? (
                     <p className="text-[11px] text-rose-600 dark:text-rose-400 font-medium">

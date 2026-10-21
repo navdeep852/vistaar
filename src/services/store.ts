@@ -948,8 +948,18 @@ class StoreService {
     return Array.isArray(this.state.categories) ? this.state.categories : [];
   }
 
+  public setCategories(categories: Category[]) {
+    this.state.categories = Array.isArray(categories) ? categories : [];
+    this.saveToStorage();
+  }
+
   public getSuppliers(): Supplier[] {
     return Array.isArray(this.state.suppliers) ? this.state.suppliers : [];
+  }
+
+  public setSuppliers(suppliers: Supplier[]) {
+    this.state.suppliers = Array.isArray(suppliers) ? suppliers : [];
+    this.saveToStorage();
   }
 
 

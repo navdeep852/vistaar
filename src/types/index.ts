@@ -753,12 +753,18 @@ export type BackupType =
   | 'safety';
 
 export type BackupStatus =
-  | 'IN_PROGRESS'
-  | 'COMPLETED'
-  | 'FAILED'
+  | 'pending'
+  | 'uploading'
   | 'completed'
   | 'failed'
-  | 'in_progress';
+  | 'verified'
+  | 'in_progress'
+  | 'PENDING'
+  | 'UPLOADING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'VERIFIED'
+  | 'IN_PROGRESS';
 
 export interface BackupRecord {
   id: string;
@@ -770,6 +776,8 @@ export interface BackupRecord {
   sizeBytes: number;
   fileSizeBytes?: number;
   storageLocation?: string;
+  storageBucket?: string;
+  storagePath?: string;
   checksumSha256: string;
   schemaVersion: string;
   recordCounts: Record<string, number>;
@@ -778,6 +786,7 @@ export interface BackupRecord {
   createdBy?: string;
   createdAt: string;
   verifiedAt?: string;
+  restoredAt?: string;
   expiresAt?: string;
 }
 
@@ -818,6 +827,69 @@ export interface BackupDataPayload {
   cashbookEntries?: any[];
   branches?: any[];
   settings?: any;
+}
+
+export interface FileInventoryItem {
+  filename: string;
+  category: 'logo' | 'signature' | 'stamp' | 'qr_code' | 'catalog' | 'document' | 'other';
+  sizeBytes: number;
+  mimeType: string;
+  checksumSha256: string;
+  storagePath?: string;
+}
+
+export interface ReconciliationAnomaly {
+  entityType: string;
+  entityId: string;
+  issue: 'CONFLICT_PRESERVED_LOCAL' | 'FOREIGN_TENANT_REJECTED' | 'UNASSOCIATED_LOCAL_RECORD';
+  dbTimestamp?: string;
+  localTimestamp?: string;
+  details: Record<string, any>;
+}
+
+export interface BackupManifest {
+  formatVersion: '3.0.0';
+  backupId: string;
+  backupName: string;
+  timestamp: string;
+  workspaceId: string;
+  workspaceName: string;
+  branchScope: string;
+  schemaVersion: string;
+  appVersion: string;
+  backupType: BackupType;
+  storageDestination: 'local_download' | 'onedrive' | 'supabase_storage';
+  checksumSha256: string; // SHA-256 of data.json
+  archiveChecksumSha256?: string; // SHA-256 of entire zip archive
+  recordCounts: Record<string, number>;
+  fileInventory: FileInventoryItem[];
+  reconciliationAnomalies: ReconciliationAnomaly[];
+  generatedBy?: {
+    userId?: string;
+    userName?: string;
+    userEmail?: string;
+    role?: string;
+  };
+}
+
+export interface OneDriveConnection {
+  isConnected: boolean;
+  userEmail?: string;
+  displayName?: string;
+  connectedAt?: string;
+  lastBackupAt?: string;
+  lastError?: string;
+  folderPath?: string;
+}
+
+export interface OneDriveBackupItem {
+  id: string;
+  name: string;
+  sizeBytes: number;
+  createdDateTime: string;
+  lastModifiedDateTime: string;
+  webUrl?: string;
+  downloadUrl?: string;
 }
 
 
