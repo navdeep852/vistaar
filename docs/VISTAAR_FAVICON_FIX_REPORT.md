@@ -185,6 +185,22 @@ Tested every declared asset endpoint over HTTP:
 - **Linter (`oxlint`):** 0 errors across 408 files.
 - **Application features:** Unchanged; Supabase client, authentication, routing, theme initialization, and business logic intact.
 
+### 4.3 Live Production Verification (Tested on https://www.vistaarone.com/)
+
+Following deployment of commit `e251450` via Vercel, live HTTP curl requests were executed against `https://www.vistaarone.com/`:
+
+| Endpoint | Production HTTP Status | Content-Type | Size / Response | Production Status |
+| :--- | :---: | :--- | :---: | :---: |
+| `https://www.vistaarone.com/` | **200 OK** | `text/html; charset=utf-8` | 9,086 B | **Verified: All 6 favicon links live in `<head>`** |
+| `https://www.vistaarone.com/favicon.ico` | **200 OK** | `image/vnd.microsoft.icon` | 91,307 B | **Verified: Fixed (Was previously 404)** |
+| `https://www.vistaarone.com/favicon.svg` | **200 OK** | `image/svg+xml` | 97,321 B | **Verified: Authentic VISTAAR SVG live** |
+| `https://www.vistaarone.com/favicon-48x48.png` | **200 OK** | `image/png` | 5,376 B | **Verified: Google Search 48px square live** |
+| `https://www.vistaarone.com/favicon-96x96.png` | **200 OK** | `image/png` | 15,430 B | **Verified: 96px high-DPI square live** |
+| `https://www.vistaarone.com/favicon-192x192.png` | **200 OK** | `image/png` | 50,574 B | **Verified: 192px PWA square live** |
+| `https://www.vistaarone.com/apple-touch-icon.png` | **200 OK** | `image/png` | 36,876 B | **Verified: 180px iOS icon live** |
+| `https://www.vistaarone.com/robots.txt` | **200 OK** | `text/plain; charset=utf-8` | 1,336 B | **Verified: `Allow: /favicon.ico` live** |
+| `https://www.vistaarone.com/site.webmanifest` | **200 OK** | `application/manifest+json` | 493 B | **Verified: Square icons manifest live** |
+
 ---
 
 ## 5. Post-Deployment Action Plan for Google Search Console (GSC)
