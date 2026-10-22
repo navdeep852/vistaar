@@ -1,0 +1,68 @@
+# Robots.txt for VISTAAR — The Business OS for Growing Businesses
+# Official Website: https://www.vistaarone.com/
+# Production Canonical Hostname: https://www.vistaarone.com
+
+User-agent: *
+Allow: /
+Allow: /features/
+Allow: /features/*
+Allow: /pricing
+Allow: /compare/
+Allow: /compare/*
+Allow: /about
+Allow: /contact
+Allow: /security
+Allow: /privacy-policy
+Allow: /terms
+Allow: /llms.txt
+Allow: /llms-full.txt
+Allow: /sitemap.xml
+
+# Disallow private application views, customer records, and authentication flows
+Disallow: /api/
+Disallow: /dashboard
+Disallow: /*?code=*
+Disallow: /*?state=*
+Disallow: /*?token=*
+Disallow: /*?access_token=*
+Disallow: /*?refresh_token=*
+
+# AI & Search Engine Crawlers
+User-agent: Googlebot
+Allow: /
+
+User-agent: Googlebot-Image
+Allow: /assets/
+Allow: /*.png$
+Allow: /*.jpg$
+Allow: /*.svg$
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: Applebot
+Allow: /
+
+User-agent: DuckDuckBot
+Allow: /
+
+User-agent: GPTBot
+Allow: /
+Allow: /llms.txt
+Allow: /llms-full.txt
+Disallow: /api/
+
+User-agent: ClaudeBot
+Allow: /
+Allow: /llms.txt
+Allow: /llms-full.txt
+Disallow: /api/
+
+User-agent: PerplexityBot
+Allow: /
+Allow: /llms.txt
+Allow: /llms-full.txt
+Disallow: /api/
+
+# Canonical Sitemap Declaration
+Sitemap: https://www.vistaarone.com/sitemap.xml

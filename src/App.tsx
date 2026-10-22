@@ -43,6 +43,18 @@ const ReportsView = lazyWithRetry(() => import('./views/ReportsView').then((m) =
 const SettingsView = lazyWithRetry(() => import('./views/SettingsView').then((m) => ({ default: m.SettingsView })), 'Settings');
 const SalaryPayrollView = lazyWithRetry(() => import('./views/SalaryPayrollView').then((m) => ({ default: m.SalaryPayrollView })), 'Payroll');
 
+// Public Marketing & Solutions Views
+const PublicHomeView = lazyWithRetry(() => import('./views/public/PublicHomeView').then((m) => ({ default: m.PublicHomeView })), 'Public Home');
+const FeatureDetailView = lazyWithRetry(() => import('./views/public/FeatureDetailView').then((m) => ({ default: m.FeatureDetailView })), 'Feature Details');
+const PublicPricingView = lazyWithRetry(() => import('./views/public/PublicPricingView').then((m) => ({ default: m.PublicPricingView })), 'Public Pricing');
+const PublicComparisonView = lazyWithRetry(() => import('./views/public/PublicComparisonView').then((m) => ({ default: m.PublicComparisonView })), 'Public Comparison');
+const PublicSecurityView = lazyWithRetry(() => import('./views/public/PublicSecurityView').then((m) => ({ default: m.PublicSecurityView })), 'Public Security');
+const PublicAboutView = lazyWithRetry(() => import('./views/public/PublicAboutView').then((m) => ({ default: m.PublicAboutView })), 'Public About');
+const PublicContactView = lazyWithRetry(() => import('./views/public/PublicContactView').then((m) => ({ default: m.PublicContactView })), 'Public Contact');
+const PublicLegalView = lazyWithRetry(() => import('./views/public/PublicLegalView').then((m) => ({ default: m.PublicLegalView })), 'Public Legal');
+
+import { usePublicPath } from './lib/publicRouter';
+
 import { ThemeProvider } from './context/ThemeContext';
 import { WorkspaceProvider, useWorkspace } from './context/WorkspaceContext';
 import { BranchProvider } from './context/BranchContext';
@@ -51,6 +63,7 @@ import { ScreenLockOverlay } from './components/ScreenLockOverlay';
 
 function MainAppContent() {
   const { isLocked } = useScreenLock();
+  const currentPublicPath = usePublicPath();
   const [authStatus, setAuthStatus] = useState<AuthResolutionState>(supabaseAuthService.getAuthResolutionState());
   const [resolutionError, setResolutionError] = useState<string | null>(supabaseAuthService.getResolutionError());
   const [activeTab, setActiveTab] = useState(() => {
@@ -234,8 +247,80 @@ function MainAppContent() {
   }
 
   if (authStatus === 'unauthenticated' || supabaseAuthService.isRecoverySession()) {
-    return <LoginView onSuccess={() => supabaseAuthService.initializeAuth()} />;
+    const isNativePlatform = typeof window !== 'undefined' && (window as any)?.Capacitor?.isNativePlatform();
+
+    if (currentPublicPath === '/login' || currentPublicPath === '/signup') {
+      return <LoginView onSuccess={() => supabaseAuthService.initializeAuth()} />;
+    }
+
+    if (currentPublicPath === '/pricing') {
+      return <PublicPricingView />;
+    }
+
+    if (currentPublicPath === '/compare/billing-vs-inventory-software' || currentPublicPath.startsWith('/compare')) {
+      return <PublicComparisonView />;
+    }
+
+    if (currentPublicPath.startsWith('/features')) {
+      const slug = currentPublicPath.replace(/^\/features\/?/, '').replace(/\/$/, '') || 'billing-invoicing';
+      return <FeatureDetailView slug={slug} />;
+    }
+
+    if (currentPublicPath === '/security') {
+      return <PublicSecurityView />;
+    }
+
+    if (currentPublicPath === '/about') {
+      return <PublicAboutView />;
+    }
+
+    if (currentPublicPath === '/contact') {
+      return <PublicContactView />;
+    }
+
+    if (currentPublicPath === '/privacy-policy') {
+      return <PublicLegalView type="privacy" />;
+    }
+
+    if (currentPublicPath === '/terms') {
+      return <PublicLegalView type="terms" />;
+    }
+
+    // Default route: Native mobile app opens to Login; web browser opens to PublicHomeView
+    if (isNativePlatform) {
+      return <LoginView onSuccess={() => supabaseAuthService.initializeAuth()} />;
+    }
+
+    return <PublicHomeView />;
   }
+
+  // Marketing view passthrough for authenticated users explicitly viewing public landing pages
+  if (currentPublicPath === '/pricing') {
+    return <PublicPricingView />;
+  }
+  if (currentPublicPath.startsWith('/features')) {
+    const slug = currentPublicPath.replace(/^\/features\/?/, '').replace(/\/$/, '') || 'billing-invoicing';
+    return <FeatureDetailView slug={slug} />;
+  }
+  if (currentPublicPath.startsWith('/compare')) {
+    return <PublicComparisonView />;
+  }
+  if (currentPublicPath === '/security') {
+    return <PublicSecurityView />;
+  }
+  if (currentPublicPath === '/about') {
+    return <PublicAboutView />;
+  }
+  if (currentPublicPath === '/contact') {
+    return <PublicContactView />;
+  }
+  if (currentPublicPath === '/privacy-policy') {
+    return <PublicLegalView type="privacy" />;
+  }
+  if (currentPublicPath === '/terms') {
+    return <PublicLegalView type="terms" />;
+  }
+
 
   const handleSafeSetActiveTab = (tab: string) => {
     setModalToOpen(null);

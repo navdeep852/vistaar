@@ -91,7 +91,15 @@ interface LoginViewProps {
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
-  const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'forgot' | 'reset'>('signin');
+  const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'forgot' | 'reset'>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('mode') === 'signup' || window.location.pathname === '/signup') {
+        return 'signup';
+      }
+    }
+    return 'signin';
+  });
 
   // Sign In State - No plaintext demo passwords in production (Section 28)
   const [identifier, setIdentifier] = useState('');
@@ -411,10 +419,28 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8 text-slate-900 dark:text-white relative overflow-hidden transition-colors duration-200">
-      {/* Top right theme toggle */}
+      {/* Top navigation controls */}
+      <div className="absolute top-4 left-4 z-20">
+        <a
+          href="/"
+          onClick={(e) => {
+            e.preventDefault();
+            if (typeof window !== 'undefined') {
+              window.history.pushState({}, '', '/');
+              window.dispatchEvent(new CustomEvent('vistaar:route_change', { detail: { path: '/' } }));
+            }
+          }}
+          className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 py-1.5 px-3 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 shadow-sm backdrop-blur transition-colors cursor-pointer"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span>Back to Home</span>
+        </a>
+      </div>
+
       <div className="absolute top-4 right-4 z-20">
         <ThemeToggle variant="segmented" />
       </div>
+
 
       {/* Decorative Blur Orbs */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-blue-500/10 dark:bg-blue-600/20 rounded-full blur-3xl pointer-events-none" />

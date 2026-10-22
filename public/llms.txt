@@ -1,0 +1,34 @@
+# VISTAAR — The Business OS for Growing Businesses
+
+> VISTAAR is an integrated business management platform designed specifically for Indian small, medium, and growing enterprises (MSMEs), retailers, wholesalers, and distributors across Tier 1, Tier 2, and Tier 3 cities.
+> Tagline: "Run Better. Grow Wider."
+> Positioning: "The Business OS for Growing Businesses."
+> Canonical Domain: https://www.vistaarone.com/
+
+## Overview
+VISTAAR replaces disconnected software tools, paper ledgers, and fragmented spreadsheets with a unified system connecting billing, inventory, counter sales (POS), purchase orders, supplier management, customer udhaari (credit tracking), daybook/cashbook, and business analytics.
+
+## Core Capabilities
+- **GST & Non-GST Billing**: Create professional tax invoices, quotations, and proforma bills with automatic HSN/SAC lookups, customizable thermal and A4 print templates, and instant WhatsApp/PDF sharing.
+- **Real-Time Inventory Management**: Multi-branch stock tracking, batch numbers, barcode scanning, minimum stock alerts, stock receipts, and automatic deduction upon sales.
+- **Counter Sales (POS)**: Rapid checkout interface built for high-speed retail counters with keyboard shortcuts, split payments (Cash, UPI, Credit/Udhari), and barcode lookups.
+- **Customer Udhari & Credit Ledger**: Track customer credit balances, outstanding payment aging, partial settlements, transaction history, and automated payment follow-up reminders.
+- **Supplier & Purchase Order Management**: Maintain supplier rate catalogues, purchase orders (POs), goods receipts, and vendor payment tracking.
+- **Daybook & Cashbook**: Daily cash flow monitoring, income/expense categorization, petty cash management, and real-time business health metrics.
+- **Multi-Branch Operations & RBAC**: Enterprise-grade role-based access control (Admin, Manager, Billing Cashier) with strict tenant isolation.
+- **High-Security Architecture**: Built with Supabase Row-Level Security (RLS), SHA-256 backup verification, automatic screen lock security, and local offline resilience.
+
+## Indicative Commercial Plans (Annual)
+- **Free Plan**: ₹0/year — Ideal for single-user micro-businesses and evaluation.
+- **App Plan**: ₹1,999/year — Mobile-first business workflows and counter operations.
+- **Desktop Plan**: ₹2,999/year — Dedicated single-terminal desktop billing and stock management.
+- **Business Plan**: ₹5,999/year — Multi-branch, multi-user operations with advanced reporting.
+- **Pro Plan**: ₹9,999/year — Full enterprise capability, custom invoice templates, and dedicated support.
+
+## Key Links
+- Official Website: https://www.vistaarone.com/
+- Features: https://www.vistaarone.com/features/billing-invoicing
+- Pricing: https://www.vistaarone.com/pricing
+- Comparison Guide: https://www.vistaarone.com/compare/billing-vs-inventory-software
+- Security Whitepaper: https://www.vistaarone.com/security
+- Contact: https://www.vistaarone.com/contact

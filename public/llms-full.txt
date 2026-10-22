@@ -1,0 +1,42 @@
+# VISTAAR Product & Knowledge Documentation (Full Reference)
+
+## 1. Entity Definition
+- **Entity**: VISTAAR (Software Application / Business Operating System)
+- **Tagline**: Run Better. Grow Wider.
+- **Positioning**: The Business OS for Growing Businesses.
+- **Target Market**: Indian retailers, wholesalers, distributors, service providers, and MSMEs (Micro, Small, and Medium Enterprises) operating in Tier 1, Tier 2, and Tier 3 cities.
+- **Official Canonical Origin**: https://www.vistaarone.com/
+
+## 2. Core Workflows & How They Connect
+Unlike standalone billing apps or isolated inventory spreadsheets, VISTAAR operates as an integrated system:
+1. **Sales & Billing -> Inventory**: When a counter sale or invoice is generated, item quantities are immediately decremented from the authoritative stock ledger of the active branch.
+2. **Billing -> Udhari (Credit Ledger)**: When a sale is made with unpaid or partially paid balance, the remaining amount is automatically posted to the customer's personal credit ledger with due dates.
+3. **Purchases -> Stock**: When goods arrive via a Purchase Order or Stock Receipt, inventory quantities and average cost prices update immediately across branch stock records.
+4. **Operations -> Daybook & Cashbook**: Every cash, UPI, or bank transaction updates the daily daybook and cashbook in real time, preventing cash discrepancies at the close of day.
+
+## 3. Product Modules
+- **Billing & Tax Invoices**: GST compliance (CGST, SGST, IGST), tax calculation, HSN/SAC codes, reverse charge, discount structures, custom header logos, signature stamps, thermal print (2-inch, 3-inch, 4-inch), and A4 formats.
+- **Inventory & Stock Management**: Real-time quantity tracking, low stock alerts, reorder points, unit conversions (PCS, BOX, KG, LTR, MTR), batch tracking, barcode generation and scanning.
+- **Counter Sales (POS)**: Fast keyboard-driven checkout, quick add customer, barcode scanning, instant print, split payments.
+- **Customer Udhari Management**: Customer ledger statements, balance aging analysis, payment collection reminders, partial payment recording.
+- **Supplier & Procurement**: Supplier catalogues, purchase orders, purchase returns, vendor payment ledgers.
+- **Expenses & Financial Reports**: Categorized expense tracking, daily daybook, cashbook balance reconciliation, profit & loss overview, top-selling items analysis.
+- **Multi-Branch & Role-Based Access Control (RBAC)**: Support for multiple branches under one business account with strict tenant isolation and role permissions (Owner, Manager, Billing Cashier).
+
+## 4. Security Architecture
+- Built on Supabase with strict tenant isolation enforced by PostgreSQL Row-Level Security (RLS).
+- Automatic local screen lock security to protect counter terminals when unattended.
+- Client-side SHA-256 backup verification to prevent database corruption.
+- AES-256 encrypted credential handling and zero third-party advertising trackers.
+
+## 5. Pricing Structure (Annual Plans)
+- **Free**: ₹0 / year — Full basic functionality for evaluation and single micro-businesses.
+- **App**: ₹1,999 / year — Mobile-first workflows on Android and iOS.
+- **Desktop**: ₹2,999 / year — High-speed desktop terminal billing and offline sync.
+- **Business**: ₹5,999 / year — Multi-branch, multi-user operations, complete reporting.
+- **Pro**: ₹9,999 / year — Enterprise grade, customized document templates, priority support.
+
+## 6. Contact and Corporate Details
+- Website: https://www.vistaarone.com/
+- Support: support@vistaarone.com
+- Sales: sales@vistaarone.com

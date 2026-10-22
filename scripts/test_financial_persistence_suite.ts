@@ -10,7 +10,6 @@ import { supabaseAuthService } from '../src/services/supabaseAuth';
 import { supabase, isSupabaseConfigured } from '../src/lib/supabase';
 import { resolveDateRange } from '../src/lib/dateRange';
 import { safeGetTenantStorage } from '../src/services/supabase/safeStorage';
-import { storageService } from '../src/services/supabase/storageService';
 
 import { registerCurrentUserResolver } from '../src/lib/permissions';
 
@@ -226,17 +225,6 @@ async function runTestSuite() {
   // TEST G: Backup & Restore Engine Verification
   // -------------------------------------------------------------
   console.log('\n--- TEST G: Testing Backup Creation, Checksum & Restore ---');
-  let testStoredBlob: string | null = null;
-  const origUpload = storageService.uploadFile;
-  const origDownload = storageService.downloadFile;
-  (storageService as any).uploadFile = async ({ fileBody }: any) => {
-    testStoredBlob = fileBody;
-    return { path: `${wsId}/backups/test-persistence.json` };
-  };
-  (storageService as any).downloadFile = async () => {
-    return { text: testStoredBlob || '' };
-  };
-
   const backupRes = await backupService.createBackup({ type: 'manual' });
   assert(backupRes.success === true, 'Test G - Backup Creation Succeeded', `Backup ID: ${backupRes.backup?.id.substring(0, 8)}`);
   assert(!!backupRes.backup?.checksumSha256, 'Test G - SHA-256 Checksum Present', `Checksum: ${backupRes.backup?.checksumSha256.substring(0, 16)}...`);
@@ -258,10 +246,6 @@ async function runTestSuite() {
   const goodRestore = await backupService.restoreBackup(backupRes.backup!.id, 'RESTORE');
   assert(goodRestore.success === true, 'Test G - Guarded Restore Success', `Restored ${goodRestore.restoredCounts?.invoices} invoices`);
   assert(!!goodRestore.safetyBackupId, 'Test G - Safety Snapshot Created First', `Safety backup created before restore (${goodRestore.safetyBackupId?.substring(0, 8)})`);
-
-  // Restore storage functions
-  storageService.uploadFile = origUpload;
-  storageService.downloadFile = origDownload;
 
   // -------------------------------------------------------------
   // TEST H: Historical Data Reconciliation

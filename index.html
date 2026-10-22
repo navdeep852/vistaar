@@ -3,12 +3,55 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/Vistaar_Icon_logo.png" />
+    <link rel="canonical" href="https://www.vistaarone.com/" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#2563eb" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <meta name="description" content="VISTAAR — Run Better. Grow Wider. The Business OS for Growing Businesses" />
-    <meta property="og:title" content="VISTAAR — Run Better. Grow Wider." />
-    <meta property="og:description" content="The Business OS for Growing Businesses" />
-    <meta property="og:image" content="/Vistaar_Logo_With_Name.png" />
-    <title>VISTAAR — Run Better. Grow Wider.</title>
+    <title>VISTAAR — Run Better. Grow Wider. | The Business OS for Growing Businesses</title>
+    <meta name="description" content="Manage GST billing, inventory, POS counter sales, customer udhari, and cashbook in one unified Business OS designed for Indian small and growing businesses." />
+    
+    <!-- Open Graph Metadata -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://www.vistaarone.com/" />
+    <meta property="og:site_name" content="VISTAAR" />
+    <meta property="og:title" content="VISTAAR — Run Better. Grow Wider. | The Business OS" />
+    <meta property="og:description" content="Manage billing, inventory, counter sales, suppliers, expenses, and customer udhari in one connected business management platform." />
+    <meta property="og:image" content="https://www.vistaarone.com/Vistaar_Logo_With_Name.png" />
+    
+    <!-- Twitter Card Metadata -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="VISTAAR — The Business OS for Growing Businesses" />
+    <meta name="twitter:description" content="All-in-one business management platform for Indian retail, wholesale, and trade: billing, stock, udhari, POS, and cashbook." />
+    <meta name="twitter:image" content="https://www.vistaarone.com/Vistaar_Logo_With_Name.png" />
+
+    <!-- Schema.org Organization & WebSite Structured Data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://www.vistaarone.com/#organization",
+          "name": "VISTAAR",
+          "url": "https://www.vistaarone.com/",
+          "logo": "https://www.vistaarone.com/Vistaar_Icon_logo.png",
+          "image": "https://www.vistaarone.com/Vistaar_Logo_With_Name.png",
+          "description": "VISTAAR is the Business OS for Growing Businesses in India, unifying GST billing, inventory tracking, counter sales, supplier management, customer udhaari, and cashbook accounting."
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://www.vistaarone.com/#website",
+          "url": "https://www.vistaarone.com/",
+          "name": "VISTAAR",
+          "publisher": {
+            "@id": "https://www.vistaarone.com/#organization"
+          },
+          "description": "Run Better. Grow Wider. The Business OS for Growing Businesses in India."
+        }
+      ]
+    }
+    </script>
+
     <script>
       (function () {
         try {
@@ -52,7 +95,22 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <header style="padding: 1.5rem; text-align: center; border-bottom: 1px solid #e2e8f0; font-family: system-ui, -apple-system, sans-serif;">
+        <img src="/Vistaar_Logo_With_Name.png" alt="VISTAAR — The Business OS" width="180" height="42" style="max-width: 100%; height: auto;" />
+        <h1 style="font-size: 1.5rem; color: #0f172a; margin-top: 1rem; font-weight: 700;">Run Your Business Smarter with VISTAAR — The Business OS for Growing Businesses</h1>
+        <p style="font-size: 1rem; color: #475569; max-width: 640px; margin: 0.5rem auto 1rem;">The all-in-one platform for Indian retail, wholesale, and trade: GST billing, real-time inventory, counter sales POS, customer udhari management, and cashbook accounting.</p>
+        <nav style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+          <a href="/features/billing-invoicing" style="color: #2563eb; font-weight: 600; text-decoration: none;">GST Billing</a>
+          <a href="/features/inventory-management" style="color: #2563eb; font-weight: 600; text-decoration: none;">Inventory Management</a>
+          <a href="/features/point-of-sale" style="color: #2563eb; font-weight: 600; text-decoration: none;">Point of Sale</a>
+          <a href="/features/udhari-management" style="color: #2563eb; font-weight: 600; text-decoration: none;">Udhari Khata</a>
+          <a href="/pricing" style="color: #2563eb; font-weight: 600; text-decoration: none;">Pricing &amp; Plans</a>
+          <a href="/login" style="background: #2563eb; color: #fff; padding: 0.5rem 1rem; border-radius: 0.5rem; text-decoration: none; font-weight: 600;">Sign In</a>
+        </nav>
+      </header>
+    </div>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
