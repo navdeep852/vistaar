@@ -32,10 +32,15 @@ User-agent: Googlebot
 Allow: /
 
 User-agent: Googlebot-Image
-Allow: /assets/
+Allow: /
+Allow: /favicon.ico
+Allow: /favicon*
+Allow: /*.ico$
 Allow: /*.png$
 Allow: /*.jpg$
+Allow: /*.jpeg$
 Allow: /*.svg$
+Allow: /*.webp$
 
 User-agent: Bingbot
 Allow: /
