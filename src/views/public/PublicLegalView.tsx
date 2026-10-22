@@ -4,22 +4,41 @@ import { PublicHeader } from '../../components/public/PublicHeader';
 import { PublicFooter } from '../../components/public/PublicFooter';
 
 export interface PublicLegalViewProps {
-  type: 'privacy' | 'terms';
+  type: 'privacy' | 'terms' | 'refund';
 }
 
 export const PublicLegalView: React.FC<PublicLegalViewProps> = ({ type }) => {
   const isPrivacy = type === 'privacy';
+  const isRefund = type === 'refund';
+
+  const getDocTitle = () => {
+    if (isPrivacy) return 'Privacy Policy | VISTAAR';
+    if (isRefund) return 'Refund & Cancellation Policy | VISTAAR';
+    return 'Terms of Service | VISTAAR';
+  };
+
+  const getDocDesc = () => {
+    if (isPrivacy) {
+      return 'Read the VISTAAR Privacy Policy. We guarantee complete tenant data privacy, strict database isolation, and zero third-party data selling.';
+    }
+    if (isRefund) {
+      return 'Read the VISTAAR Refund and Cancellation Policy. Understand 14-day free trial terms, annual plan renewals, and payment disputes.';
+    }
+    return 'Read the VISTAAR Terms of Service governing your use of our business operating system, subscriptions, and services.';
+  };
+
+  const getCanonicalPath = () => {
+    if (isPrivacy) return '/privacy-policy';
+    if (isRefund) return '/refund-policy';
+    return '/terms';
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors selection:bg-blue-600 selection:text-white">
       <SEOHead
-        title={isPrivacy ? 'Privacy Policy | VISTAAR' : 'Terms of Service | VISTAAR'}
-        description={
-          isPrivacy
-            ? 'Read the VISTAAR Privacy Policy. We guarantee complete tenant data privacy, strict database isolation, and zero third-party data selling.'
-            : 'Read the VISTAAR Terms of Service governing your use of our business operating system, subscriptions, and services.'
-        }
-        canonicalPath={isPrivacy ? '/privacy-policy' : '/terms'}
+        title={getDocTitle()}
+        description={getDocDesc()}
+        canonicalPath={getCanonicalPath()}
       />
 
       <PublicHeader />
@@ -31,10 +50,11 @@ export const PublicLegalView: React.FC<PublicLegalViewProps> = ({ type }) => {
               LEGAL DOCUMENTATION
             </span>
             <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">
-              {isPrivacy ? 'Privacy Policy' : 'Terms of Service'}
+              {isPrivacy ? 'Privacy Policy' : isRefund ? 'Refund & Cancellation Policy' : 'Terms of Service'}
             </h1>
             <p className="text-xs text-slate-500">Last updated: October 2026 &bull; Effective for all Indian accounts</p>
           </header>
+
 
           <article className="prose dark:prose-invert max-w-none text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed space-y-6">
             {isPrivacy ? (
@@ -67,6 +87,36 @@ export const PublicLegalView: React.FC<PublicLegalViewProps> = ({ type }) => {
                   </p>
                 </section>
               </>
+            ) : isRefund ? (
+              <>
+                <section className="space-y-2">
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white">1. 14-Day Full Free Trial</h2>
+                  <p>
+                    Every new VISTAAR business account begins with a complimentary 14-day free trial on all supported devices (Web, Windows Desktop, and Android). We encourage all customers to evaluate our invoicing, inventory management, and printing capabilities during this trial period before committing to a paid plan. No payment information is collected during the trial.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white">2. Subscription Payments &amp; Invoicing</h2>
+                  <p>
+                    Subscriptions are billed in advance on an annual or monthly basis in Indian Rupees (INR). Upon successful payment, a valid GST Tax Invoice with our company GSTIN is issued to your registered email address, allowing registered Indian enterprises to claim applicable Input Tax Credit (ITC).
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white">3. Cancellation &amp; Non-Renewal Policy</h2>
+                  <p>
+                    You may cancel your subscription renewal or add-on at any time through your Account Settings. Upon cancellation, your access remains fully operational until the end of your prepaid billing period. We do not automatically charge renewal fees without prior email and dashboard notice.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white">4. Refund Requests &amp; Billing Disputes</h2>
+                  <p>
+                    Because we provide a 14-day full free trial prior to any commercial charge, annual and monthly subscription fees are generally non-refundable once activated. However, if you experience technical failure or duplicate payment deductions caused by gateway processing errors, our billing team will issue a 100% refund upon verification within 7 business days. To request a payment review, contact support@vistaarone.com with your transaction reference.
+                  </p>
+                </section>
+              </>
             ) : (
               <>
                 <section className="space-y-2">
@@ -77,9 +127,9 @@ export const PublicLegalView: React.FC<PublicLegalViewProps> = ({ type }) => {
                 </section>
 
                 <section className="space-y-2">
-                  <h2 className="text-base font-bold text-slate-900 dark:text-white">2. Free Plan &amp; Paid Subscriptions</h2>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white">2. Free Trial &amp; Canonical Paid Subscriptions</h2>
                   <p>
-                    VISTAAR provides a ₹0 Free plan for single-user micro businesses. Paid annual subscriptions (App, Desktop, Business, and Pro) provide enhanced multi-branch, terminal, and user capacity. Subscription fees are billed annually in Indian Rupees (INR) and include applicable statutory taxes with valid tax invoices.
+                    VISTAAR provides a 14-Day Free Trial alongside canonical subscription tiers (Starter, Starter + Mobile Add-on, Business, and Growth). Each tier defines authoritative device access permissions (Web, Windows Desktop, Android) and capacity limits. Subscription fees are billed in Indian Rupees (INR) and include applicable statutory taxes with valid tax invoices.
                   </p>
                 </section>
 

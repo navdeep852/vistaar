@@ -33,6 +33,14 @@ src-tauri/target/
 target/
 *.exe
 
+# Android & Native Binaries
+*.apk
+*.aab
+android/.gradle/
+android/app/build/
+android/build/
+
+
 # iOS & Apple Signing Credentials
 *.p12
 *.cer

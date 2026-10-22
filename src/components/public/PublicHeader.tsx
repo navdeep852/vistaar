@@ -9,8 +9,6 @@ import {
   BookOpen, 
   Truck, 
   Wallet,
-  ShieldCheck,
-  Sparkles,
   ArrowRight
 } from 'lucide-react';
 import { navigateTo } from '../../lib/publicRouter';
@@ -158,6 +156,22 @@ export const PublicHeader: React.FC = () => {
           </a>
 
           <a 
+            href="/download" 
+            onClick={(e) => handleNav('/download', e)}
+            className="text-xs font-semibold text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+          >
+            Download
+          </a>
+
+          <a 
+            href="/blog" 
+            onClick={(e) => handleNav('/blog', e)}
+            className="text-xs font-semibold text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+          >
+            Blog
+          </a>
+
+          <a 
             href="/compare/billing-vs-inventory-software" 
             onClick={(e) => handleNav('/compare/billing-vs-inventory-software', e)}
             className="text-xs font-semibold text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
@@ -269,6 +283,21 @@ export const PublicHeader: React.FC = () => {
             >
               Pricing &amp; Plans
             </a>
+            <a
+              href="/download"
+              onClick={(e) => handleNav('/download', e)}
+              className="block p-2 text-xs font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg"
+            >
+              Download Center
+            </a>
+            <a
+              href="/blog"
+              onClick={(e) => handleNav('/blog', e)}
+              className="block p-2 text-xs font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg"
+            >
+              Blog &amp; Knowledge Base
+            </a>
+
             <a
               href="/compare/billing-vs-inventory-software"
               onClick={(e) => handleNav('/compare/billing-vs-inventory-software', e)}

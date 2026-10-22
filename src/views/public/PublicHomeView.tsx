@@ -1,4 +1,3 @@
-import React from 'react';
 import {
   ArrowRight,
   CheckCircle2,
@@ -17,11 +16,18 @@ import {
   RefreshCw,
   BarChart3,
   HelpCircle,
+  Smartphone,
+  Monitor,
+  Globe,
+  Download,
 } from 'lucide-react';
 import { SEOHead } from '../../components/public/SEOHead';
 import { PublicHeader } from '../../components/public/PublicHeader';
 import { PublicFooter } from '../../components/public/PublicFooter';
 import { navigateTo } from '../../lib/publicRouter';
+import { CANONICAL_PLANS } from '../../config/plans';
+import { BLOG_POSTS } from '../../data/blogPosts';
+
 
 export const PublicHomeView: React.FC = () => {
   const handleNav = (path: string, e?: React.MouseEvent) => {
@@ -139,52 +145,65 @@ export const PublicHomeView: React.FC = () => {
 
   const pricingTiers = [
     {
-      name: 'Free',
+      name: CANONICAL_PLANS.free_trial.name,
       price: '₹0',
-      period: 'Forever free',
-      desc: 'Perfect for micro-shops, independent merchants & initial evaluation.',
-      features: ['Single user access', 'Core GST & non-GST billing', 'Basic inventory records', 'Customer udhari tracking', 'Community support'],
-      cta: 'Start Free Now',
+      period: '14 Days Free',
+      desc: CANONICAL_PLANS.free_trial.tagline,
+      platforms: ['web', 'desktop', 'android'],
+      features: CANONICAL_PLANS.free_trial.features.slice(0, 4),
+      cta: 'Start 14-Day Free Trial',
+      ctaPath: '/signup',
       highlighted: false,
     },
     {
-      name: 'App Plan',
-      price: '₹1,999',
+      name: CANONICAL_PLANS.starter.name,
+      price: `₹${CANONICAL_PLANS.starter.priceAnnualInr.toLocaleString('en-IN')}`,
       period: 'per year',
-      desc: 'Mobile-first operations for owners on the move.',
-      features: ['Full mobile app access', 'Unlimited invoices & bills', 'Barcode scanning via camera', 'Customer payment reminders', 'Standard email support'],
-      cta: 'Choose App Plan',
+      desc: CANONICAL_PLANS.starter.tagline,
+      platforms: ['web'],
+      features: CANONICAL_PLANS.starter.features.slice(0, 4),
+      cta: 'Choose Starter',
+      ctaPath: '/signup?plan=starter',
       highlighted: false,
     },
     {
-      name: 'Desktop Plan',
-      price: '₹2,999',
+      name: CANONICAL_PLANS.starter_mobile.name,
+      price: `₹${CANONICAL_PLANS.starter_mobile.priceAnnualInr.toLocaleString('en-IN')}`,
       period: 'per year',
-      desc: 'Dedicated high-speed checkout and billing terminal.',
-      features: ['High-speed desktop terminal', 'Thermal printer support (2"/3"/4")', 'Keyboard shortcuts POS', 'Offline cache resilience', 'Priority email support'],
-      cta: 'Choose Desktop Plan',
+      desc: CANONICAL_PLANS.starter_mobile.tagline,
+      platforms: ['web', 'android'],
+      features: CANONICAL_PLANS.starter_mobile.features.slice(0, 4),
+      cta: 'Choose Starter + Mobile',
+      ctaPath: '/signup?plan=starter_mobile',
       highlighted: false,
+      badge: 'Mobile + Web',
     },
     {
-      name: 'Business Plan',
-      price: '₹5,999',
+      name: CANONICAL_PLANS.business.name,
+      price: `₹${CANONICAL_PLANS.business.priceAnnualInr.toLocaleString('en-IN')}`,
       period: 'per year',
-      desc: 'Multi-user & multi-branch operations for growing trade.',
-      features: ['Multi-branch management', 'Role-based access (RBAC)', 'Real-time branch inventory sync', 'Comprehensive financial analytics', 'Dedicated priority assistance'],
-      cta: 'Start Business Trial',
+      desc: CANONICAL_PLANS.business.tagline,
+      platforms: ['web', 'desktop'],
+      features: CANONICAL_PLANS.business.features.slice(0, 4),
+      cta: 'Choose Business',
+      ctaPath: '/signup?plan=business',
       highlighted: true,
       badge: 'Most Popular',
     },
     {
-      name: 'Pro Plan',
-      price: '₹9,999',
+      name: CANONICAL_PLANS.growth.name,
+      price: `₹${CANONICAL_PLANS.growth.priceAnnualInr.toLocaleString('en-IN')}`,
       period: 'per year',
-      desc: 'Complete enterprise control, custom templates & top-tier performance.',
-      features: ['Unlimited branches & users', 'Custom invoice template designer', 'Advanced audit logs & security', 'Automated data backups to cloud', 'Personal account manager'],
-      cta: 'Contact for Pro',
+      desc: CANONICAL_PLANS.growth.tagline,
+      platforms: ['web', 'desktop', 'android'],
+      features: CANONICAL_PLANS.growth.features.slice(0, 4),
+      cta: 'Choose Growth',
+      ctaPath: '/signup?plan=growth',
       highlighted: false,
+      badge: 'All Platforms',
     },
   ];
+
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors selection:bg-blue-600 selection:text-white">
@@ -208,45 +227,47 @@ export const PublicHomeView: React.FC = () => {
               {/* Eyebrow */}
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900/60 text-blue-700 dark:text-blue-300 text-xs font-bold uppercase tracking-widest animate-fade-in shadow-sm">
                 <SparklesIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                <span>BUSINESS MANAGEMENT SOFTWARE FOR GROWING BUSINESSES</span>
+                <span>THE BUSINESS OS FOR GROWING BUSINESSES</span>
               </div>
 
               {/* H1 */}
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black text-slate-900 dark:text-white tracking-tight leading-[1.12]">
-                Run Your Business Smarter with <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">VISTAAR</span>
+              <h1 className="text-4xl sm:text-6xl lg:text-7xl font-black text-slate-900 dark:text-white tracking-tight leading-[1.08]">
+                Run Better. <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">Grow Wider.</span>
               </h1>
 
               {/* Supporting Copy */}
-              <p className="text-lg sm:text-xl text-slate-600 dark:text-slate-300 max-w-2xl mx-auto font-medium leading-relaxed">
-                Manage billing, inventory, purchases, suppliers, expenses, and customer payments in one connected business management platform.
+              <p className="text-base sm:text-xl text-slate-600 dark:text-slate-300 max-w-3xl mx-auto font-normal leading-relaxed">
+                VISTAAR brings your everyday business operations together in one place, helping you manage inventory, billing, customers, payments, and business performance more efficiently.
               </p>
 
               {/* CTAs */}
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3.5 pt-4">
                 <a
-                  href="/login?mode=signup"
-                  onClick={(e) => handleNav('/login?mode=signup', e)}
+                  href="/signup"
+                  onClick={(e) => handleNav('/signup', e)}
                   className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3.5 text-sm font-bold rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-xl shadow-blue-500/25 transition-all hover:scale-105 cursor-pointer"
                 >
-                  <span>Start Free</span>
+                  <span>Start Free Trial</span>
                   <ArrowRight className="w-4 h-4" />
                 </a>
 
                 <a
-                  href="#workflows"
+                  href="/features/billing-invoicing"
+                  onClick={(e) => handleNav('/features/billing-invoicing', e)}
                   className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 text-sm font-bold rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-800 shadow-sm transition-all hover:scale-105 cursor-pointer"
                 >
                   <span>Explore Features</span>
                 </a>
 
                 <a
-                  href="/pricing"
-                  onClick={(e) => handleNav('/pricing', e)}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 text-sm font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                  href="/download"
+                  onClick={(e) => handleNav('/download', e)}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 text-sm font-bold rounded-xl bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-all cursor-pointer"
                 >
-                  <span>View Pricing &rarr;</span>
+                  <span>Download VISTAAR</span>
                 </a>
               </div>
+
 
               {/* Trust Indicators */}
               <div className="pt-8 flex flex-wrap items-center justify-center gap-6 text-xs font-semibold text-slate-500 dark:text-slate-400">
@@ -562,8 +583,8 @@ export const PublicHomeView: React.FC = () => {
 
                   <div className="pt-6">
                     <a
-                      href="/pricing"
-                      onClick={(e) => handleNav('/pricing', e)}
+                      href={tier.ctaPath}
+                      onClick={(e) => handleNav(tier.ctaPath, e)}
                       className={`w-full block text-center py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
                         tier.highlighted
                           ? 'bg-white text-blue-600 hover:bg-blue-50 shadow'
@@ -583,7 +604,7 @@ export const PublicHomeView: React.FC = () => {
                 onClick={(e) => handleNav('/pricing', e)}
                 className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline"
               >
-                View full feature comparison matrix &rarr;
+                View full feature &amp; device access matrix &rarr;
               </a>
             </div>
           </div>
@@ -637,6 +658,155 @@ export const PublicHomeView: React.FC = () => {
             </div>
           </div>
         </section>
+
+        {/* SECTION 6B: MULTI-PLATFORM & DOWNLOAD CENTER PREVIEW */}
+        <section className="py-20 bg-slate-900 text-white border-b border-slate-800">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="max-w-3xl mx-auto text-center mb-14">
+              <span className="px-3 py-1 rounded-full bg-blue-500/20 text-blue-400 text-xs font-bold uppercase tracking-wider">
+                Cross-Platform Availability
+              </span>
+              <h2 className="text-3xl sm:text-4xl font-black tracking-tight mt-3">
+                Available Across All Your Workstations
+              </h2>
+              <p className="text-sm sm:text-base text-slate-400 mt-2">
+                Whether you prefer web browsers, high-speed Windows desktop terminals, or mobile barcode scanning on Android, VISTAAR stays synced in real time.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+              <div className="p-6 rounded-3xl bg-slate-800/60 border border-slate-700/80 flex flex-col justify-between">
+                <div>
+                  <div className="w-12 h-12 rounded-2xl bg-blue-600/20 text-blue-400 flex items-center justify-center mb-4">
+                    <Globe className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-lg font-bold">VISTAAR Web Cloud OS</h3>
+                  <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                    Zero install. Immediate access from any browser on PC, Mac, iPad, or Chromebook.
+                  </p>
+                </div>
+                <div className="pt-6">
+                  <a
+                    href="/login"
+                    onClick={(e) => handleNav('/login', e)}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-400 hover:text-blue-300"
+                  >
+                    <span>Launch Web Browser</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              </div>
+
+              <div className="p-6 rounded-3xl bg-slate-800/60 border border-slate-700/80 flex flex-col justify-between">
+                <div>
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-600/20 text-emerald-400 flex items-center justify-center mb-4">
+                    <Smartphone className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-lg font-bold">VISTAAR Android APK</h3>
+                  <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                    Camera barcode scanner, mobile counter sales, and Bluetooth thermal receipt printing.
+                  </p>
+                </div>
+                <div className="pt-6">
+                  <a
+                    href="/download"
+                    onClick={(e) => handleNav('/download', e)}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-400 hover:text-emerald-300"
+                  >
+                    <span>Download Android APK</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              </div>
+
+              <div className="p-6 rounded-3xl bg-slate-800/60 border border-slate-700/80 flex flex-col justify-between">
+                <div>
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center mb-4">
+                    <Monitor className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-lg font-bold">Windows Desktop Software</h3>
+                  <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                    High-speed checkout with F1-F12 counter hotkeys and native ESC/POS thermal printing.
+                  </p>
+                </div>
+                <div className="pt-6">
+                  <a
+                    href="/download"
+                    onClick={(e) => handleNav('/download', e)}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-400 hover:text-indigo-300"
+                  >
+                    <span>View Desktop Details</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            <div className="text-center">
+              <a
+                href="/download"
+                onClick={(e) => handleNav('/download', e)}
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
+              >
+                <Download className="w-4 h-4" />
+                <span>Visit Download Center</span>
+              </a>
+            </div>
+          </div>
+        </section>
+
+        {/* SECTION 6C: PRODUCT EDUCATION & BLOG GUIDES */}
+        <section className="py-20 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-4 mb-12">
+              <div>
+                <span className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest">
+                  Knowledge Base &amp; Insights
+                </span>
+                <h2 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight mt-1">
+                  Practical Guides for Growing Indian Businesses
+                </h2>
+              </div>
+              <a
+                href="/blog"
+                onClick={(e) => handleNav('/blog', e)}
+                className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+              >
+                <span>Browse All Articles</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </a>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {BLOG_POSTS.slice(0, 3).map((post) => (
+                <article
+                  key={post.slug}
+                  onClick={(e) => handleNav(`/blog/${post.slug}`, e)}
+                  className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 flex flex-col justify-between hover:shadow-xl hover:border-blue-500/40 transition-all group cursor-pointer"
+                >
+                  <div>
+                    <span className="px-2.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-[10px] font-bold uppercase tracking-wider">
+                      {post.category}
+                    </span>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors mt-3 line-clamp-2">
+                      {post.title}
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 line-clamp-2">
+                      {post.excerpt}
+                    </p>
+                  </div>
+                  <div className="pt-4 mt-4 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+                    <span>{post.publishedDate}</span>
+                    <span className="font-bold text-blue-600 dark:text-blue-400 group-hover:translate-x-0.5 transition-transform">
+                      Read &rarr;
+                    </span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
 
         {/* SECTION 7: FAQ SECTION */}
         <section className="py-20 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">

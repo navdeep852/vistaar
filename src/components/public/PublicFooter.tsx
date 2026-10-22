@@ -1,5 +1,4 @@
-import React from 'react';
-import { ShieldCheck, Heart, MapPin, Mail, ArrowUpRight } from 'lucide-react';
+import { ShieldCheck, MapPin, Mail, ArrowUpRight } from 'lucide-react';
 import { navigateTo } from '../../lib/publicRouter';
 
 export const PublicFooter: React.FC = () => {
@@ -83,13 +82,28 @@ export const PublicFooter: React.FC = () => {
             </ul>
           </div>
 
-          {/* Column 2: Commercial & Comparisons */}
+          {/* Column 2: Commercial & Platform */}
           <div className="space-y-3">
-            <h4 className="text-xs font-bold text-white uppercase tracking-wider">Solutions &amp; Pricing</h4>
+            <h4 className="text-xs font-bold text-white uppercase tracking-wider">Solutions &amp; Platform</h4>
             <ul className="space-y-2">
               <li>
                 <a href="/pricing" onClick={(e) => handleNav('/pricing', e)} className="hover:text-white transition-colors">
                   Pricing &amp; Plans
+                </a>
+              </li>
+              <li>
+                <a href="/download" onClick={(e) => handleNav('/download', e)} className="hover:text-white transition-colors">
+                  Download Center (Web, APK, Desktop)
+                </a>
+              </li>
+              <li>
+                <a href="/blog" onClick={(e) => handleNav('/blog', e)} className="hover:text-white transition-colors">
+                  Blog &amp; Knowledge Base
+                </a>
+              </li>
+              <li>
+                <a href="/faq" onClick={(e) => handleNav('/faq', e)} className="hover:text-white transition-colors">
+                  Frequently Asked Questions
                 </a>
               </li>
               <li>
@@ -98,18 +112,8 @@ export const PublicFooter: React.FC = () => {
                 </a>
               </li>
               <li>
-                <a href="/features/point-of-sale" onClick={(e) => handleNav('/features/point-of-sale', e)} className="hover:text-white transition-colors">
-                  For Retail Shops
-                </a>
-              </li>
-              <li>
-                <a href="/features/inventory-management" onClick={(e) => handleNav('/features/inventory-management', e)} className="hover:text-white transition-colors">
-                  For Wholesalers &amp; Distributors
-                </a>
-              </li>
-              <li>
                 <a href="/security" onClick={(e) => handleNav('/security', e)} className="hover:text-white transition-colors">
-                  Security &amp; Privacy
+                  Security Architecture
                 </a>
               </li>
             </ul>
@@ -130,11 +134,6 @@ export const PublicFooter: React.FC = () => {
                 </a>
               </li>
               <li>
-                <a href="/security" onClick={(e) => handleNav('/security', e)} className="hover:text-white transition-colors">
-                  Data Security Architecture
-                </a>
-              </li>
-              <li>
                 <a href="/privacy-policy" onClick={(e) => handleNav('/privacy-policy', e)} className="hover:text-white transition-colors">
                   Privacy Policy
                 </a>
@@ -142,6 +141,11 @@ export const PublicFooter: React.FC = () => {
               <li>
                 <a href="/terms" onClick={(e) => handleNav('/terms', e)} className="hover:text-white transition-colors">
                   Terms of Service
+                </a>
+              </li>
+              <li>
+                <a href="/refund-policy" onClick={(e) => handleNav('/refund-policy', e)} className="hover:text-white transition-colors">
+                  Refund &amp; Cancellation Policy
                 </a>
               </li>
               <li>

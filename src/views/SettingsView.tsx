@@ -32,6 +32,7 @@ import {
   Database,
 } from 'lucide-react';
 import { BackupRestoreView } from './BackupRestoreView';
+import { SubscriptionManagementView } from './SubscriptionManagementView';
 import { BranchSettingsTab } from '../components/BranchSettingsTab';
 import { businessSettingsService } from '../services/supabase';
 import { supabaseAuthService as auth } from '../services/supabaseAuth';
@@ -133,6 +134,7 @@ export const SETTINGS_TABS = [
   { id: 'terms', label: '9. Default Terms', icon: FileText },
   { id: 'preview', label: '10. Document Preview', icon: Eye },
   { id: 'backup', label: '11. Backup & Restore', icon: Database },
+  { id: 'subscription', label: '12. Subscription & Plans', icon: Sparkles },
 ] as const;
 
 export type SettingsSubTabId = typeof SETTINGS_TABS[number]['id'];
@@ -147,6 +149,9 @@ export const SettingsView: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<SettingsSubTabId>(() => {
     if (typeof window !== 'undefined') {
       const p = new URLSearchParams(window.location.search);
+      if (p.get('tab') === 'subscription') {
+        return 'subscription';
+      }
       if ((p.has('code') || p.has('state') || p.get('tab') === 'backup') && auth.getUser()?.role === 'owner') {
         return 'backup';
       }
@@ -179,10 +184,13 @@ export const SettingsView: React.FC = () => {
         return hasCurrentUserPermission('settings.preview.view');
       case 'backup':
         return currentUser?.role === 'owner';
+      case 'subscription':
+        return true;
       default:
         return false;
     }
   };
+
 
   const visibleTabs = SETTINGS_TABS.filter((t) => isTabAllowed(t.id));
 
@@ -2488,6 +2496,13 @@ export const SettingsView: React.FC = () => {
       {activeSubTab === 'backup' && isTabAllowed('backup') && (
         <div className="mt-4">
           <BackupRestoreView />
+        </div>
+      )}
+
+      {/* 12. SUBSCRIPTION & PLANS TAB */}
+      {activeSubTab === 'subscription' && isTabAllowed('subscription') && (
+        <div className="mt-4">
+          <SubscriptionManagementView />
         </div>
       )}
 
