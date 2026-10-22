@@ -537,6 +537,122 @@ export class BranchService {
   }
 
   /**
+   * Verifies the branch password specifically to unlock the Screen Lock.
+   * Unlike switchBranch, unlocking allows:
+   * - Business Owner: for current active branch or HQ/Main branch.
+   * - Employee / Staff: strictly for their assigned branch (cannot unlock branches they don't belong to).
+   * Verifies through Supabase RPC 'verify_branch_unlock_password' or cryptographic SHA-256 local hash.
+   * Never stores, logs, or returns plaintext passwords.
+   */
+  public async verifyBranchUnlockPassword(
+    branchId: string,
+    password: string
+  ): Promise<{ success: boolean; authorized: boolean; requiresSetup?: boolean; sessionExpired?: boolean; error?: string }> {
+    if (!password || !password.trim()) {
+      return { success: false, authorized: false, error: 'Please enter your branch password.' };
+    }
+
+    const cleanPass = password.trim();
+    let currentUser = supabaseAuthService.getUser();
+    if (!currentUser) {
+      try {
+        const ls = typeof localStorage !== 'undefined' ? localStorage : (globalThis as any)?.localStorage;
+        const stored = ls?.getItem('vistaar_user_session');
+        if (stored) {
+          currentUser = JSON.parse(stored);
+        }
+      } catch {}
+    }
+
+    if (!currentUser) {
+      return { success: false, authorized: false, sessionExpired: true, error: 'Session expired. Please sign in again.' };
+    }
+
+    const role = (currentUser?.role || '').toLowerCase();
+    const isOwner = role === 'owner' || role === 'admin';
+
+    // Strictly check employee authorization: Employee can ONLY unlock their assigned branch!
+    if (!isOwner) {
+      const assignedBranchId = (currentUser as any)?.defaultBranchId || (currentUser as any)?.branchId;
+      if (assignedBranchId && assignedBranchId !== branchId) {
+        await auditLogService.logSecurityEvent({
+          action: 'SCREEN_UNLOCK_DENIED',
+          result: 'DENIED',
+          details: { reason: 'Employee attempted to unlock unassigned branch', targetBranchId: branchId },
+        });
+        return {
+          success: false,
+          authorized: false,
+          error: 'Permission denied: You are not authorized to unlock this branch.',
+        };
+      }
+    }
+
+    const wsId = await this.getWorkspaceId();
+
+    // 1. Try Supabase RPC if configured
+    if (isSupabaseConfigured() && isValidUuid(wsId) && isValidUuid(branchId)) {
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('verify_branch_unlock_password', {
+          p_branch_id: branchId,
+          p_password: cleanPass,
+        });
+
+        if (!rpcErr && rpcRes) {
+          if (rpcRes.authorized) {
+            await auditLogService.logSecurityEvent({
+              action: 'SCREEN_UNLOCKED',
+              result: 'ALLOWED',
+              details: { branchId },
+            });
+            return { success: true, authorized: true };
+          }
+          if (rpcRes.session_expired) {
+            return { success: false, authorized: false, sessionExpired: true, error: rpcRes.error };
+          }
+          if (rpcRes.requires_setup) {
+            return { success: false, authorized: false, requiresSetup: true, error: rpcRes.error };
+          }
+          return { success: false, authorized: false, error: rpcRes.error || 'Incorrect branch password.' };
+        }
+      } catch (err) {
+        // Fall through to local verification fallback
+      }
+    }
+
+    // 2. Local cryptographic verification fallback (Offline / mock mode)
+    const passMap = safeGetTenantItem<Record<string, string>>(LOCAL_BRANCH_PASSWORDS_KEY, {});
+    const storedHash = passMap[branchId];
+
+    if (!storedHash) {
+      return {
+        success: false,
+        authorized: false,
+        requiresSetup: true,
+        error: 'Branch password has not been configured for this branch. Please contact your Business Owner.',
+      };
+    }
+
+    const isValid = await verifyBranchPasswordHash(cleanPass, storedHash);
+    if (isValid) {
+      await auditLogService.logSecurityEvent({
+        action: 'SCREEN_UNLOCKED',
+        result: 'ALLOWED',
+        details: { branchId },
+      });
+      return { success: true, authorized: true };
+    }
+
+    await auditLogService.logSecurityEvent({
+      action: 'SCREEN_UNLOCK_FAILED',
+      result: 'DENIED',
+      details: { branchId },
+    });
+    return { success: false, authorized: false, error: 'Incorrect branch password.' };
+  }
+
+
+  /**
    * Sets or changes a branch access password (OWNER only).
    */
   public async setBranchPassword(

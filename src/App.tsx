@@ -46,8 +46,11 @@ const SalaryPayrollView = lazyWithRetry(() => import('./views/SalaryPayrollView'
 import { ThemeProvider } from './context/ThemeContext';
 import { WorkspaceProvider, useWorkspace } from './context/WorkspaceContext';
 import { BranchProvider } from './context/BranchContext';
+import { ScreenLockProvider, useScreenLock } from './context/ScreenLockContext';
+import { ScreenLockOverlay } from './components/ScreenLockOverlay';
 
 function MainAppContent() {
+  const { isLocked } = useScreenLock();
   const [authStatus, setAuthStatus] = useState<AuthResolutionState>(supabaseAuthService.getAuthResolutionState());
   const [resolutionError, setResolutionError] = useState<string | null>(supabaseAuthService.getResolutionError());
   const [activeTab, setActiveTab] = useState(() => {
@@ -396,67 +399,79 @@ function MainAppContent() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
-      {/* Desktop Sidebar — Hidden when Workspace Mode is Active */}
-      {!isWorkspaceActive && (
-        <Sidebar
-          activeTab={activeTab}
-          setActiveTab={handleSafeSetActiveTab}
-          lowStockCount={lowStockCount}
-          pendingFollowupsCount={pendingFollowupsCount}
-          isCollapsed={isSidebarCollapsed}
-          onToggleCollapse={handleToggleSidebar}
-        />
-      )}
-
-      {/* Mobile Top Header & Bottom Nav — Hidden in Workspace Mode */}
-      {!isWorkspaceActive && (
-        <MobileNav
-          activeTab={activeTab}
-          setActiveTab={handleSafeSetActiveTab}
-          unreadNotifsCount={unreadNotifsCount}
-        />
-      )}
-
-      {/* Main Content Area — Full viewport width when Workspace Mode is active */}
-      <div className={`flex-1 flex flex-col min-w-0 transition-[padding] duration-200 ${
-        isWorkspaceActive
-          ? 'w-full pl-0 pt-0'
-          : `${isSidebarCollapsed ? 'lg:pl-20' : 'lg:pl-64'} pt-[calc(3.75rem+env(safe-area-inset-top))] lg:pt-0`
-      }`}>
+    <div className={`min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200 ${isLocked ? 'overflow-hidden' : ''}`}>
+      {/* Protected Business OS Surface (Shielded and blurred while screen is locked) */}
+      <div
+        className={`flex-1 flex flex-col min-w-0 ${
+          isLocked ? 'filter blur-md pointer-events-none select-none opacity-20 transition-all duration-300' : ''
+        }`}
+        aria-hidden={isLocked ? 'true' : undefined}
+      >
+        {/* Desktop Sidebar — Hidden when Workspace Mode is Active */}
         {!isWorkspaceActive && (
-          <Header
+          <Sidebar
             activeTab={activeTab}
             setActiveTab={handleSafeSetActiveTab}
-            openModal={handleOpenQuickModal}
-            isSidebarCollapsed={isSidebarCollapsed}
-            onToggleSidebar={handleToggleSidebar}
+            lowStockCount={lowStockCount}
+            pendingFollowupsCount={pendingFollowupsCount}
+            isCollapsed={isSidebarCollapsed}
+            onToggleCollapse={handleToggleSidebar}
           />
         )}
 
-        <main className={`flex-1 ${isWorkspaceActive ? 'p-0 w-full max-w-full' : 'p-3 sm:p-6 lg:p-8 pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-8 max-w-7xl w-full mx-auto'}`}>
-          <ErrorBoundary
-            key={activeTab}
-            moduleName={activeTab.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
-            onReset={() => setActiveTab('dashboard')}
-          >
-            <React.Suspense
-              fallback={
-                <div className="flex flex-col items-center justify-center min-h-[360px] w-full text-slate-400 dark:text-slate-500 gap-3">
-                  <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
-                  <span className="text-xs font-medium tracking-wide">Loading module...</span>
-                </div>
-              }
+        {/* Mobile Top Header & Bottom Nav — Hidden in Workspace Mode */}
+        {!isWorkspaceActive && (
+          <MobileNav
+            activeTab={activeTab}
+            setActiveTab={handleSafeSetActiveTab}
+            unreadNotifsCount={unreadNotifsCount}
+          />
+        )}
+
+        {/* Main Content Area — Full viewport width when Workspace Mode is active */}
+        <div className={`flex-1 flex flex-col min-w-0 transition-[padding] duration-200 ${
+          isWorkspaceActive
+            ? 'w-full pl-0 pt-0'
+            : `${isSidebarCollapsed ? 'lg:pl-20' : 'lg:pl-64'} pt-[calc(3.75rem+env(safe-area-inset-top))] lg:pt-0`
+        }`}>
+          {!isWorkspaceActive && (
+            <Header
+              activeTab={activeTab}
+              setActiveTab={handleSafeSetActiveTab}
+              openModal={handleOpenQuickModal}
+              isSidebarCollapsed={isSidebarCollapsed}
+              onToggleSidebar={handleToggleSidebar}
+            />
+          )}
+
+          <main className={`flex-1 ${isWorkspaceActive ? 'p-0 w-full max-w-full' : 'p-3 sm:p-6 lg:p-8 pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-8 max-w-7xl w-full mx-auto'}`}>
+            <ErrorBoundary
+              key={activeTab}
+              moduleName={activeTab.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+              onReset={() => setActiveTab('dashboard')}
             >
-              {renderActiveView()}
-            </React.Suspense>
-          </ErrorBoundary>
-        </main>
+              <React.Suspense
+                fallback={
+                  <div className="flex flex-col items-center justify-center min-h-[360px] w-full text-slate-400 dark:text-slate-500 gap-3">
+                    <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+                    <span className="text-xs font-medium tracking-wide">Loading module...</span>
+                  </div>
+                }
+              >
+                {renderActiveView()}
+              </React.Suspense>
+            </ErrorBoundary>
+          </main>
+        </div>
       </div>
 
       {/* Global Toast Container */}
       <ToastContainer />
+
+      {/* Automatic Screen Lock Security Overlay */}
+      <ScreenLockOverlay />
     </div>
+
   );
 }
 
@@ -465,7 +480,9 @@ export function App() {
     <ThemeProvider>
       <WorkspaceProvider>
         <BranchProvider>
-          <MainAppContent />
+          <ScreenLockProvider>
+            <MainAppContent />
+          </ScreenLockProvider>
         </BranchProvider>
       </WorkspaceProvider>
     </ThemeProvider>

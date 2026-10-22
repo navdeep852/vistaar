@@ -28,8 +28,10 @@ import {
   Banknote,
   ArrowLeft,
   Globe2,
+  Lock,
 } from 'lucide-react';
 import { GlobalSearch } from './GlobalSearch';
+import { useScreenLock } from '../context/ScreenLockContext';
 
 const TAB_LABELS: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -88,6 +90,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [user, setUser] = useState(supabaseAuthService.getUser());
   const { theme } = useTheme();
+  const { lockScreen } = useScreenLock();
 
   useEffect(() => {
     const updateAuth = () => setUser(supabaseAuthService.getUser());
@@ -301,6 +304,16 @@ export const MobileNav: React.FC<MobileNavProps> = ({
 
         <div className="p-4 pb-[max(env(safe-area-inset-bottom),1rem)] border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80 space-y-2 shrink-0">
           <ThemeToggle variant="button" />
+          <button
+            onClick={() => {
+              setDrawerOpen(false);
+              lockScreen();
+            }}
+            className="w-full min-h-[44px] flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-950/60 transition-colors cursor-pointer touch-manipulation border border-amber-200/80 dark:border-amber-900/60"
+          >
+            <Lock className="w-4 h-4" />
+            <span>Lock Screen Now</span>
+          </button>
           <button
             onClick={() => supabaseAuthService.logout()}
             className="w-full min-h-[44px] flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-100 dark:hover:bg-rose-500/20 transition-colors cursor-pointer touch-manipulation"

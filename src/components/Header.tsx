@@ -13,6 +13,7 @@ import {
   RefreshCw,
   BarChart3,
   PanelLeft,
+  Lock,
 } from 'lucide-react';
 import { supabaseAuthService } from '../services/supabaseAuth';
 import { notificationService } from '../services/supabase';
@@ -22,6 +23,7 @@ import { ThemeToggle } from './ThemeToggle';
 import { UserAvatar } from './UserAvatar';
 import { GlobalSearch } from './GlobalSearch';
 import { BranchSwitcher } from './BranchSwitcher';
+import { useScreenLock } from '../context/ScreenLockContext';
 
 interface HeaderProps {
   activeTab: string;
@@ -38,6 +40,7 @@ export const Header: React.FC<HeaderProps> = ({
   isSidebarCollapsed = false,
   onToggleSidebar,
 }) => {
+  const { lockScreen } = useScreenLock();
   const [user, setUser] = useState(supabaseAuthService.getUser());
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -373,6 +376,17 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <UserIcon className="w-4 h-4 text-slate-500 dark:text-slate-400" />
                 <span>{user?.role === 'employee' ? 'My Profile & Settings' : 'Profile & Business Settings'}</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  lockScreen();
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors mt-0.5 cursor-pointer"
+              >
+                <Lock className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                <span>Lock Screen Now</span>
               </button>
 
               <button
