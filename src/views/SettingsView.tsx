@@ -536,6 +536,10 @@ export const SettingsView: React.FC = () => {
 
     const res = await businessSettingsService.updateSettings(cleanFormData);
     if (res.success) {
+      const updatedBusinessName = cleanFormData.businessName || cleanFormData.legalName || res.data?.businessName;
+      if (updatedBusinessName) {
+        auth.setBusinessName(updatedBusinessName);
+      }
       if (res.data) {
         setFormData(res.data);
         store.updateSettings(res.data);

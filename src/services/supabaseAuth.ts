@@ -389,6 +389,21 @@ export class SupabaseAuthService {
     return this.currentProfile;
   }
 
+  public setBusinessName(name: string): void {
+    if (!name || !name.trim()) return;
+    const cleanName = name.trim();
+    if (this.currentProfile) {
+      if (this.currentProfile.businessName !== cleanName) {
+        this.currentProfile = {
+          ...this.currentProfile,
+          businessName: cleanName,
+        };
+        this.saveSessionToStorage(this.currentProfile);
+        this.notify();
+      }
+    }
+  }
+
   public isAuthenticated(): boolean {
     return this.authResolutionState === 'ready' && Boolean(this.currentProfile?.id);
   }
@@ -547,8 +562,27 @@ export class SupabaseAuthService {
         throw new Error(`[ACCOUNT_STATUS_SUSPENDED] User account is ${profile.status}. Access denied.`);
       }
 
-      // 7. Update in-memory state and session storage
-      const businessName = workspaceRecord.company_name || 'VISTAAR Business Solutions';
+      // 7. Determine authoritative business name
+      // Prioritize business_settings (configured Business / Company Name) over workspaces default
+      let businessName = workspaceRecord.company_name || '';
+      try {
+        const { data: bSettings } = await supabase
+          .from('business_settings')
+          .select('legal_name')
+          .eq('workspace_id', dbWsId)
+          .maybeSingle();
+
+        if (bSettings?.legal_name && bSettings.legal_name.trim().length > 0) {
+          businessName = bSettings.legal_name.trim();
+        }
+      } catch (bErr) {
+        console.warn('[AUTH] Notice: business_settings legal_name resolution fallback:', bErr);
+      }
+
+      if (!businessName || businessName === 'Main Workspace') {
+        businessName = workspaceRecord.company_name || 'My Business';
+      }
+
       this.currentProfile = {
         id: profile.id,
         companyId: dbWsId,
@@ -1188,6 +1222,26 @@ export class SupabaseAuthService {
         .single();
 
       if (profile) {
+        let bName = profile.workspaces?.company_name || '';
+        if (profile.workspace_id) {
+          try {
+            const { data: bSettings } = await supabase
+              .from('business_settings')
+              .select('legal_name')
+              .eq('workspace_id', profile.workspace_id)
+              .maybeSingle();
+
+            if (bSettings?.legal_name && bSettings.legal_name.trim().length > 0) {
+              bName = bSettings.legal_name.trim();
+            }
+          } catch (e) {
+            console.warn('[AUTH] syncProfileFromSupabaseUser business_settings lookup notice:', e);
+          }
+        }
+        if (!bName) {
+          bName = profile.workspaces?.company_name || 'My Business';
+        }
+
         this.currentProfile = {
           id: profile.id,
           companyId: profile.workspace_id,
@@ -1199,7 +1253,7 @@ export class SupabaseAuthService {
           designation: profile.designation || '',
           role: profile.role as UserRole,
           status: profile.status,
-          businessName: profile.workspaces?.company_name || 'VISTAAR Business Solutions',
+          businessName: bName,
           mustChangePassword: profile.must_change_password || false,
           avatarUrl: profile.avatar_url || '',
           branchId: profile.default_branch_id || undefined,

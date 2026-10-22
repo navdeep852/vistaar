@@ -187,7 +187,11 @@ export class SupabaseBusinessSettingsService {
         return { success: true, data: null };
       }
 
-      return { success: true, data: mapDbSettingsToApp(data as DbBusinessSettings) };
+      const mapped = mapDbSettingsToApp(data as DbBusinessSettings);
+      if (mapped.businessName) {
+        supabaseAuthService.setBusinessName(mapped.businessName);
+      }
+      return { success: true, data: mapped };
     } catch (err: any) {
       const errStr = handleSupabaseError(err, 'getSettings');
       return { success: false, error: errStr };
@@ -251,7 +255,27 @@ export class SupabaseBusinessSettingsService {
         return { success: false, error: errStr };
       }
 
-      return { success: true, data: mapDbSettingsToApp(data as DbBusinessSettings) };
+      const mapped = mapDbSettingsToApp(data as DbBusinessSettings);
+      const cleanBusinessName = mapped.businessName || dbPayload.legal_name;
+
+      if (cleanBusinessName) {
+        // Immediately notify auth service to update in-memory profile and notify subscribers (Sidebar)
+        supabaseAuthService.setBusinessName(cleanBusinessName);
+
+        // Keep workspaces.company_name synchronized in PostgreSQL
+        supabase
+          .from('workspaces')
+          .update({ company_name: cleanBusinessName })
+          .eq('id', workspaceId)
+          .then((res: any) => {
+            if (res?.error) {
+              console.warn('[updateSettings] Non-fatal workspace company_name sync note:', res.error.message);
+            }
+          })
+          .catch(() => {});
+      }
+
+      return { success: true, data: mapped };
     } catch (err: any) {
       const errStr = handleSupabaseError(err, 'updateSettings');
       return { success: false, error: errStr };

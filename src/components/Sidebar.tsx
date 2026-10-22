@@ -31,6 +31,7 @@ const logoDarkText = '/Vistaar_Logo_With_Name.png';
 const logoLightText = '/Vistaar_Logo_With_Name_Light.png';
 const logoIcon = '/Vistaar_Icon_logo.png';
 import { supabaseAuthService } from '../services/supabaseAuth';
+import { store } from '../services/store';
 import { UserAvatar } from './UserAvatar';
 import { useTheme } from '../context/ThemeContext';
 import { hasCurrentUserPermission } from '../lib/permissions';
@@ -66,13 +67,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
 }) => {
   const [user, setUser] = useState(supabaseAuthService.getUser());
+  const [businessName, setBusinessName] = useState<string>(() => {
+    const s = store.getSettings();
+    const u = supabaseAuthService.getUser();
+    return s?.businessName || s?.legalName || u?.businessName || '';
+  });
   const { theme } = useTheme();
 
   useEffect(() => {
-    const updateAuth = () => setUser(supabaseAuthService.getUser());
-    updateAuth();
-    return supabaseAuthService.subscribe(updateAuth);
+    const updateAuthAndSettings = () => {
+      const u = supabaseAuthService.getUser();
+      setUser(u);
+      const s = store.getSettings();
+      const currentName = s?.businessName || s?.legalName || u?.businessName || '';
+      if (currentName) {
+        setBusinessName(currentName);
+      }
+    };
+
+    updateAuthAndSettings();
+    const unsubAuth = supabaseAuthService.subscribe(updateAuthAndSettings);
+    const unsubStore = store.subscribe(updateAuthAndSettings);
+    return () => {
+      unsubAuth();
+      unsubStore();
+    };
   }, []);
+
+  const displayBusinessName = (businessName && businessName !== 'Main Workspace' ? businessName : user?.businessName) || 'My Business';
 
   const logoFullName = theme === 'dark' ? logoLightText : logoDarkText;
 
@@ -234,16 +256,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Workspace & Footer */}
       <div className={`${isCollapsed ? 'p-2' : 'p-3.5'} border-t border-slate-200 dark:border-slate-900 bg-slate-50/60 dark:bg-slate-950/40 transition-colors duration-200`}>
         {isCollapsed ? (
-          <div className="flex justify-center py-1 cursor-pointer" title={`${user?.businessName || 'Main Workspace'} • ${user?.employeeId || 'VST-EMP-001'} (${user?.role || 'Owner'})`}>
+          <div className="flex justify-center py-1 cursor-pointer" title={`${displayBusinessName} • ${user?.employeeId || 'VST-00001'} (${user?.role || 'Owner'})`}>
             <UserAvatar name={user?.name} avatarUrl={user?.avatarUrl} size="sm" />
           </div>
         ) : (
           <div className="flex items-center gap-3 p-2 rounded-xl bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 shadow-xs">
             <UserAvatar name={user?.name} avatarUrl={user?.avatarUrl} size="sm" />
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">{user?.businessName || 'Main Workspace'}</p>
+              <p className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate" title={displayBusinessName}>
+                {displayBusinessName}
+              </p>
               <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1 font-mono">
-                <span>{user?.employeeId || 'VST-EMP-001'}</span>
+                <span>{user?.employeeId || 'VST-00001'}</span>
                 <span>•</span>
                 <span className="capitalize">{user?.role || 'Owner'}</span>
               </p>

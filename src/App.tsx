@@ -6,7 +6,8 @@ import { Header } from './components/Header';
 import { ToastContainer, showToast } from './components/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { supabaseAuthService, AuthResolutionState } from './services/supabaseAuth';
-import { productService, followUpService, notificationService } from './services/supabase';
+import { productService, followUpService, notificationService, businessSettingsService } from './services/supabase';
+import { store } from './services/store';
 import { hasCurrentUserPermission } from './lib/permissions';
 import { auditLogService } from './services/supabase/auditLogService';
 
@@ -175,6 +176,22 @@ function MainAppContent() {
       clearInterval(interval);
       window.removeEventListener('vistaar:app_resumed', fetchMetrics);
     };
+  }, [authStatus]);
+
+  // Proactively hydrate business settings into store and auth profile for the active workspace
+  useEffect(() => {
+    if (authStatus === 'ready' && supabaseAuthService.isAuthenticated()) {
+      businessSettingsService.getSettings().then(({ success, data }) => {
+        if (success && data) {
+          store.updateSettings(data);
+          if (data.businessName) {
+            supabaseAuthService.setBusinessName(data.businessName);
+          }
+        }
+      }).catch((err) => {
+        console.warn('[APP] Background business settings hydration notice:', err);
+      });
+    }
   }, [authStatus]);
 
   useEffect(() => {
