@@ -72,30 +72,30 @@ export const SEOHead: React.FC<SEOHeadProps> = ({
     let scriptTag = document.getElementById(scriptId) as HTMLScriptElement | null;
     
     if (structuredData) {
+      const serialized = JSON.stringify(
+        Array.isArray(structuredData)
+          ? { '@context': 'https://schema.org', '@graph': structuredData }
+          : { '@context': 'https://schema.org', ...structuredData }
+      );
       if (!scriptTag) {
         scriptTag = document.createElement('script');
         scriptTag.id = scriptId;
         scriptTag.type = 'application/ld+json';
         document.head.appendChild(scriptTag);
       }
-      scriptTag.textContent = JSON.stringify(
-        Array.isArray(structuredData)
-          ? { '@context': 'https://schema.org', '@graph': structuredData }
-          : { '@context': 'https://schema.org', ...structuredData }
-      );
+      if (scriptTag.textContent !== serialized) {
+        scriptTag.textContent = serialized;
+      }
     } else if (scriptTag) {
       scriptTag.remove();
     }
-
-    // Scroll to top on route change
-    window.scrollTo(0, 0);
 
     return () => {
       // Cleanup dynamically injected route schema if component unmounts
       const tag = document.getElementById(scriptId);
       if (tag) tag.remove();
     };
-  }, [title, description, canonicalPath, ogType, ogImage, structuredData]);
+  }, [title, description, canonicalPath, ogType, ogImage, JSON.stringify(structuredData)]);
 
   return null;
 };

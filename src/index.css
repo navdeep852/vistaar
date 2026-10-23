@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Lato:wght@300;400;700;900&family=Merriweather:wght@300;400;700;900&family=Montserrat:wght@300;400;500;600;700;800;900&family=Nunito+Sans:wght@300;400;600;700;800;900&family=Open+Sans:wght@300;400;500;600;700;800&family=Playfair+Display:wght@400;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&family=Roboto:wght@300;400;500;700;900&family=Source+Sans+3:wght@300;400;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 @variant dark (&:where(.dark, .dark *));
@@ -89,10 +89,10 @@
 @layer base {
   html {
     font-size: 16px;
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
   body {
     @apply bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans antialiased selection:bg-blue-500 selection:text-white transition-colors duration-200;
-    font-size: 12px;
   }
 }
 
@@ -311,11 +311,15 @@
 /* MOBILE UI FOUNDATION & RESPONSIVE TOUCH STANDARDS                         */
 /* ========================================================================= */
 
-/* Prevent horizontal page overflow on small phone screens (320px - 430px) */
-html, body {
-  overflow-x: hidden;
-  position: relative;
+/* Prevent horizontal page overflow without creating nested scroll containers */
+html {
+  overflow-x: clip;
   width: 100%;
+}
+body {
+  overflow-x: clip;
+  width: 100%;
+  min-height: 100vh;
 }
 
 /* Modern touch tap highlight reset */

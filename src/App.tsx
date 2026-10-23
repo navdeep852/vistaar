@@ -71,6 +71,37 @@ import { ScreenLockProvider, useScreenLock } from './context/ScreenLockContext';
 import { ScreenLockOverlay } from './components/ScreenLockOverlay';
 
 
+// Helper to resolve activeTab from path
+const resolveTabFromPath = (path: string): string => {
+  if (path === '/app' || path === '/app/' || path === '/app/dashboard') return 'dashboard';
+  if (path.startsWith('/app/')) {
+    const sub = path.replace(/^\/app\//, '').replace(/\/$/, '');
+    if (sub === 'inventory') return 'stock';
+    if (sub === 'invoicing' || sub === 'billing') return 'invoices';
+    if (sub === 'payroll') return 'salary-payroll';
+    return sub;
+  }
+  return 'dashboard';
+};
+
+const LoadingFallback: React.FC = () => (
+  <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6 text-center select-none animate-fade-in font-sans">
+    <div className="relative flex items-center justify-center mb-6">
+      <img
+        src="/Vistaar_Icon_logo.png"
+        alt="VISTAAR"
+        className="w-16 h-16 object-contain drop-shadow-md animate-pulse"
+      />
+    </div>
+    <div className="flex items-center gap-2 mb-2">
+      <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+      <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 tracking-tight">
+        Loading VISTAAR...
+      </h2>
+    </div>
+  </div>
+);
+
 function MainAppContent() {
   const { isLocked } = useScreenLock();
   const currentPublicPath = usePublicPath();
@@ -82,9 +113,21 @@ function MainAppContent() {
       if (params.has('code') && params.has('state')) {
         return 'settings';
       }
+      const path = window.location.pathname;
+      if (path.startsWith('/app')) {
+        return resolveTabFromPath(path);
+      }
     }
     return 'dashboard';
   });
+
+  // Sync activeTab when navigating via back/forward or route changes to /app/...
+  useEffect(() => {
+    if (currentPublicPath.startsWith('/app')) {
+      const newTab = resolveTabFromPath(currentPublicPath);
+      setActiveTab(newTab);
+    }
+  }, [currentPublicPath]);
   const [modalToOpen, setModalToOpen] = useState<string | null>(null);
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string | undefined>(undefined);
 
@@ -241,15 +284,20 @@ function MainAppContent() {
 
   if (authStatus === 'loading') {
     return (
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6 text-center select-none animate-fade-in">
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6 text-center select-none animate-fade-in font-sans">
         <div className="relative flex items-center justify-center mb-6">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 to-indigo-400 flex items-center justify-center shadow-lg shadow-indigo-500/25 animate-pulse">
-            <Loader2 className="w-8 h-8 text-white animate-spin" />
-          </div>
+          <img
+            src="/Vistaar_Icon_logo.png"
+            alt="VISTAAR"
+            className="w-16 h-16 object-contain drop-shadow-md animate-pulse"
+          />
         </div>
-        <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight mb-1">
-          Initializing VISTAAR
-        </h2>
+        <div className="flex items-center gap-2 mb-2">
+          <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 tracking-tight">
+            Initializing VISTAAR
+          </h2>
+        </div>
         <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm">
           Verifying authenticated session and authoritative workspace authorization...
         </p>
@@ -340,45 +388,92 @@ function MainAppContent() {
   if (authStatus === 'unauthenticated' || supabaseAuthService.isRecoverySession()) {
     const isNativePlatform = typeof window !== 'undefined' && (window as any)?.Capacitor?.isNativePlatform();
 
+    // If an unauthenticated user attempts to access /app or /app/..., direct to login
+    if (currentPublicPath === '/app' || currentPublicPath.startsWith('/app/')) {
+      return (
+        <React.Suspense fallback={<LoadingFallback />}>
+          <LoginView
+            onSuccess={() => {
+              supabaseAuthService.initializeAuth();
+              navigateTo(currentPublicPath);
+            }}
+          />
+        </React.Suspense>
+      );
+    }
+
     const publicView = renderPublicRoute(currentPublicPath);
     if (publicView) {
-      return publicView;
+      return (
+        <React.Suspense fallback={<LoadingFallback />}>
+          {publicView}
+        </React.Suspense>
+      );
     }
 
     // Default route: Native mobile app opens to Login; web browser opens to PublicHomeView
     if (isNativePlatform) {
-      return <LoginView onSuccess={() => supabaseAuthService.initializeAuth()} />;
+      return (
+        <React.Suspense fallback={<LoadingFallback />}>
+          <LoginView onSuccess={() => supabaseAuthService.initializeAuth()} />
+        </React.Suspense>
+      );
     }
 
-    return <PublicHomeView />;
+    return (
+      <React.Suspense fallback={<LoadingFallback />}>
+        <PublicHomeView />
+      </React.Suspense>
+    );
   }
 
   // Dedicated subscription & billing management routes
   if (currentPublicPath === '/account/subscription' || currentPublicPath === '/account/billing') {
     return (
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-6 md:p-10 font-sans">
-        <div className="max-w-6xl mx-auto space-y-6">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => {
-                navigateTo('/app');
-                setActiveTab('settings');
-              }}
-              className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-            >
-              &larr; Back to Business OS
-            </button>
+      <React.Suspense fallback={<LoadingFallback />}>
+        <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-6 md:p-10 font-sans">
+          <div className="max-w-6xl mx-auto space-y-6">
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => {
+                  navigateTo('/app');
+                  setActiveTab('settings');
+                }}
+                className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+              >
+                &larr; Back to Business OS
+              </button>
+            </div>
+            <SubscriptionManagementView />
           </div>
-          <SubscriptionManagementView />
         </div>
-      </div>
+      </React.Suspense>
+    );
+  }
+
+  // Marketing homepage passthrough for authenticated users explicitly viewing marketing home
+  const isNativePlatform = typeof window !== 'undefined' && (window as any)?.Capacitor?.isNativePlatform();
+  if (!isNativePlatform && (currentPublicPath === '/' || currentPublicPath === '')) {
+    return (
+      <React.Suspense fallback={<LoadingFallback />}>
+        <PublicHomeView />
+      </React.Suspense>
     );
   }
 
   // Marketing view passthrough for authenticated users explicitly viewing public landing pages
   const authedPublicView = renderPublicRoute(currentPublicPath);
   if (authedPublicView) {
-    return authedPublicView;
+    // If authenticated and visiting login/signup, redirect to app workspace
+    if (currentPublicPath === '/login' || currentPublicPath === '/signup') {
+      navigateTo('/app');
+      return null;
+    }
+    return (
+      <React.Suspense fallback={<LoadingFallback />}>
+        {authedPublicView}
+      </React.Suspense>
+    );
   }
 
   // Native device access entitlement guard (Android APK & Windows Desktop)
@@ -396,8 +491,6 @@ function MainAppContent() {
       );
     }
   }
-
-
 
   const handleSafeSetActiveTab = (tab: string) => {
     setModalToOpen(null);
@@ -432,6 +525,14 @@ function MainAppContent() {
     }
 
     setActiveTab(tab);
+
+    // Keep browser URL aligned with /app or /app/[tab]
+    if (typeof window !== 'undefined') {
+      const targetPath = tab === 'dashboard' ? '/app' : `/app/${tab}`;
+      if (window.location.pathname !== targetPath) {
+        window.history.pushState(null, '', targetPath);
+      }
+    }
   };
 
   const handleOpenQuickModal = (modalType: string) => {

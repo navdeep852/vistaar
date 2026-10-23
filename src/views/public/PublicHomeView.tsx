@@ -29,68 +29,68 @@ import { CANONICAL_PLANS } from '../../config/plans';
 import { BLOG_POSTS } from '../../data/blogPosts';
 
 
+const HOME_STRUCTURED_DATA = [
+  {
+    '@type': 'SoftwareApplication',
+    '@id': 'https://www.vistaarone.com/#software',
+    name: 'VISTAAR',
+    operatingSystem: 'Web, Windows, Android, iOS',
+    applicationCategory: 'BusinessApplication',
+    description:
+      'VISTAAR is the Business OS for Growing Businesses in India, providing unified GST billing, inventory management, counter POS, customer udhari khata, and cashbook.',
+    offers: {
+      '@type': 'AggregateOffer',
+      priceCurrency: 'INR',
+      lowPrice: '0',
+      highPrice: '9999',
+      offerCount: '5',
+    },
+    url: 'https://www.vistaarone.com/',
+  },
+  {
+    '@type': 'FAQPage',
+    mainEntity: [
+      {
+        '@type': 'Question',
+        name: 'What is VISTAAR and how does it help Indian businesses?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'VISTAAR is a unified Business Operating System designed for Indian small and growing businesses. It connects GST billing, inventory, POS counter sales, customer udhari tracking, supplier purchases, and daily cashflow in one reliable system.',
+        },
+      },
+      {
+        '@type': 'Question',
+        name: 'How does VISTAAR connect billing with inventory and udhari?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'When a sale is recorded in VISTAAR, inventory quantities are automatically decremented from stock, any unpaid balance is posted directly to the customer udhari ledger, and received payments update the cashbook and daybook instantly.',
+        },
+      },
+      {
+        '@type': 'Question',
+        name: 'Does VISTAAR support GST and non-GST businesses?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'Yes. VISTAAR supports full GST billing with HSN/SAC codes, CGST, SGST, IGST calculations, as well as non-GST simplified bills for composite dealers and non-registered small businesses.',
+        },
+      },
+      {
+        '@type': 'Question',
+        name: 'Is there a free plan available to get started?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'Yes. VISTAAR offers a ₹0 Free plan for single-user micro-businesses to start immediately without any credit card required.',
+        },
+      },
+    ],
+  },
+];
+
 export const PublicHomeView: React.FC = () => {
   const handleNav = (path: string, e?: React.MouseEvent) => {
     if (e) e.preventDefault();
     navigateTo(path);
   };
-
-  const homeStructuredData = [
-    {
-      '@type': 'SoftwareApplication',
-      '@id': 'https://www.vistaarone.com/#software',
-      name: 'VISTAAR',
-      operatingSystem: 'Web, Windows, Android, iOS',
-      applicationCategory: 'BusinessApplication',
-      description:
-        'VISTAAR is the Business OS for Growing Businesses in India, providing unified GST billing, inventory management, counter POS, customer udhari khata, and cashbook.',
-      offers: {
-        '@type': 'AggregateOffer',
-        priceCurrency: 'INR',
-        lowPrice: '0',
-        highPrice: '9999',
-        offerCount: '5',
-      },
-      url: 'https://www.vistaarone.com/',
-    },
-    {
-      '@type': 'FAQPage',
-      mainEntity: [
-        {
-          '@type': 'Question',
-          name: 'What is VISTAAR and how does it help Indian businesses?',
-          acceptedAnswer: {
-            '@type': 'Answer',
-            text: 'VISTAAR is a unified Business Operating System designed for Indian small and growing businesses. It connects GST billing, inventory, POS counter sales, customer udhari tracking, supplier purchases, and daily cashflow in one reliable system.',
-          },
-        },
-        {
-          '@type': 'Question',
-          name: 'How does VISTAAR connect billing with inventory and udhari?',
-          acceptedAnswer: {
-            '@type': 'Answer',
-            text: 'When a sale is recorded in VISTAAR, inventory quantities are automatically decremented from stock, any unpaid balance is posted directly to the customer udhari ledger, and received payments update the cashbook and daybook instantly.',
-          },
-        },
-        {
-          '@type': 'Question',
-          name: 'Does VISTAAR support GST and non-GST businesses?',
-          acceptedAnswer: {
-            '@type': 'Answer',
-            text: 'Yes. VISTAAR supports full GST billing with HSN/SAC codes, CGST, SGST, IGST calculations, as well as non-GST simplified bills for composite dealers and non-registered small businesses.',
-          },
-        },
-        {
-          '@type': 'Question',
-          name: 'Is there a free plan available to get started?',
-          acceptedAnswer: {
-            '@type': 'Answer',
-            text: 'Yes. VISTAAR offers a ₹0 Free plan for single-user micro-businesses to start immediately without any credit card required.',
-          },
-        },
-      ],
-    },
-  ];
 
   const modules = [
     {
@@ -211,50 +211,50 @@ export const PublicHomeView: React.FC = () => {
         title="VISTAAR — Run Better. Grow Wider. | The Business OS for Growing Businesses"
         description="Run your business smarter with VISTAAR. Manage billing, inventory, purchases, suppliers, expenses, and customer payments in one connected Business OS for Indian businesses."
         canonicalPath="/"
-        structuredData={homeStructuredData}
+        structuredData={HOME_STRUCTURED_DATA}
       />
 
       <PublicHeader />
 
       <main className="flex-1">
         {/* HERO SECTION */}
-        <section className="relative overflow-hidden pt-16 pb-20 md:pt-24 md:pb-28 border-b border-slate-200 dark:border-slate-800">
-          {/* Subtle Ambient Background Gradients */}
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-96 bg-gradient-to-tr from-blue-500/10 via-indigo-500/10 to-transparent blur-3xl pointer-events-none" />
+        <section className="relative overflow-hidden pt-16 pb-16 md:pt-20 md:pb-24 border-b border-slate-200 dark:border-slate-800">
+          {/* Subtle Ambient Background Gradient */}
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-6xl h-80 bg-gradient-to-b from-blue-500/10 via-indigo-500/5 to-transparent blur-3xl pointer-events-none" />
 
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
-            <div className="text-center max-w-4xl mx-auto space-y-6">
+            <div className="text-center max-w-3xl mx-auto space-y-6">
               {/* Eyebrow */}
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900/60 text-blue-700 dark:text-blue-300 text-xs font-bold uppercase tracking-widest animate-fade-in shadow-sm">
-                <SparklesIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                <span>THE BUSINESS OS FOR GROWING BUSINESSES</span>
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-medium shadow-sm">
+                <span className="w-2 h-2 rounded-full bg-blue-600 dark:bg-blue-400" />
+                <span>The Unified Business OS for Growing Indian Enterprises</span>
               </div>
 
               {/* H1 */}
-              <h1 className="text-4xl sm:text-6xl lg:text-7xl font-black text-slate-900 dark:text-white tracking-tight leading-[1.08]">
-                Run Better. <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">Grow Wider.</span>
+              <h1 className="text-3xl sm:text-5xl lg:text-6xl font-bold text-slate-900 dark:text-slate-50 tracking-tight leading-[1.12]">
+                Run Better. <span className="text-blue-600 dark:text-blue-400">Grow Wider.</span>
               </h1>
 
               {/* Supporting Copy */}
-              <p className="text-base sm:text-xl text-slate-600 dark:text-slate-300 max-w-3xl mx-auto font-normal leading-relaxed">
-                VISTAAR brings your everyday business operations together in one place, helping you manage inventory, billing, customers, payments, and business performance more efficiently.
+              <p className="text-base sm:text-lg text-slate-600 dark:text-slate-300 max-w-2xl mx-auto font-normal leading-relaxed">
+                Connect your GST billing, inventory, POS counter checkouts, customer credit khata, and cashflow into one reliable system. Purpose-built for Indian retailers, wholesalers, and growing distributors.
               </p>
 
               {/* CTAs */}
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-3.5 pt-4">
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
                 <a
                   href="/signup"
                   onClick={(e) => handleNav('/signup', e)}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3.5 text-sm font-bold rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-xl shadow-blue-500/25 transition-all hover:scale-105 cursor-pointer"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-colors cursor-pointer"
                 >
-                  <span>Start Free Trial</span>
+                  <span>Start 14-Day Free Trial</span>
                   <ArrowRight className="w-4 h-4" />
                 </a>
 
                 <a
                   href="/features/billing-invoicing"
                   onClick={(e) => handleNav('/features/billing-invoicing', e)}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 text-sm font-bold rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-800 shadow-sm transition-all hover:scale-105 cursor-pointer"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 text-sm font-semibold rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 shadow-sm transition-colors cursor-pointer"
                 >
                   <span>Explore Features</span>
                 </a>
@@ -262,30 +262,30 @@ export const PublicHomeView: React.FC = () => {
                 <a
                   href="/download"
                   onClick={(e) => handleNav('/download', e)}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 text-sm font-bold rounded-xl bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-all cursor-pointer"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 text-sm font-medium rounded-lg text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60 transition-colors cursor-pointer"
                 >
-                  <span>Download VISTAAR</span>
+                  <Download className="w-4 h-4" />
+                  <span>Download Apps</span>
                 </a>
               </div>
 
-
               {/* Trust Indicators */}
-              <div className="pt-8 flex flex-wrap items-center justify-center gap-6 text-xs font-semibold text-slate-500 dark:text-slate-400">
+              <div className="pt-6 flex flex-wrap items-center justify-center gap-y-2 gap-x-6 text-xs font-medium text-slate-600 dark:text-slate-400">
                 <div className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                  <span>GST &amp; Non-GST Ready</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>GST &amp; Non-GST Billing</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                  <span>Zero Setup Fee</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>Real-Time Stock Sync</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                  <span>Desktop &amp; Mobile Workflows</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>Customer Udhari Ledger</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                  <span>PostgreSQL Tenant Isolated</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>Multi-Branch Ready</span>
                 </div>
               </div>
             </div>

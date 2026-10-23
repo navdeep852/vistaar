@@ -79,23 +79,21 @@ export const PublicHeader: React.FC = () => {
         <a 
           href="/" 
           onClick={(e) => handleNav('/', e)} 
-          className="flex items-center gap-2.5 group cursor-pointer focus:outline-none"
-          aria-label="VISTAAR Home"
+          className="flex items-center gap-3 group cursor-pointer focus:outline-none"
+          aria-label="VISTAAR — The Business OS"
         >
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center p-1.5 shadow-md shadow-blue-500/20 group-hover:scale-105 transition-transform">
-            <img 
-              src="/Vistaar_Icon_logo.png" 
-              alt="VISTAAR Logo" 
-              className="w-full h-full object-contain filter brightness-0 invert" 
-              width="36" 
-              height="36" 
-            />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-lg font-black tracking-tight text-slate-900 dark:text-white leading-none">
+          <img 
+            src="/Vistaar_Icon_logo.png" 
+            alt="VISTAAR" 
+            className="w-9 h-9 sm:w-10 sm:h-10 object-contain drop-shadow-sm group-hover:scale-105 transition-transform shrink-0" 
+            width="40" 
+            height="40" 
+          />
+          <div className="flex flex-col justify-center">
+            <span className="text-lg sm:text-xl font-bold tracking-tight text-slate-900 dark:text-white leading-none">
               VISTAAR
             </span>
-            <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 tracking-wider uppercase mt-0.5">
+            <span className="text-[10px] sm:text-[11px] font-semibold text-blue-600 dark:text-blue-400 tracking-wider uppercase mt-1 leading-none">
               The Business OS
             </span>
           </div>
@@ -210,12 +208,12 @@ export const PublicHeader: React.FC = () => {
 
           {isAuthed ? (
             <a
-              href="/dashboard"
+              href="/app"
               onClick={(e) => {
                 e.preventDefault();
-                window.location.href = '/';
+                handleNav('/app');
               }}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md shadow-blue-500/25 transition-all cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-all cursor-pointer"
             >
               <span>Go to Workspace</span>
               <ArrowRight className="w-3.5 h-3.5" />
@@ -225,15 +223,15 @@ export const PublicHeader: React.FC = () => {
               <a
                 href="/login"
                 onClick={(e) => handleNav('/login', e)}
-                className="hidden sm:inline-flex px-3.5 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                className="hidden sm:inline-flex px-3.5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
               >
                 Sign In
               </a>
 
               <a
-                href="/login?mode=signup"
-                onClick={(e) => handleNav('/login?mode=signup', e)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md shadow-blue-500/25 transition-all hover:shadow-lg hover:shadow-blue-500/35 hover:-translate-y-0.5 cursor-pointer"
+                href="/signup"
+                onClick={(e) => handleNav('/signup', e)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-all cursor-pointer"
               >
                 <span>Start Free</span>
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -329,20 +327,32 @@ export const PublicHeader: React.FC = () => {
           </div>
 
           <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex gap-2">
-            <a
-              href="/login"
-              onClick={(e) => handleNav('/login', e)}
-              className="flex-1 text-center py-2 text-xs font-bold text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 rounded-xl"
-            >
-              Sign In
-            </a>
-            <a
-              href="/login?mode=signup"
-              onClick={(e) => handleNav('/login?mode=signup', e)}
-              className="flex-1 text-center py-2 text-xs font-bold text-white bg-blue-600 rounded-xl shadow"
-            >
-              Start Free
-            </a>
+            {isAuthed ? (
+              <a
+                href="/app"
+                onClick={(e) => handleNav('/app', e)}
+                className="flex-1 text-center py-2 text-xs font-semibold text-white bg-blue-600 rounded-xl shadow-sm"
+              >
+                Go to Workspace &rarr;
+              </a>
+            ) : (
+              <>
+                <a
+                  href="/login"
+                  onClick={(e) => handleNav('/login', e)}
+                  className="flex-1 text-center py-2 text-xs font-semibold text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 rounded-xl"
+                >
+                  Sign In
+                </a>
+                <a
+                  href="/signup"
+                  onClick={(e) => handleNav('/signup', e)}
+                  className="flex-1 text-center py-2 text-xs font-semibold text-white bg-blue-600 rounded-xl shadow-sm"
+                >
+                  Start Free
+                </a>
+              </>
+            )}
           </div>
         </div>
       )}

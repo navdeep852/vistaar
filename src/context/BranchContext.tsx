@@ -74,6 +74,15 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [currentUser]);
 
   const loadBranches = useCallback(async () => {
+    if (!supabaseAuthService.isAuthenticated()) {
+      setBranches([]);
+      setAllWorkspaceBranches([]);
+      setCurrentBranch(null);
+      setIsBranchReady(true);
+      setIsLoadingBranches(false);
+      return;
+    }
+
     try {
       setIsLoadingBranches(true);
       const [fullListRes, authorizedRes] = await Promise.all([

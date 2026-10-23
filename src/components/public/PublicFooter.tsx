@@ -13,15 +13,18 @@ export const PublicFooter: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-10">
           {/* Brand Info & Mission */}
           <div className="lg:col-span-2 space-y-4">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center p-1.5 shadow-md shadow-blue-500/20">
-                <img 
-                  src="/Vistaar_Icon_logo.png" 
-                  alt="VISTAAR" 
-                  className="w-full h-full object-contain filter brightness-0 invert" 
-                />
+            <div className="flex items-center gap-3">
+              <img 
+                src="/Vistaar_Icon_logo.png" 
+                alt="VISTAAR Logo" 
+                className="w-9 h-9 object-contain drop-shadow-sm shrink-0" 
+                width="36" 
+                height="36" 
+              />
+              <div className="flex flex-col">
+                <span className="text-xl font-bold text-white tracking-tight leading-none">VISTAAR</span>
+                <span className="text-[10px] font-semibold text-blue-400 tracking-wider uppercase mt-1 leading-none">The Business OS</span>
               </div>
-              <span className="text-xl font-black text-white tracking-tight">VISTAAR</span>
             </div>
 
             <p className="text-sm font-semibold text-blue-400">

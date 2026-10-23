@@ -14,7 +14,10 @@ import {
   BarChart3,
   PanelLeft,
   Lock,
+  Globe,
+  ExternalLink,
 } from 'lucide-react';
+import { navigateTo } from '../lib/publicRouter';
 import { supabaseAuthService } from '../services/supabaseAuth';
 import { notificationService } from '../services/supabase';
 import { AppNotification } from '../types';
@@ -377,6 +380,22 @@ export const Header: React.FC<HeaderProps> = ({
                 <UserIcon className="w-4 h-4 text-slate-500 dark:text-slate-400" />
                 <span>{user?.role === 'employee' ? 'My Profile & Settings' : 'Profile & Business Settings'}</span>
               </button>
+
+              <a
+                href="/"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setUserMenuOpen(false);
+                  navigateTo('/');
+                }}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2.5">
+                  <Globe className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  <span>VISTAAR Website</span>
+                </div>
+                <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+              </a>
 
               <button
                 onClick={() => {
