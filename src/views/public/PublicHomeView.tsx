@@ -217,35 +217,41 @@ export const PublicHomeView: React.FC = () => {
       <PublicHeader />
 
       <main className="flex-1">
-        {/* HERO SECTION */}
-        <section className="relative overflow-hidden pt-16 pb-16 md:pt-20 md:pb-24 border-b border-slate-200 dark:border-slate-800">
-          {/* Subtle Ambient Background Gradient */}
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-6xl h-80 bg-gradient-to-b from-blue-500/10 via-indigo-500/5 to-transparent blur-3xl pointer-events-none" />
+        {/* HERO SECTION WITH CINEMATIC VISTAAR BACKGROUND */}
+        <section
+          className="relative overflow-hidden pt-16 pb-16 md:pt-24 md:pb-28 border-b border-slate-800 bg-slate-950 text-white bg-cover bg-no-repeat bg-[position:right_25%_center] sm:bg-[position:right_center]"
+          style={{
+            backgroundImage: "url('/images/vistaar-hero-background.png')",
+          }}
+        >
+          {/* Directional Vignette & Gradient Overlay for Maximum Text Contrast without obscuring the sunrise or cliff figure */}
+          <div className="absolute inset-0 bg-gradient-to-r from-slate-950/95 via-slate-950/80 to-slate-950/25 lg:from-slate-950/90 lg:via-slate-950/50 lg:to-transparent pointer-events-none" />
+          <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-slate-950/80 to-transparent pointer-events-none" />
 
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
-            <div className="text-center max-w-3xl mx-auto space-y-6">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            <div className="text-center lg:text-left max-w-3xl lg:max-w-2xl mx-auto lg:mx-0 space-y-6">
               {/* Eyebrow */}
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-medium shadow-sm">
-                <span className="w-2 h-2 rounded-full bg-blue-600 dark:bg-blue-400" />
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/85 border border-blue-400/40 text-blue-300 text-xs font-medium shadow-sm backdrop-blur-md">
+                <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
                 <span>The Unified Business OS for Growing Indian Enterprises</span>
               </div>
 
               {/* H1 */}
-              <h1 className="text-3xl sm:text-5xl lg:text-6xl font-bold text-slate-900 dark:text-slate-50 tracking-tight leading-[1.12]">
-                Run Better. <span className="text-blue-600 dark:text-blue-400">Grow Wider.</span>
+              <h1 className="text-3xl sm:text-5xl lg:text-6xl font-bold text-white tracking-tight leading-[1.12] drop-shadow-sm">
+                Run Better. <span className="text-blue-400">Grow Wider.</span>
               </h1>
 
               {/* Supporting Copy */}
-              <p className="text-base sm:text-lg text-slate-600 dark:text-slate-300 max-w-2xl mx-auto font-normal leading-relaxed">
+              <p className="text-base sm:text-lg text-slate-200 max-w-2xl font-normal leading-relaxed drop-shadow-sm">
                 Connect your GST billing, inventory, POS counter checkouts, customer credit khata, and cashflow into one reliable system. Purpose-built for Indian retailers, wholesalers, and growing distributors.
               </p>
 
               {/* CTAs */}
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+              <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3 pt-2">
                 <a
                   href="/signup"
                   onClick={(e) => handleNav('/signup', e)}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-colors cursor-pointer"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/40 transition-colors cursor-pointer"
                 >
                   <span>Start 14-Day Free Trial</span>
                   <ArrowRight className="w-4 h-4" />
@@ -254,7 +260,7 @@ export const PublicHomeView: React.FC = () => {
                 <a
                   href="/features/billing-invoicing"
                   onClick={(e) => handleNav('/features/billing-invoicing', e)}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 text-sm font-semibold rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 shadow-sm transition-colors cursor-pointer"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 text-sm font-semibold rounded-lg bg-slate-900/80 hover:bg-slate-800 text-white border border-slate-700/80 backdrop-blur-sm shadow-sm transition-colors cursor-pointer"
                 >
                   <span>Explore Features</span>
                 </a>
@@ -262,7 +268,7 @@ export const PublicHomeView: React.FC = () => {
                 <a
                   href="/download"
                   onClick={(e) => handleNav('/download', e)}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 text-sm font-medium rounded-lg text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60 transition-colors cursor-pointer"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 text-sm font-medium rounded-lg text-slate-200 hover:text-white hover:bg-white/10 backdrop-blur-sm transition-colors cursor-pointer"
                 >
                   <Download className="w-4 h-4" />
                   <span>Download Apps</span>
@@ -270,28 +276,28 @@ export const PublicHomeView: React.FC = () => {
               </div>
 
               {/* Trust Indicators */}
-              <div className="pt-6 flex flex-wrap items-center justify-center gap-y-2 gap-x-6 text-xs font-medium text-slate-600 dark:text-slate-400">
+              <div className="pt-6 flex flex-wrap items-center justify-center lg:justify-start gap-y-2 gap-x-6 text-xs font-medium text-slate-300">
                 <div className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                   <span>GST &amp; Non-GST Billing</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                   <span>Real-Time Stock Sync</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                   <span>Customer Udhari Ledger</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                   <span>Multi-Branch Ready</span>
                 </div>
               </div>
             </div>
 
             {/* Visual Hero Dashboard Card Preview */}
-            <div className="mt-12 max-w-5xl mx-auto rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-4 sm:p-6 overflow-hidden">
+            <div className="mt-12 max-w-5xl mx-auto rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200/80 dark:border-slate-700/60 shadow-2xl shadow-black/40 p-4 sm:p-6 overflow-hidden">
               <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 text-xs">
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full bg-rose-500" />
