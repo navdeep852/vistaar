@@ -48,7 +48,7 @@ import {
   FontFamily,
   DOCUMENT_FONTS,
 } from '../types/template';
-import { Customer, Product, QuotationItem, InvoiceItem, PaymentMethod, InvoiceStatus, Invoice } from '../types';
+import { Customer, Product, Quotation, QuotationItem, QuotationStatus, InvoiceItem, PaymentMethod, InvoiceStatus, Invoice } from '../types';
 import { INVOICE_TEMPLATES } from '../templates/invoiceTemplates';
 import { QUOTATION_TEMPLATES } from '../templates/quotationTemplates';
 import { DocumentRenderer, DocumentRendererProps } from '../components/DocumentRenderer';
@@ -584,129 +584,142 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
   };
 
   // Save Draft Action
-  const handleSaveDraft = () => {
+  const handleSaveDraft = async () => {
     if (isSavingDraft || isFinalizing) return;
     setIsSavingDraft(true);
 
-    // 1. Normalize line items: remove completely empty rows
-    const cleanedItems = items.filter((item) => !isEmptyLineItem(item));
+    try {
+      // 1. Normalize line items: remove completely empty rows
+      const cleanedItems = items.filter((item) => !isEmptyLineItem(item));
 
-    if (cleanedItems.length === 0) {
-      showToast('Add at least one product/item before continuing.', 'error');
+      if (cleanedItems.length === 0) {
+        showToast('Add at least one product/item before continuing.', 'error');
+        setEditorSection('items');
+        return;
+      }
+
+      // Update UI state so empty rows are removed immediately
+      setItems(cleanedItems);
+
+      // Build calculated items from cleanedItems
+      const draftCalculatedItems: (QuotationItem | InvoiceItem)[] = cleanedItems.map((item, idx) => {
+        const prod = products.find((p) => p.id === item.productId);
+        const lineSubtotal = (item.quantity || 1) * (item.sellingPrice || 0);
+        const afterDiscount = Math.max(0, lineSubtotal - (item.discountAmount || 0));
+        const taxAmount = (afterDiscount * (item.taxPercent || 0)) / 100;
+        const total = afterDiscount + taxAmount;
+
+        return {
+          id: `item-${idx}`,
+          itemType: (item as any).itemType || (item.productId ? 'product' : 'custom'),
+          productId: item.productId,
+          productName: item.productName,
+          description: (item as any).description,
+          partNumber: item.partNumber,
+          sku: item.sku || item.partNumber || '',
+          unit: item.unit || 'Pcs',
+          quantity: item.quantity,
+          buyPrice: prod ? prod.buyPrice : 0,
+          sellingPrice: item.sellingPrice,
+          discountAmount: item.discountAmount || 0,
+          taxPercent: item.taxPercent,
+          taxAmount,
+          total,
+        };
+      });
+
+      const draftSubtotal = draftCalculatedItems.reduce((acc, i) => acc + i.quantity * i.sellingPrice, 0);
+      const draftDiscountTotal = draftCalculatedItems.reduce((acc, i) => acc + i.discountAmount, 0);
+      const draftTaxTotal = draftCalculatedItems.reduce((acc, i) => acc + i.taxAmount, 0);
+      const draftGrandTotal = draftSubtotal - draftDiscountTotal + draftTaxTotal;
+
+      if (documentType === 'invoice') {
+        store.addInvoice({
+          branchId: currentBranch?.id || initialDraftData?.branchId || undefined,
+          customerId: selectedCustomerId || undefined,
+          customerName,
+          customerPhone,
+          customerWhatsapp,
+          customerEmail,
+          customerAddress,
+          customerGstin,
+          status: 'Draft',
+          date,
+          dueDate: dueDateOrValid,
+          items: draftCalculatedItems as InvoiceItem[],
+          subtotal: draftSubtotal,
+          discountTotal: draftDiscountTotal,
+          taxTotal: draftTaxTotal,
+          grandTotal: draftGrandTotal,
+          paidAmount: 0,
+          balanceAmount: draftGrandTotal,
+          notes,
+          terms,
+          footerText,
+          templateId,
+          branding,
+          theme: {
+            primaryColor: customization.primaryColor,
+            secondaryColor: customization.secondaryColor,
+            textColor: customization.textColor,
+            fontFamily: customization.bodyFont,
+          },
+          customization,
+        });
+        showToast('Invoice saved as Draft!', 'success');
+        onSuccess?.() || onBack();
+      } else {
+        const draftItems = draftCalculatedItems as QuotationItem[];
+        const quotationPayload = {
+          branchId: currentBranch?.id || initialDraftData?.branchId || undefined,
+          customerId: selectedCustomerId || undefined,
+          customerName: customerName || 'Walk-in Customer',
+          customerPhone: customerPhone || '',
+          customerWhatsapp: customerWhatsapp || undefined,
+          customerEmail: customerEmail || undefined,
+          customerAddress: customerAddress || undefined,
+          customerGstin: customerGstin || undefined,
+          status: 'Draft' as QuotationStatus,
+          date,
+          validUntil: dueDateOrValid,
+          subtotal: draftSubtotal,
+          discountTotal: draftDiscountTotal,
+          taxTotal: draftTaxTotal,
+          grandTotal: draftGrandTotal,
+          notes,
+          terms,
+          footerText,
+          templateId,
+          branding,
+          theme: {
+            primaryColor: customization.primaryColor,
+            secondaryColor: customization.secondaryColor,
+            textColor: customization.textColor,
+            fontFamily: customization.bodyFont,
+          },
+          customization,
+        };
+
+        let qtRes;
+        if (initialDraftData?.id) {
+          qtRes = await quotationService.updateQuotation(initialDraftData.id, quotationPayload, draftItems);
+        } else {
+          qtRes = await quotationService.createQuotation(quotationPayload, draftItems);
+        }
+
+        if (qtRes.error) {
+          showToast(`Failed to save quotation draft: ${qtRes.error}`, 'error');
+          return;
+        }
+
+        showToast('Quotation saved as Draft!', 'success');
+        onSuccess?.() || onBack();
+      }
+    } catch (e: any) {
+      showToast(e.message || 'Failed to save draft.', 'error');
+    } finally {
       setIsSavingDraft(false);
-      setEditorSection('items');
-      return;
     }
-
-    // Update UI state so empty rows are removed immediately
-    setItems(cleanedItems);
-
-    // Build calculated items from cleanedItems
-    const draftCalculatedItems: (QuotationItem | InvoiceItem)[] = cleanedItems.map((item, idx) => {
-      const prod = products.find((p) => p.id === item.productId);
-      const lineSubtotal = (item.quantity || 1) * (item.sellingPrice || 0);
-      const afterDiscount = Math.max(0, lineSubtotal - (item.discountAmount || 0));
-      const taxAmount = (afterDiscount * (item.taxPercent || 0)) / 100;
-      const total = afterDiscount + taxAmount;
-
-      return {
-        id: `item-${idx}`,
-        itemType: (item as any).itemType || (item.productId ? 'product' : 'custom'),
-        productId: item.productId,
-        productName: item.productName,
-        description: (item as any).description,
-        partNumber: item.partNumber,
-        sku: item.sku || item.partNumber || '',
-        unit: item.unit || 'Pcs',
-        quantity: item.quantity,
-        buyPrice: prod ? prod.buyPrice : 0,
-        sellingPrice: item.sellingPrice,
-        discountAmount: item.discountAmount || 0,
-        taxPercent: item.taxPercent,
-        taxAmount,
-        total,
-      };
-    });
-
-    const draftSubtotal = draftCalculatedItems.reduce((acc, i) => acc + i.quantity * i.sellingPrice, 0);
-    const draftDiscountTotal = draftCalculatedItems.reduce((acc, i) => acc + i.discountAmount, 0);
-    const draftTaxTotal = draftCalculatedItems.reduce((acc, i) => acc + i.taxAmount, 0);
-    const draftGrandTotal = draftSubtotal - draftDiscountTotal + draftTaxTotal;
-
-    if (documentType === 'invoice') {
-      store.addInvoice({
-        branchId: currentBranch?.id || initialDraftData?.branchId || undefined,
-        customerId: selectedCustomerId || undefined,
-        customerName,
-        customerPhone,
-        customerWhatsapp,
-        customerEmail,
-        customerAddress,
-        customerGstin,
-        status: 'Draft',
-        date,
-        dueDate: dueDateOrValid,
-        items: draftCalculatedItems as InvoiceItem[],
-        subtotal: draftSubtotal,
-        discountTotal: draftDiscountTotal,
-        taxTotal: draftTaxTotal,
-        grandTotal: draftGrandTotal,
-        paidAmount: 0,
-        balanceAmount: draftGrandTotal,
-        notes,
-        terms,
-        footerText,
-        templateId,
-        branding,
-        theme: {
-          primaryColor: customization.primaryColor,
-          secondaryColor: customization.secondaryColor,
-          textColor: customization.textColor,
-          fontFamily: customization.bodyFont,
-        },
-        customization,
-      });
-      showToast('Invoice saved as Draft!', 'success');
-    } else {
-      const qt = store.addQuotation({
-        branchId: currentBranch?.id || initialDraftData?.branchId || undefined,
-        customerId: selectedCustomerId || undefined,
-        customerName,
-        customerPhone,
-        customerWhatsapp,
-        customerEmail,
-        customerAddress,
-        customerGstin,
-        status: 'Draft',
-        date,
-        validUntil: dueDateOrValid,
-        items: draftCalculatedItems as QuotationItem[],
-        subtotal: draftSubtotal,
-        discountTotal: draftDiscountTotal,
-        taxTotal: draftTaxTotal,
-        grandTotal: draftGrandTotal,
-        notes,
-        terms,
-        footerText,
-        templateId,
-        branding,
-        theme: {
-          primaryColor: customization.primaryColor,
-          secondaryColor: customization.secondaryColor,
-          textColor: customization.textColor,
-          fontFamily: customization.bodyFont,
-        },
-        customization,
-      });
-
-      // Synchronize quotation draft with Supabase in background
-      quotationService.createQuotation(qt, draftCalculatedItems as QuotationItem[]).catch((err) => {
-        console.warn('[DocumentEditorView] Quotation draft sync notice:', err);
-      });
-
-      showToast('Quotation saved as Draft!', 'success');
-    }
-    onSuccess?.() || onBack();
   };
 
   // Finalize Document Action
@@ -995,7 +1008,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         const qtTaxTotal = qtCalculatedItems.reduce((acc, i) => acc + i.taxAmount, 0);
         const qtGrandTotal = qtSubtotal - qtDiscountTotal + qtTaxTotal;
 
-        const qt = store.addQuotation({
+        const quotationPayload = {
           branchId: currentBranch?.id || initialDraftData?.branchId || undefined,
           customerId: selectedCustomerId || undefined,
           customerName,
@@ -1004,10 +1017,9 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
           customerEmail,
           customerAddress,
           customerGstin,
-          status: 'Sent',
+          status: 'Sent' as QuotationStatus,
           date,
           validUntil: dueDateOrValid,
-          items: qtCalculatedItems,
           subtotal: qtSubtotal,
           discountTotal: qtDiscountTotal,
           taxTotal: qtTaxTotal,
@@ -1024,15 +1036,23 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
             fontFamily: customization.bodyFont,
           },
           customization,
-        });
+        };
 
-        // Sync quotation with Supabase
-        const qtRes = await quotationService.createQuotation(qt, qtCalculatedItems);
-        if (qtRes.error) {
-          console.warn('[DocumentEditorView] Quotation Supabase sync notice:', qtRes.error);
+        let qtRes;
+        if (initialDraftData?.id) {
+          qtRes = await quotationService.updateQuotation(initialDraftData.id, quotationPayload, qtCalculatedItems);
+        } else {
+          qtRes = await quotationService.createQuotation(quotationPayload, qtCalculatedItems);
         }
 
-        showToast(`Quotation ${qt.quotationNumber} finalized & saved!`, 'success');
+        if (qtRes.error) {
+          showToast(`Failed to finalize quotation: ${qtRes.error}`, 'error');
+          setIsFinalizing(false);
+          return;
+        }
+
+        const savedNumber = qtRes.quotation?.quotationNumber || 'Document';
+        showToast(`Quotation ${savedNumber} finalized & saved!`, 'success');
       }
 
       setFinalizeConfirmOpen(false);

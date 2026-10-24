@@ -787,3 +787,92 @@ export function fromDbExpense(row: any): Expense {
     createdAt: row.created_at || new Date().toISOString(),
   };
 }
+
+export function fromDbQuotationItem(it: any): QuotationItem {
+  return {
+    id: it.id || `qti-${Date.now()}`,
+    branchId: it.branch_id || it.branchId || undefined,
+    itemType: it.item_type || it.itemType || (it.product_id || it.productId ? 'product' : 'custom'),
+    productId: it.product_id || it.productId || undefined,
+    productName: it.product_name || it.productName || it.name || 'Item',
+    description: it.description || undefined,
+    partNumber: it.part_number || it.partNumber || undefined,
+    sku: it.sku || '',
+    unit: it.unit || 'Pcs',
+    quantity: Number(it.quantity) || 0,
+    buyPrice: Number(it.buy_price ?? it.buyPrice) || 0,
+    sellingPrice: Number(it.selling_price ?? it.sellingPrice ?? it.rate ?? it.price) || 0,
+    discountAmount: Number(it.discount_amount ?? it.discountAmount) || 0,
+    taxPercent: Number(it.tax_percent ?? it.taxPercent ?? it.taxRate) || 0,
+    taxAmount: Number(it.tax_amount ?? it.taxAmount) || 0,
+    total: Number(it.total) || 0,
+  };
+}
+
+export function fromDbQuotation(row: any): Quotation {
+  const isConverted =
+    row.status === 'Converted' ||
+    Boolean(row.converted_invoice_id || row.convertedInvoiceId);
+
+  const rawItems =
+    Array.isArray(row.quotation_items) && row.quotation_items.length > 0
+      ? row.quotation_items
+      : Array.isArray(row.items) && row.items.length > 0
+      ? row.items
+      : Array.isArray(row.snapshot?.items) && row.snapshot.items.length > 0
+      ? row.snapshot.items
+      : [];
+  const items: QuotationItem[] = rawItems.map((it: any) => fromDbQuotationItem(it));
+
+  const branchId =
+    row.branch_id ||
+    row.branchId ||
+    row.snapshot?.branch_id ||
+    row.snapshot?.branchId ||
+    undefined;
+
+  const branchName =
+    row.branch_name ||
+    row.branchName ||
+    row.snapshot?.branch_name ||
+    row.snapshot?.branchName ||
+    undefined;
+
+  const resolvedDate = row.date ? normalizeToYyyyMmDd(row.date) : (row.created_at || new Date().toISOString()).split('T')[0];
+  const resolvedValidUntil = row.valid_until || row.validUntil ? normalizeToYyyyMmDd(row.valid_until || row.validUntil) : resolvedDate;
+
+  return {
+    id: row.id,
+    branchId,
+    branchName,
+    quotationNumber: row.quotation_number || row.quotationNumber || `QT-${Date.now()}`,
+    customerId: row.customer_id || row.customerId || undefined,
+    customerName: row.customer_name || row.customerName || 'Customer',
+    customerPhone: row.customer_phone || row.customerPhone || '',
+    customerWhatsapp: row.customer_whatsapp || row.customerWhatsapp || undefined,
+    customerEmail: row.customer_email || row.customerEmail || undefined,
+    customerAddress: row.customer_address || row.customerAddress || undefined,
+    customerGstin: row.customer_gstin || row.customerGstin || undefined,
+    status: isConverted ? 'Converted' : (row.status || 'Draft'),
+    validUntil: resolvedValidUntil,
+    date: resolvedDate,
+    items,
+    subtotal: Number(row.subtotal) || 0,
+    discountTotal: Number(row.discount_total ?? row.discountTotal) || 0,
+    taxTotal: Number(row.tax_total ?? row.taxTotal) || 0,
+    grandTotal: Number(row.grand_total ?? row.grandTotal) || 0,
+    notes: row.notes || undefined,
+    terms: row.terms || undefined,
+    footerText: row.footer_text || row.footerText || undefined,
+    convertedInvoiceId: row.converted_invoice_id || row.convertedInvoiceId || undefined,
+    convertedAt: row.converted_at || row.convertedAt || (isConverted ? (row.updated_at || row.date) : undefined),
+    templateId: row.template_id || row.templateId || 'qt-modern-blue',
+    branding: row.branding || undefined,
+    theme: row.theme || undefined,
+    customization: row.customization || undefined,
+    snapshot: row.snapshot || undefined,
+    isSnapshotFinalized: row.is_snapshot_finalized ?? row.isSnapshotFinalized ?? true,
+    createdAt: row.created_at || row.createdAt || new Date().toISOString(),
+    updatedAt: row.updated_at || row.updatedAt || new Date().toISOString(),
+  };
+}

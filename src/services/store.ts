@@ -49,13 +49,14 @@ import {
   PAYMENT_TOLERANCE,
 } from './financialCalculationService';
 import { filterValidLineItems } from '../lib/productHelpers';
-import { fromDbInvoice, fromDbCounterSale } from './supabase/types';
+import { fromDbInvoice, fromDbCounterSale, fromDbQuotation } from './supabase/types';
 import { getIstTodayString, normalizeToYyyyMmDd, isTransactionInTodayIst, isTransactionInMonthIst } from '../lib/dateRange';
 import { isRecordInBranch } from '../lib/branchUtils';
 
-const LOCAL_PRODUCTS_KEY = 'vistaar_local_products_db';
-const LOCAL_INVOICES_KEY = 'vistaar_local_invoices_db';
-const LOCAL_SALES_KEY = 'vistaar_local_counter_sales_db';
+export const LOCAL_PRODUCTS_KEY = 'vistaar_local_products_db';
+export const LOCAL_INVOICES_KEY = 'vistaar_local_invoices_db';
+export const LOCAL_SALES_KEY = 'vistaar_local_counter_sales_db';
+export const LOCAL_QUOTATIONS_KEY = 'vistaar_local_quotations_db';
 
 
 export function calculateUdhariStatus(originalAmount: number, totalReceived: number, dueDate: string): UdhariStatus {
@@ -289,6 +290,24 @@ class StoreService {
           console.warn('[loadFromStorage] Failed merging local counter sales DB:', sErr);
         }
 
+        // Merge fallback quotations from LOCAL_QUOTATIONS_KEY (vistaar_local_quotations_db)
+        try {
+          const localDbQuotations = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
+          if (Array.isArray(localDbQuotations) && localDbQuotations.length > 0) {
+            for (const lQt of localDbQuotations) {
+              const mapped = fromDbQuotation(lQt);
+              const exists = stateObj.quotations.some(
+                (q) => q.id === mapped.id || (mapped.quotationNumber && q.quotationNumber === mapped.quotationNumber)
+              );
+              if (!exists) {
+                stateObj.quotations.push(mapped);
+              }
+            }
+          }
+        } catch (qErr) {
+          console.warn('[loadFromStorage] Failed merging local quotations DB:', qErr);
+        }
+
         this.reconcileStateLedgers(stateObj);
         return stateObj;
       }
@@ -330,6 +349,13 @@ class StoreService {
       const localDbSales = safeGetTenantStorage<any>(LOCAL_SALES_KEY, []);
       if (Array.isArray(localDbSales) && localDbSales.length > 0) {
         fallback.counterSales = localDbSales.map((s) => fromDbCounterSale(s));
+      }
+    } catch {}
+
+    try {
+      const localDbQuotations = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
+      if (Array.isArray(localDbQuotations) && localDbQuotations.length > 0) {
+        fallback.quotations = localDbQuotations.map((q) => fromDbQuotation(q));
       }
     } catch {}
 
@@ -1170,17 +1196,70 @@ class StoreService {
     this.saveLastUsedTemplate('quotation', newQuotation.templateId);
     this.state.quotations.unshift(newQuotation);
     this.saveToStorage();
+    try {
+      safeSaveTenantStorage(LOCAL_QUOTATIONS_KEY, this.state.quotations);
+    } catch {}
     return newQuotation;
+  }
+
+  public updateQuotation(id: string, quotationData: Partial<Quotation>): Quotation | null {
+    const idx = this.state.quotations.findIndex((q) => q.id === id || (quotationData.quotationNumber && q.quotationNumber === quotationData.quotationNumber));
+    if (idx === -1) return null;
+
+    const existing = this.state.quotations[idx];
+    const updated: Quotation = {
+      ...existing,
+      ...quotationData,
+      id: quotationData.id || existing.id,
+      quotationNumber: quotationData.quotationNumber || existing.quotationNumber,
+      items: quotationData.items ? (filterValidLineItems(quotationData.items) as QuotationItem[]) : existing.items,
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.state.quotations[idx] = updated;
+    this.saveToStorage();
+    try {
+      safeSaveTenantStorage(LOCAL_QUOTATIONS_KEY, this.state.quotations);
+    } catch {}
+    this.notify();
+    return updated;
+  }
+
+  public deleteQuotation(id: string): boolean {
+    const initialLen = this.state.quotations.length;
+    this.state.quotations = this.state.quotations.filter((q) => q.id !== id && q.quotationNumber !== id);
+    if (this.state.quotations.length !== initialLen) {
+      this.saveToStorage();
+      try {
+        safeSaveTenantStorage(LOCAL_QUOTATIONS_KEY, this.state.quotations);
+      } catch {}
+      this.notify();
+      return true;
+    }
+    return false;
   }
 
   public syncRemoteQuotations(remote: Quotation[]) {
     if (!Array.isArray(remote)) return;
     const existingMap = new Map((this.state.quotations || []).map((q) => [q.id, q]));
     for (const r of remote) {
-      existingMap.set(r.id, { ...(existingMap.get(r.id) || {}), ...r });
+      const mapped = fromDbQuotation(r);
+      const key = mapped.id;
+      existingMap.set(key, { ...(existingMap.get(key) || {}), ...mapped });
+      // Deduplicate by quotationNumber if ID changed from local temp to DB uuid
+      if (mapped.quotationNumber) {
+        for (const [k, v] of existingMap.entries()) {
+          if (k !== key && v.quotationNumber === mapped.quotationNumber) {
+            existingMap.delete(k);
+          }
+        }
+      }
     }
     this.state.quotations = Array.from(existingMap.values());
     this.saveToStorage();
+    try {
+      safeSaveTenantStorage(LOCAL_QUOTATIONS_KEY, this.state.quotations);
+    } catch {}
     this.notify();
   }
 
@@ -1193,6 +1272,10 @@ class StoreService {
       }
       qt.updatedAt = new Date().toISOString();
       this.saveToStorage();
+      try {
+        safeSaveTenantStorage(LOCAL_QUOTATIONS_KEY, this.state.quotations);
+      } catch {}
+      this.notify();
     }
   }
 

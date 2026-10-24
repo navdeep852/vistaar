@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Plus,
   Search,
@@ -16,6 +16,8 @@ import {
   Calendar,
   Copy,
   Download,
+  Trash2,
+  RefreshCw,
 } from 'lucide-react';
 import { store } from '../services/store';
 import { quotationService } from '../services/supabase/quotationService';
@@ -52,6 +54,8 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   // Workflow State: list | gallery | editor
   const [mode, setMode] = useState<'list' | 'gallery' | 'editor'>(
@@ -63,6 +67,11 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
   // Preview Modal
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null);
+
+  // Delete Modal
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [quotationToDelete, setQuotationToDelete] = useState<Quotation | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Convert to Invoice Modal State
   const [convertModalOpen, setConvertModalOpen] = useState(false);
@@ -80,37 +89,100 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
 
   const settings = store.getSettings();
 
-  useEffect(() => {
-    const updateData = () => {
-      const all = store.getQuotations();
-      if (currentBranch) {
-        setQuotations(all.filter((q) => q.branchId === currentBranch.id || (!q.branchId && (currentBranch.isMainBranch || currentBranch.id === 'ALL'))));
-      } else {
-        setQuotations(all);
-      }
-    };
-    updateData();
+  const updateData = useCallback(() => {
+    const all = store.getQuotations();
+    if (currentBranch) {
+      setQuotations(all.filter((q) => q.branchId === currentBranch.id || (!q.branchId && (currentBranch.isMainBranch || currentBranch.id === 'ALL'))));
+    } else {
+      setQuotations(all);
+    }
+  }, [currentBranch]);
 
-    quotationService.getQuotations(undefined, { branchId: currentBranch?.id }).then((res) => {
-      if (res.data && res.data.length > 0) {
+  const fetchQuotations = useCallback(async () => {
+    setIsLoading(true);
+    setFetchError(null);
+    try {
+      const res = await quotationService.getQuotations(undefined, { branchId: currentBranch?.id });
+      if (res.error) {
+        setFetchError(res.error);
+      } else if (res.data) {
         store.syncRemoteQuotations(res.data);
-        updateData();
       }
-    }).catch(() => {});
+    } catch (err: any) {
+      setFetchError(err.message || 'Failed to fetch quotations from database.');
+    } finally {
+      setIsLoading(false);
+      updateData();
+    }
+  }, [currentBranch?.id, updateData]);
+
+  useEffect(() => {
+    updateData();
+    fetchQuotations();
 
     // Also perform non-blocking reconciliation of previous conversions
     quotationService.reconcileConversions().catch((err) => {
       console.warn('Quotation conversion reconciliation background notice:', err);
     });
 
-    const handleBranchChanged = () => updateData();
+    const handleBranchChanged = () => {
+      fetchQuotations();
+    };
     window.addEventListener('vistaar:branch_changed', handleBranchChanged);
     const unsub = store.subscribe(updateData);
     return () => {
       window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
       unsub();
     };
-  }, [currentBranch?.id]);
+  }, [fetchQuotations, updateData]);
+
+  const handleStatusChange = async (qt: Quotation, newStatus: QuotationStatus) => {
+    if (newStatus === 'Converted') {
+      openConvertModal(qt);
+      return;
+    }
+    const res = await quotationService.updateQuotationStatus(qt.id, newStatus);
+    if (!res.success) {
+      showToast(res.error || 'Failed to update quotation status.', 'error');
+    } else {
+      showToast(`Quotation ${qt.quotationNumber} marked as ${newStatus}.`, 'success');
+    }
+  };
+
+  const handleDuplicate = (qt: Quotation) => {
+    const duplicated: Partial<Quotation> = {
+      ...qt,
+      id: undefined,
+      quotationNumber: undefined,
+      status: 'Draft',
+      date: new Date().toISOString().split('T')[0],
+      items: (qt.items || []).map((i, idx) => ({ ...i, id: `item-${idx}` })),
+    };
+    setEditingDraftQuotation(duplicated as Quotation);
+    setSelectedTemplateId(qt.templateId || 'qt-modern-blue');
+    setMode('editor');
+    showToast(`Quotation duplicated as new draft`, 'info');
+  };
+
+  const handleDeleteQuotation = async () => {
+    if (!quotationToDelete) return;
+    setIsDeleting(true);
+    try {
+      const res = await quotationService.deleteQuotation(quotationToDelete.id);
+      if (!res.success) {
+        showToast(res.error || 'Failed to delete quotation.', 'error');
+      } else {
+        showToast(`Quotation ${quotationToDelete.quotationNumber} deleted successfully.`, 'success');
+        setDeleteModalOpen(false);
+        setQuotationToDelete(null);
+        updateData();
+      }
+    } catch (e: any) {
+      showToast(e.message || 'Error deleting quotation.', 'error');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const handleEditDraft = (qt: Quotation) => {
     setEditingDraftQuotation(qt);
@@ -299,6 +371,24 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
+      {/* Database Sync Notice / Error Banner */}
+      {fetchError && (
+        <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-rose-700 dark:text-rose-300 text-xs shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+            <span><strong>Database Sync Notice:</strong> {fetchError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => fetchQuotations()}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shrink-0 cursor-pointer transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry Sync</span>
+          </button>
+        </div>
+      )}
+
       {/* Action Header & Search */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card transition-colors">
         <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
@@ -356,7 +446,16 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-              {filteredQuotations.length === 0 ? (
+              {isLoading && filteredQuotations.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                      <span>Loading quotations from database...</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : filteredQuotations.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500">
                     No quotations found. Click <strong>+ Add New Quotation</strong> to choose a template!
@@ -389,14 +488,7 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
                     <td className="px-6 py-4">
                       <select
                         value={qt.status}
-                        onChange={(e) => {
-                          const newStatus = e.target.value as QuotationStatus;
-                          if (newStatus === 'Converted') {
-                            openConvertModal(qt);
-                          } else {
-                            store.updateQuotationStatus(qt.id, newStatus);
-                          }
-                        }}
+                        onChange={(e) => handleStatusChange(qt, e.target.value as QuotationStatus)}
                         className={`px-2.5 py-1 text-[10px] font-bold rounded-full border-0 focus:ring-2 focus:ring-blue-500 ${
                           qt.status === 'Accepted'
                             ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
@@ -436,6 +528,13 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
                         <Eye className="w-4 h-4" />
                       </button>
                       <button
+                        onClick={() => handleDuplicate(qt)}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50"
+                        title="Duplicate as New Draft"
+                      >
+                        <Copy className="w-4 h-4" />
+                      </button>
+                      <button
                         onClick={() => handleSendWhatsApp(qt)}
                         className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-emerald-50"
                         title="Send via WhatsApp"
@@ -451,6 +550,16 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
                           <ArrowRightLeft className="w-4 h-4" />
                         </button>
                       )}
+                      <button
+                        onClick={() => {
+                          setQuotationToDelete(qt);
+                          setDeleteModalOpen(true);
+                        }}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50"
+                        title="Delete Quotation"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </td>
                   </tr>
                 ))
@@ -461,7 +570,12 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
 
         {/* MOBILE CARD LIST VIEW (below md) */}
         <div className="block md:hidden divide-y divide-slate-100 dark:divide-slate-800">
-          {filteredQuotations.length === 0 ? (
+          {isLoading && filteredQuotations.length === 0 ? (
+            <div className="p-8 text-center text-slate-400 dark:text-slate-500 text-xs flex flex-col items-center justify-center gap-2">
+              <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+              <span>Loading quotations from database...</span>
+            </div>
+          ) : filteredQuotations.length === 0 ? (
             <div className="p-8 text-center text-slate-400 dark:text-slate-500 text-xs">
               No quotations found. Tap <strong>+ Add New Quotation</strong> to get started!
             </div>
@@ -484,14 +598,7 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
                     </div>
                     <select
                       value={qt.status}
-                      onChange={(e) => {
-                        const newStatus = e.target.value as QuotationStatus;
-                        if (newStatus === 'Converted') {
-                          openConvertModal(qt);
-                        } else {
-                          store.updateQuotationStatus(qt.id, newStatus);
-                        }
-                      }}
+                      onChange={(e) => handleStatusChange(qt, e.target.value as QuotationStatus)}
                       className={`px-2.5 py-1 text-[10px] font-bold rounded-full border-0 shrink-0 ${
                         isAccepted
                           ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
@@ -541,28 +648,60 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
                       </button>
                     )}
 
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-4 gap-2">
                       <button
                         type="button"
                         onClick={() => {
                           setSelectedQuotation(qt);
                           setPreviewModalOpen(true);
                         }}
-                        className="touch-target min-h-[44px] flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs transition-colors cursor-pointer"
+                        className="touch-target min-h-[40px] flex items-center justify-center p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs transition-colors cursor-pointer"
+                        title="Preview PDF"
                       >
                         <Eye className="w-4 h-4 text-blue-500" />
-                        <span>Preview PDF</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDuplicate(qt)}
+                        className="touch-target min-h-[40px] flex items-center justify-center p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 font-semibold text-xs transition-colors cursor-pointer"
+                        title="Duplicate as Draft"
+                      >
+                        <Copy className="w-4 h-4 text-slate-600 dark:text-slate-400" />
                       </button>
 
                       <button
                         type="button"
                         onClick={() => handleSendWhatsApp(qt)}
-                        className="touch-target min-h-[44px] flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 font-semibold text-xs border border-emerald-200 dark:border-emerald-800 transition-colors cursor-pointer"
+                        className="touch-target min-h-[40px] flex items-center justify-center p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 font-semibold text-xs border border-emerald-200 dark:border-emerald-800 transition-colors cursor-pointer"
+                        title="WhatsApp"
                       >
                         <Share2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                        <span>WhatsApp</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setQuotationToDelete(qt);
+                          setDeleteModalOpen(true);
+                        }}
+                        className="touch-target min-h-[40px] flex items-center justify-center p-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 text-rose-700 dark:text-rose-300 font-semibold text-xs border border-rose-200 dark:border-rose-800 transition-colors cursor-pointer"
+                        title="Delete Quotation"
+                      >
+                        <Trash2 className="w-4 h-4 text-rose-600" />
                       </button>
                     </div>
+
+                    {qt.status === 'Draft' && (
+                      <button
+                        type="button"
+                        onClick={() => handleEditDraft(qt)}
+                        className="w-full touch-target min-h-[38px] flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-bold text-xs border border-blue-200 dark:border-blue-800 cursor-pointer"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                        <span>Edit Draft</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -570,6 +709,65 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* DELETE CONFIRMATION MODAL */}
+      {quotationToDelete && (
+        <Modal
+          isOpen={deleteModalOpen}
+          onClose={() => {
+            if (!isDeleting) {
+              setDeleteModalOpen(false);
+              setQuotationToDelete(null);
+            }
+          }}
+          title="Delete Quotation"
+          maxWidth="md"
+        >
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 bg-rose-50 dark:bg-rose-950/30 p-3.5 rounded-xl border border-rose-200 dark:border-rose-900/50">
+              <AlertCircle className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+              <div className="text-xs text-rose-900 dark:text-rose-200 space-y-1">
+                <p className="font-bold">Are you sure you want to delete this quotation?</p>
+                <p className="text-rose-700 dark:text-rose-300">
+                  This action will permanently remove quotation <strong>{quotationToDelete.quotationNumber}</strong> for <strong>{quotationToDelete.customerName}</strong> ({settings.currency}{quotationToDelete.grandTotal.toLocaleString()}) from persistent database storage.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => {
+                  setDeleteModalOpen(false);
+                  setQuotationToDelete(null);
+                }}
+                className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleDeleteQuotation}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-bold shadow-md shadow-rose-600/20 transition-colors cursor-pointer"
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Permanently</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {/* TEMPLATE GALLERY MODAL */}
       <TemplateGalleryModal

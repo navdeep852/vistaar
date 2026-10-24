@@ -1,12 +1,35 @@
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { Quotation, QuotationItem } from '../../types';
+import { Quotation, QuotationItem, QuotationStatus } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
-import { store } from '../store';
+import { store, LOCAL_QUOTATIONS_KEY } from '../store';
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 import { filterValidLineItems, isEmptyLineItem } from '../../lib/productHelpers';
+import { fromDbQuotation } from './types';
 
-const LOCAL_QUOTATIONS_KEY = 'vistaar_local_quotations_db';
+export { LOCAL_QUOTATIONS_KEY };
+
+function logQuotationDiagnostic(op: string, detail: {
+  quotationId?: string;
+  quotationNumber?: string;
+  workspaceId?: string;
+  success: boolean;
+  count?: number;
+  errorCode?: string;
+  error?: string;
+}) {
+  const safeWsId = detail.workspaceId ? `${detail.workspaceId.slice(0, 8)}...` : 'unresolved';
+  console.info(`[QUOTATION_DIAGNOSTIC] ${op}:`, {
+    quotationId: detail.quotationId,
+    quotationNumber: detail.quotationNumber,
+    workspace: safeWsId,
+    success: detail.success,
+    count: detail.count,
+    errorCode: detail.errorCode,
+    error: detail.error,
+    timestamp: new Date().toISOString(),
+  });
+}
 
 export interface ConvertQuotationPayload {
   quotationId: string;
@@ -59,9 +82,18 @@ export class QuotationService {
     throw new Error('[WORKSPACE RESOLUTION FAILED] Authoritative workspace ID could not be determined in quotationService.');
   }
 
-  public async getQuotations(explicitWsId?: string, options?: { branchId?: string }): Promise<{ data: any[]; error?: string }> {
+  public async getQuotations(explicitWsId?: string, options?: { branchId?: string }): Promise<{ data: Quotation[]; error?: string }> {
     const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
     const localStoreQuotations = store.getQuotations() || [];
+    const localFallbackQuotations = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []).map((q) => fromDbQuotation(q));
+
+    // Seed candidate map from local sources
+    const mergedMap = new Map<string, Quotation>();
+    [...localFallbackQuotations, ...localStoreQuotations].forEach((q) => {
+      const canonical = fromDbQuotation(q);
+      if (canonical.quotationNumber) mergedMap.set(canonical.quotationNumber.trim(), canonical);
+      if (canonical.id) mergedMap.set(canonical.id.trim(), canonical);
+    });
 
     try {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
@@ -70,175 +102,604 @@ export class QuotationService {
           .select('*, quotation_items(*)')
           .eq('workspace_id', wsId);
 
+        let branchFilterAppliedInDb = false;
         if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
           query = query.eq('branch_id', options.branchId);
+          branchFilterAppliedInDb = true;
         }
 
-        const { data, error } = await query.order('created_at', { ascending: false });
+        query = query.order('created_at', { ascending: false });
+
+        let { data, error } = await query;
+
+        // Resilience against unmigrated schema: if branch_id column does not exist (PGRST204 / 42703)
+        if (error && (error.code === 'PGRST204' || error.code === '42703' || error.message?.includes('branch_id'))) {
+          console.warn('[getQuotations] Supabase column branch_id does not exist; querying workspace-wide and filtering in memory');
+          branchFilterAppliedInDb = false;
+          const retryRes = await supabase
+            .from('quotations')
+            .select('*, quotation_items(*)')
+            .eq('workspace_id', wsId)
+            .order('created_at', { ascending: false });
+          data = retryRes.data;
+          error = retryRes.error;
+        }
 
         if (error) {
           const errStr = handleSupabaseError(error, 'getQuotations');
-          return { data: localStoreQuotations, error: errStr };
+          logQuotationDiagnostic('READ_ERROR', {
+            workspaceId: wsId,
+            success: false,
+            errorCode: error.code,
+            error: errStr,
+          });
+          const localList = Array.from(new Set(mergedMap.values()));
+          return { data: localList, error: errStr };
         }
 
-        const remoteList = data || [];
-        if (remoteList.length === 0) {
-          return { data: localStoreQuotations };
+        let remoteList = data || [];
+
+        // If branch filter could not be applied at DB level, filter in memory
+        if (!branchFilterAppliedInDb && options?.branchId && options.branchId !== 'ALL') {
+          remoteList = remoteList.filter((rq: any) => {
+            const bId = rq.branch_id || rq.snapshot?.branch_id || rq.snapshot?.branchId;
+            return bId === options.branchId;
+          });
         }
 
-        // Authoritative seamless merge of Supabase and local store quotations
-        const mergedMap = new Map<string, any>();
-
-        // 1. Seed store quotations
-        localStoreQuotations.forEach((q) => {
-          const key = (q.quotationNumber || q.id || '').trim();
-          if (key) mergedMap.set(key, q);
-          if (q.id) mergedMap.set(q.id, q);
-        });
-
-        // 2. Merge remote quotations
+        // Merge remote quotations authoritatively into the merged map
         remoteList.forEach((rq: any) => {
-          const key = (rq.quotation_number || rq.quotationNumber || rq.id || '').trim();
-          const existing = (key ? mergedMap.get(key) : null) || (rq.id ? mergedMap.get(rq.id) : null);
-          const isConverted =
-            rq.status === 'Converted' ||
-            (existing && existing.status === 'Converted') ||
-            Boolean(rq.converted_invoice_id || (existing && existing.convertedInvoiceId));
+          const mapped = fromDbQuotation(rq);
+          const qNumKey = mapped.quotationNumber?.trim();
+          const idKey = mapped.id?.trim();
 
-          if (existing) {
-            const merged = {
-              ...existing,
-              ...rq,
-              id: existing.id || rq.id,
-              quotationNumber: rq.quotation_number || existing.quotationNumber,
-              customerName: rq.customer_name || existing.customerName,
-              customerPhone: rq.customer_phone || existing.customerPhone,
-              customerEmail: rq.customer_email || existing.customerEmail,
-              status: isConverted ? 'Converted' : (rq.status || existing.status),
-              date: rq.date || existing.date,
-              validUntil: rq.valid_until || existing.validUntil,
-              grandTotal: Number(rq.grand_total ?? existing.grandTotal ?? 0),
-              convertedInvoiceId: rq.converted_invoice_id || existing.convertedInvoiceId,
-              convertedAt: existing.convertedAt || rq.updated_at || existing.updatedAt,
-            };
-            if (key) mergedMap.set(key, merged);
-            if (rq.id) mergedMap.set(rq.id, merged);
-          } else {
-            const mapped = {
-              ...rq,
-              id: rq.id,
-              quotationNumber: rq.quotation_number,
-              customerName: rq.customer_name,
-              customerPhone: rq.customer_phone,
-              customerEmail: rq.customer_email,
-              status: isConverted ? 'Converted' : (rq.status || 'Draft'),
-              date: rq.date,
-              validUntil: rq.valid_until,
-              grandTotal: Number(rq.grand_total || 0),
-              subtotal: Number(rq.subtotal || 0),
-              discountTotal: Number(rq.discount_total || 0),
-              taxTotal: Number(rq.tax_total || 0),
-              convertedInvoiceId: rq.converted_invoice_id,
-              items: rq.quotation_items || [],
-            };
-            if (key) mergedMap.set(key, mapped);
-            if (rq.id) mergedMap.set(rq.id, mapped);
-          }
+          const existing = (qNumKey ? mergedMap.get(qNumKey) : null) || (idKey ? mergedMap.get(idKey) : null);
+          const isConverted = mapped.status === 'Converted' || (existing && existing.status === 'Converted');
+
+          const finalized: Quotation = {
+            ...(existing || {}),
+            ...mapped,
+            id: mapped.id || existing?.id || `qt-${Date.now()}`,
+            quotationNumber: mapped.quotationNumber || existing?.quotationNumber || `QT-${Date.now()}`,
+            branchId: mapped.branchId || existing?.branchId,
+            branchName: mapped.branchName || existing?.branchName,
+            status: isConverted ? 'Converted' : (mapped.status || existing?.status || 'Draft'),
+            items: mapped.items && mapped.items.length > 0 ? mapped.items : (existing?.items || []),
+          };
+
+          if (qNumKey) mergedMap.set(qNumKey, finalized);
+          if (idKey) mergedMap.set(idKey, finalized);
         });
 
         const deduplicated = Array.from(new Set(mergedMap.values()));
-        return { data: deduplicated.length > 0 ? deduplicated : localStoreQuotations };
+
+        // Save authoritative list to local tenant mirror
+        try {
+          safeSaveTenantStorage(LOCAL_QUOTATIONS_KEY, deduplicated);
+        } catch {}
+
+        logQuotationDiagnostic('READ_SUCCESS', {
+          workspaceId: wsId,
+          success: true,
+          count: deduplicated.length,
+        });
+
+        return { data: deduplicated };
       }
-      return { data: localStoreQuotations };
+
+      const localList = Array.from(new Set(mergedMap.values()));
+      return { data: localList };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getQuotations');
-      return { data: localStoreQuotations, error: errStr };
+      logQuotationDiagnostic('READ_EXCEPTION', {
+        workspaceId: wsId,
+        success: false,
+        error: errStr,
+      });
+      const localList = Array.from(new Set(mergedMap.values()));
+      return { data: localList, error: errStr };
     }
   }
 
-  public async createQuotation(qt: Partial<Quotation>, items: QuotationItem[]): Promise<{ quotationId?: string; error?: string }> {
+  public async createQuotation(qt: Partial<Quotation>, items: QuotationItem[]): Promise<{ quotationId?: string; quotation?: Quotation; error?: string }> {
     const wsId = await this.getWorkspaceId();
-    const qtNumber = qt.quotationNumber || `QT-${Date.now()}`;
+    const qtNumber = (qt.quotationNumber || `QT-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`).trim();
+
+    // Idempotency lock
+    if (this.activeLocks.has(qtNumber)) {
+      return { error: `Quotation creation for ${qtNumber} is already in progress.` };
+    }
+    this.activeLocks.add(qtNumber);
 
     try {
+      // 1. Validate required fields
+      if (!qt.customerName || !qt.customerName.trim()) {
+        qt.customerName = 'Walk-in Customer';
+      }
+
+      const validItems = filterValidLineItems(items) as QuotationItem[];
+      const calcSubtotal = validItems.reduce((acc, i) => acc + (Number(i.quantity) || 0) * (Number(i.sellingPrice) || 0), 0);
+      const calcDiscount = validItems.reduce((acc, i) => acc + (Number(i.discountAmount) || 0), 0);
+      const calcTax = validItems.reduce((acc, i) => acc + (Number(i.taxAmount) || 0), 0);
+      const calcGrandTotal = Number((calcSubtotal - calcDiscount + calcTax).toFixed(2));
+
+      const subtotal = qt.subtotal !== undefined ? Number(qt.subtotal) : calcSubtotal;
+      const discountTotal = qt.discountTotal !== undefined ? Number(qt.discountTotal) : calcDiscount;
+      const taxTotal = qt.taxTotal !== undefined ? Number(qt.taxTotal) : calcTax;
+      const grandTotal = qt.grandTotal !== undefined ? Number(qt.grandTotal) : calcGrandTotal;
+
+      const dateStr = qt.date || new Date().toISOString().split('T')[0];
+      const validUntilStr = qt.validUntil || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0];
+
+      // Build structured snapshot incorporating branch and branding
+      const snapshot = qt.snapshot || {
+        templateId: qt.templateId || 'qt-modern-blue',
+        branding: qt.branding || null,
+        theme: qt.theme || null,
+        customization: qt.customization || null,
+        branch_id: qt.branchId || null,
+        branchId: qt.branchId || null,
+        notes: qt.notes || null,
+        terms: qt.terms || null,
+        footerText: qt.footerText || null,
+      };
+
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
-        const { data: parent, error: parentErr } = await supabase
+        // Prepare parent insert payload
+        const parentPayload: Record<string, any> = {
+          workspace_id: wsId,
+          customer_id: (qt.customerId && isValidUuid(qt.customerId)) ? qt.customerId : null,
+          quotation_number: qtNumber,
+          customer_name: qt.customerName,
+          customer_phone: qt.customerPhone || '',
+          customer_whatsapp: qt.customerWhatsapp || null,
+          customer_email: qt.customerEmail || null,
+          customer_address: qt.customerAddress || null,
+          customer_gstin: qt.customerGstin || null,
+          status: qt.status || 'Draft',
+          valid_until: validUntilStr,
+          date: dateStr,
+          subtotal,
+          discount_total: discountTotal,
+          tax_total: taxTotal,
+          grand_total: grandTotal,
+          notes: qt.notes || null,
+          terms: qt.terms || null,
+          footer_text: qt.footerText || null,
+          template_id: qt.templateId || 'qt-modern-blue',
+          branding: qt.branding || null,
+          theme: qt.theme || null,
+          customization: qt.customization || null,
+          snapshot,
+          is_snapshot_finalized: qt.isSnapshotFinalized ?? true,
+        };
+
+        if (qt.branchId && isValidUuid(qt.branchId)) {
+          parentPayload.branch_id = qt.branchId;
+        }
+
+        let { data: parent, error: parentErr } = await supabase
           .from('quotations')
-          .insert([{
-            workspace_id: wsId,
-            customer_id: (qt.customerId && isValidUuid(qt.customerId)) ? qt.customerId : null,
-            quotation_number: qtNumber,
-            customer_name: qt.customerName || 'Walk-in Customer',
-            customer_phone: qt.customerPhone || '',
-            customer_whatsapp: qt.customerWhatsapp || null,
-            customer_email: qt.customerEmail || null,
-            customer_address: qt.customerAddress || null,
-            customer_gstin: qt.customerGstin || null,
-            status: qt.status || 'Draft',
-            valid_until: qt.validUntil || new Date().toISOString().split('T')[0],
-            date: qt.date || new Date().toISOString().split('T')[0],
-            subtotal: qt.subtotal || 0,
-            discount_total: qt.discountTotal || 0,
-            tax_total: qt.taxTotal || 0,
-            grand_total: qt.grandTotal || 0,
-            branch_id: qt.branchId && isValidUuid(qt.branchId) ? qt.branchId : null,
-            notes: qt.notes || null,
-            terms: qt.terms || null,
-            footer_text: qt.footerText || null,
-            template_id: qt.templateId || 'qt-modern-blue',
-            branding: qt.branding || null,
-            theme: qt.theme || null,
-            customization: qt.customization || null,
-            snapshot: qt.snapshot || null,
-            is_snapshot_finalized: qt.isSnapshotFinalized ?? true,
-          }])
-          .select('id')
+          .insert([parentPayload])
+          .select()
           .single();
+
+        // Resilience against unmigrated schema: if branch_id column does not exist (PGRST204 / 42703)
+        if (parentErr && (parentErr.code === 'PGRST204' || parentErr.code === '42703' || parentErr.message?.includes('branch_id'))) {
+          console.warn('[createQuotation] quotations.branch_id column not found in schema cache (PGRST204); retrying with branch in snapshot');
+          const stashedBranchId = parentPayload.branch_id;
+          delete parentPayload.branch_id;
+          parentPayload.snapshot = {
+            ...(typeof parentPayload.snapshot === 'object' && parentPayload.snapshot ? parentPayload.snapshot : {}),
+            branch_id: stashedBranchId,
+            branchId: stashedBranchId,
+          };
+
+          const retryParent = await supabase
+            .from('quotations')
+            .insert([parentPayload])
+            .select()
+            .single();
+
+          parent = retryParent.data;
+          parentErr = retryParent.error;
+        }
 
         if (parentErr) {
           const errStr = handleSupabaseError(parentErr, 'createQuotation');
-          return { quotationId: qt.id, error: errStr };
+          logQuotationDiagnostic('CREATE_ERROR', {
+            quotationNumber: qtNumber,
+            workspaceId: wsId,
+            success: false,
+            errorCode: parentErr.code,
+            error: errStr,
+          });
+
+          // Save local backup so user data is not lost if network/permission issue
+          const localFallback: Quotation = fromDbQuotation({
+            ...parentPayload,
+            id: qt.id || `qt-${Date.now()}`,
+            items: validItems,
+          });
+          store.addQuotation(localFallback);
+
+          return { error: errStr };
         }
 
         const quotationId = parent.id;
 
-        const validItems = filterValidLineItems(items);
-        if (validItems && validItems.length > 0) {
-          const itemRows = validItems.map((item) => ({
-            workspace_id: wsId,
-            quotation_id: quotationId,
-            branch_id: qt.branchId && isValidUuid(qt.branchId) ? qt.branchId : null,
-            item_type: item.itemType || (item.productId ? 'product' : 'custom'),
-            product_id: (item.productId && isValidUuid(item.productId)) ? item.productId : null,
-            product_name: item.productName,
-            description: item.description || null,
-            part_number: item.partNumber || null,
-            sku: item.sku || '',
-            unit: item.unit || 'Pcs',
-            quantity: item.quantity,
-            buy_price: item.buyPrice || 0,
-            selling_price: item.sellingPrice,
-            discount_amount: item.discountAmount || 0,
-            tax_percent: item.taxPercent || 0,
-            tax_amount: item.taxAmount || 0,
-            total: item.total,
-          }));
+        // Step 2: Insert Child Quotation Items with Schema Resilience
+        if (validItems.length > 0) {
+          const itemRows = validItems.map((item) => {
+            const row: Record<string, any> = {
+              workspace_id: wsId,
+              quotation_id: quotationId,
+              product_id: (item.productId && isValidUuid(item.productId)) ? item.productId : null,
+              product_name: item.productName || 'Item',
+              sku: item.sku || '',
+              unit: item.unit || 'Pcs',
+              quantity: Number(item.quantity) || 1,
+              buy_price: Number(item.buyPrice) || 0,
+              selling_price: Number(item.sellingPrice) || 0,
+              discount_amount: Number(item.discountAmount) || 0,
+              tax_percent: Number(item.taxPercent) || 0,
+              tax_amount: Number(item.taxAmount) || 0,
+              total: Number(item.total) || 0,
+            };
 
-          const { error: itemsErr } = await supabase.from('quotation_items').insert(itemRows);
+            if (qt.branchId && isValidUuid(qt.branchId)) row.branch_id = qt.branchId;
+            if (item.itemType) row.item_type = item.itemType;
+            if (item.description) row.description = item.description;
+            if (item.partNumber) row.part_number = item.partNumber;
+
+            return row;
+          });
+
+          let { error: itemsErr } = await supabase.from('quotation_items').insert(itemRows);
+
+          // Resilience against unmigrated columns: if branch_id/item_type/description/part_number fail
+          if (itemsErr && (itemsErr.code === 'PGRST204' || itemsErr.code === '42703')) {
+            console.warn('[createQuotation.items] Extended line items columns not found in schema cache (PGRST204); retrying with core columns');
+            const coreItemRows = validItems.map((item) => ({
+              workspace_id: wsId,
+              quotation_id: quotationId,
+              product_id: (item.productId && isValidUuid(item.productId)) ? item.productId : null,
+              product_name: item.productName || 'Item',
+              sku: item.sku || '',
+              unit: item.unit || 'Pcs',
+              quantity: Number(item.quantity) || 1,
+              buy_price: Number(item.buyPrice) || 0,
+              selling_price: Number(item.sellingPrice) || 0,
+              discount_amount: Number(item.discountAmount) || 0,
+              tax_percent: Number(item.taxPercent) || 0,
+              tax_amount: Number(item.taxAmount) || 0,
+              total: Number(item.total) || 0,
+            }));
+
+            const retryItems = await supabase.from('quotation_items').insert(coreItemRows);
+            itemsErr = retryItems.error;
+          }
+
           if (itemsErr) {
             handleSupabaseError(itemsErr, 'createQuotation.items');
+            logQuotationDiagnostic('CREATE_ITEMS_ERROR', {
+              quotationId,
+              quotationNumber: qtNumber,
+              workspaceId: wsId,
+              success: false,
+              errorCode: itemsErr.code,
+              error: itemsErr.message,
+            });
+            // Roll back parent quotation on line item failure
             await supabase.from('quotations').delete().eq('id', quotationId);
-            return { error: `Line item insert failed: ${itemsErr.message}` };
+            return { error: `Failed to save quotation line items: ${itemsErr.message}` };
           }
         }
 
-        return { quotationId };
+        // Canonical saved record
+        const savedQuotation: Quotation = fromDbQuotation({
+          ...parent,
+          items: validItems,
+        });
+
+        // Mirror to local store and storage
+        store.syncRemoteQuotations([savedQuotation]);
+
+        logQuotationDiagnostic('CREATE_SUCCESS', {
+          quotationId,
+          quotationNumber: qtNumber,
+          workspaceId: wsId,
+          success: true,
+          count: validItems.length,
+        });
+
+        return { quotationId, quotation: savedQuotation };
       }
 
-      return { quotationId: qt.id || `qt-${Date.now()}` };
+      // Offline / Local-only fallback
+      const localId = qt.id || `qt-${Date.now()}`;
+      const savedQuotation: Quotation = fromDbQuotation({
+        ...qt,
+        id: localId,
+        quotation_number: qtNumber,
+        status: qt.status || 'Draft',
+        date: dateStr,
+        valid_until: validUntilStr,
+        subtotal,
+        discount_total: discountTotal,
+        tax_total: taxTotal,
+        grand_total: grandTotal,
+        items: validItems,
+        snapshot,
+      });
+
+      store.addQuotation(savedQuotation);
+
+      logQuotationDiagnostic('CREATE_LOCAL_FALLBACK', {
+        quotationId: localId,
+        quotationNumber: qtNumber,
+        workspaceId: wsId || 'offline',
+        success: true,
+      });
+
+      return { quotationId: localId, quotation: savedQuotation };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'createQuotation');
-      return { quotationId: qt.id || `qt-${Date.now()}`, error: errStr };
+      logQuotationDiagnostic('CREATE_EXCEPTION', {
+        quotationNumber: qtNumber,
+        workspaceId: wsId,
+        success: false,
+        error: errStr,
+      });
+      return { error: errStr };
+    } finally {
+      this.activeLocks.delete(qtNumber);
+    }
+  }
+
+  public async updateQuotation(
+    id: string,
+    updates: Partial<Quotation>,
+    items?: QuotationItem[]
+  ): Promise<{ success: boolean; quotation?: Quotation; error?: string }> {
+    if (!id) return { success: false, error: 'Quotation ID is required for update.' };
+
+    const wsId = await this.getWorkspaceId();
+
+    try {
+      const validItems = items ? (filterValidLineItems(items) as QuotationItem[]) : undefined;
+
+      let subtotal = updates.subtotal;
+      let discountTotal = updates.discountTotal;
+      let taxTotal = updates.taxTotal;
+      let grandTotal = updates.grandTotal;
+
+      if (validItems) {
+        const calcSubtotal = validItems.reduce((acc, i) => acc + (Number(i.quantity) || 0) * (Number(i.sellingPrice) || 0), 0);
+        const calcDiscount = validItems.reduce((acc, i) => acc + (Number(i.discountAmount) || 0), 0);
+        const calcTax = validItems.reduce((acc, i) => acc + (Number(i.taxAmount) || 0), 0);
+        subtotal = subtotal !== undefined ? subtotal : calcSubtotal;
+        discountTotal = discountTotal !== undefined ? discountTotal : calcDiscount;
+        taxTotal = taxTotal !== undefined ? taxTotal : calcTax;
+        grandTotal = grandTotal !== undefined ? grandTotal : Number((subtotal - discountTotal + taxTotal).toFixed(2));
+      }
+
+      if (isSupabaseConfigured() && isValidUuid(wsId) && isValidUuid(id)) {
+        const updatePayload: Record<string, any> = {
+          updated_at: new Date().toISOString(),
+        };
+
+        if (updates.customerName) updatePayload.customer_name = updates.customerName;
+        if (updates.customerPhone !== undefined) updatePayload.customer_phone = updates.customerPhone;
+        if (updates.customerWhatsapp !== undefined) updatePayload.customer_whatsapp = updates.customerWhatsapp;
+        if (updates.customerEmail !== undefined) updatePayload.customer_email = updates.customerEmail;
+        if (updates.customerAddress !== undefined) updatePayload.customer_address = updates.customerAddress;
+        if (updates.customerGstin !== undefined) updatePayload.customer_gstin = updates.customerGstin;
+        if (updates.status) updatePayload.status = updates.status;
+        if (updates.date) updatePayload.date = updates.date;
+        if (updates.validUntil) updatePayload.valid_until = updates.validUntil;
+        if (subtotal !== undefined) updatePayload.subtotal = subtotal;
+        if (discountTotal !== undefined) updatePayload.discount_total = discountTotal;
+        if (taxTotal !== undefined) updatePayload.tax_total = taxTotal;
+        if (grandTotal !== undefined) updatePayload.grand_total = grandTotal;
+        if (updates.notes !== undefined) updatePayload.notes = updates.notes;
+        if (updates.terms !== undefined) updatePayload.terms = updates.terms;
+        if (updates.footerText !== undefined) updatePayload.footer_text = updates.footerText;
+        if (updates.templateId) updatePayload.template_id = updates.templateId;
+        if (updates.branding !== undefined) updatePayload.branding = updates.branding;
+        if (updates.theme !== undefined) updatePayload.theme = updates.theme;
+        if (updates.customization !== undefined) updatePayload.customization = updates.customization;
+        if (updates.snapshot !== undefined) updatePayload.snapshot = updates.snapshot;
+        if (updates.branchId && isValidUuid(updates.branchId)) updatePayload.branch_id = updates.branchId;
+
+        let { data: updatedParent, error: updateErr } = await supabase
+          .from('quotations')
+          .update(updatePayload)
+          .eq('id', id)
+          .eq('workspace_id', wsId)
+          .select()
+          .single();
+
+        // Resilience against missing branch_id
+        if (updateErr && (updateErr.code === 'PGRST204' || updateErr.code === '42703')) {
+          delete updatePayload.branch_id;
+          const retry = await supabase
+            .from('quotations')
+            .update(updatePayload)
+            .eq('id', id)
+            .eq('workspace_id', wsId)
+            .select()
+            .single();
+          updatedParent = retry.data;
+          updateErr = retry.error;
+        }
+
+        if (updateErr) {
+          const errStr = handleSupabaseError(updateErr, 'updateQuotation');
+          return { success: false, error: errStr };
+        }
+
+        // If items were updated, reconcile quotation_items
+        if (validItems) {
+          await supabase.from('quotation_items').delete().eq('quotation_id', id).eq('workspace_id', wsId);
+
+          const itemRows = validItems.map((item) => {
+            const row: Record<string, any> = {
+              workspace_id: wsId,
+              quotation_id: id,
+              product_id: (item.productId && isValidUuid(item.productId)) ? item.productId : null,
+              product_name: item.productName || 'Item',
+              sku: item.sku || '',
+              unit: item.unit || 'Pcs',
+              quantity: Number(item.quantity) || 1,
+              buy_price: Number(item.buyPrice) || 0,
+              selling_price: Number(item.sellingPrice) || 0,
+              discount_amount: Number(item.discountAmount) || 0,
+              tax_percent: Number(item.taxPercent) || 0,
+              tax_amount: Number(item.taxAmount) || 0,
+              total: Number(item.total) || 0,
+            };
+            if (updates.branchId && isValidUuid(updates.branchId)) row.branch_id = updates.branchId;
+            if (item.itemType) row.item_type = item.itemType;
+            if (item.description) row.description = item.description;
+            if (item.partNumber) row.part_number = item.partNumber;
+            return row;
+          });
+
+          let { error: itemsErr } = await supabase.from('quotation_items').insert(itemRows);
+          if (itemsErr && (itemsErr.code === 'PGRST204' || itemsErr.code === '42703')) {
+            const coreItemRows = validItems.map((item) => ({
+              workspace_id: wsId,
+              quotation_id: id,
+              product_id: (item.productId && isValidUuid(item.productId)) ? item.productId : null,
+              product_name: item.productName || 'Item',
+              sku: item.sku || '',
+              unit: item.unit || 'Pcs',
+              quantity: Number(item.quantity) || 1,
+              buy_price: Number(item.buyPrice) || 0,
+              selling_price: Number(item.sellingPrice) || 0,
+              discount_amount: Number(item.discountAmount) || 0,
+              tax_percent: Number(item.taxPercent) || 0,
+              tax_amount: Number(item.taxAmount) || 0,
+              total: Number(item.total) || 0,
+            }));
+            await supabase.from('quotation_items').insert(coreItemRows);
+          }
+        }
+
+        const canonical = fromDbQuotation({
+          ...updatedParent,
+          items: validItems,
+        });
+
+        store.updateQuotation(id, canonical);
+
+        logQuotationDiagnostic('UPDATE_SUCCESS', {
+          quotationId: id,
+          workspaceId: wsId,
+          success: true,
+        });
+
+        return { success: true, quotation: canonical };
+      }
+
+      // Local store update
+      const updated = store.updateQuotation(id, {
+        ...updates,
+        items: validItems,
+        subtotal,
+        discountTotal,
+        taxTotal,
+        grandTotal,
+      });
+
+      return { success: true, quotation: updated || undefined };
+    } catch (e: any) {
+      const errStr = handleSupabaseError(e, 'updateQuotation');
+      logQuotationDiagnostic('UPDATE_EXCEPTION', {
+        quotationId: id,
+        workspaceId: wsId,
+        success: false,
+        error: errStr,
+      });
+      return { success: false, error: errStr };
+    }
+  }
+
+  public async deleteQuotation(id: string): Promise<{ success: boolean; error?: string }> {
+    if (!id) return { success: false, error: 'Quotation ID is required for deletion.' };
+
+    const wsId = await this.getWorkspaceId();
+
+    try {
+      if (isSupabaseConfigured() && isValidUuid(wsId) && isValidUuid(id)) {
+        const { error } = await supabase
+          .from('quotations')
+          .delete()
+          .eq('id', id)
+          .eq('workspace_id', wsId);
+
+        if (error) {
+          const errStr = handleSupabaseError(error, 'deleteQuotation');
+          logQuotationDiagnostic('DELETE_ERROR', {
+            quotationId: id,
+            workspaceId: wsId,
+            success: false,
+            errorCode: error.code,
+            error: errStr,
+          });
+          return { success: false, error: errStr };
+        }
+      }
+
+      store.deleteQuotation(id);
+
+      logQuotationDiagnostic('DELETE_SUCCESS', {
+        quotationId: id,
+        workspaceId: wsId,
+        success: true,
+      });
+
+      return { success: true };
+    } catch (e: any) {
+      const errStr = handleSupabaseError(e, 'deleteQuotation');
+      logQuotationDiagnostic('DELETE_EXCEPTION', {
+        quotationId: id,
+        workspaceId: wsId,
+        success: false,
+        error: errStr,
+      });
+      return { success: false, error: errStr };
+    }
+  }
+
+  public async updateQuotationStatus(id: string, status: QuotationStatus): Promise<{ success: boolean; error?: string }> {
+    if (!id) return { success: false, error: 'Quotation ID is required.' };
+
+    const wsId = await this.getWorkspaceId();
+
+    try {
+      if (isSupabaseConfigured() && isValidUuid(wsId) && isValidUuid(id)) {
+        const updatePayload: Record<string, any> = {
+          status,
+          updated_at: new Date().toISOString(),
+        };
+        if (status === 'Converted') {
+          updatePayload.updated_at = new Date().toISOString();
+        }
+
+        await supabase
+          .from('quotations')
+          .update(updatePayload)
+          .eq('id', id)
+          .eq('workspace_id', wsId);
+      }
+
+      store.updateQuotationStatus(id, status);
+      return { success: true };
+    } catch (e: any) {
+      const errStr = handleSupabaseError(e, 'updateQuotationStatus');
+      return { success: false, error: errStr };
     }
   }
 
