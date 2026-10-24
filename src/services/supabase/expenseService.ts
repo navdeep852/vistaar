@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { Expense } from '../../types';
+import { Expense, ExpenseCategory } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
@@ -7,6 +7,54 @@ import { fromDbExpense } from './types';
 import { store } from '../store';
 
 const LOCAL_EXPENSES_KEY = 'vistaar_local_expenses_db';
+
+const VALID_EXPENSE_CATEGORIES = new Set<string>([
+  'Rent',
+  'Salary',
+  'Electricity',
+  'Internet',
+  'Transport',
+  'Marketing',
+  'Software',
+  'Office',
+  'Maintenance',
+  'Other',
+]);
+
+export function sanitizeExpenseCategory(cat?: string): { category: ExpenseCategory; fallbackName?: string } {
+  if (!cat) return { category: 'Other' };
+  if (VALID_EXPENSE_CATEGORIES.has(cat)) return { category: cat as ExpenseCategory };
+
+  const lower = cat.toLowerCase();
+  if (lower.includes('office') || lower.includes('supplies') || lower.includes('stationery') || lower.includes('print')) {
+    return { category: 'Office', fallbackName: cat };
+  }
+  if (lower.includes('travel') || lower.includes('transport') || lower.includes('conveyance') || lower.includes('taxi') || lower.includes('fuel')) {
+    return { category: 'Transport', fallbackName: cat };
+  }
+  if (lower.includes('electric') || lower.includes('power') || lower.includes('utility') || lower.includes('utilities')) {
+    return { category: 'Electricity', fallbackName: cat };
+  }
+  if (lower.includes('internet') || lower.includes('wifi') || lower.includes('phone') || lower.includes('broadband') || lower.includes('telecom')) {
+    return { category: 'Internet', fallbackName: cat };
+  }
+  if (lower.includes('rent') || lower.includes('lease')) {
+    return { category: 'Rent', fallbackName: cat };
+  }
+  if (lower.includes('salary') || lower.includes('wage') || lower.includes('payroll')) {
+    return { category: 'Salary', fallbackName: cat };
+  }
+  if (lower.includes('market') || lower.includes('ad') || lower.includes('promotion')) {
+    return { category: 'Marketing', fallbackName: cat };
+  }
+  if (lower.includes('soft') || lower.includes('subscri') || lower.includes('app') || lower.includes('saas')) {
+    return { category: 'Software', fallbackName: cat };
+  }
+  if (lower.includes('maint') || lower.includes('repair')) {
+    return { category: 'Maintenance', fallbackName: cat };
+  }
+  return { category: 'Other', fallbackName: cat };
+}
 
 export class ExpenseService {
   private activeLocks = new Set<string>();
@@ -84,10 +132,11 @@ export class ExpenseService {
       return { error: 'Expense amount must be greater than zero.' };
     }
 
-    const category = exp.category || 'Other';
+    const catResult = sanitizeExpenseCategory(exp.category);
+    const category = catResult.category;
     const dateStr = exp.date || new Date().toISOString().split('T')[0];
     const paymentMode = exp.paymentMode || 'Cash';
-    const expenseName = exp.expenseName?.trim() || undefined;
+    const expenseName = exp.expenseName?.trim() || (catResult.fallbackName && catResult.fallbackName !== category ? catResult.fallbackName : undefined);
     const paidTo = exp.paidTo?.trim() || undefined;
     const referenceNo = exp.referenceNo?.trim() || undefined;
     const notes = exp.notes?.trim() || undefined;
@@ -311,11 +360,12 @@ export class ExpenseService {
       const currentList = safeGetTenantStorage<Expense>(LOCAL_EXPENSES_KEY, []);
       const existing = currentList.find((e) => e.id === id) || store.getExpenses().find((e) => e.id === id);
 
-      const mergedCategory = updated.category || existing?.category || 'Other';
+      const catRes = sanitizeExpenseCategory(updated.category || existing?.category);
+      const mergedCategory = catRes.category;
       const mergedAmount = amount !== undefined ? amount : (existing?.amount || 0);
       const mergedDate = updated.date || existing?.date || new Date().toISOString().split('T')[0];
       const mergedPaymentMode = updated.paymentMode || existing?.paymentMode || 'Cash';
-      const mergedExpenseName = updated.expenseName !== undefined ? updated.expenseName?.trim() : existing?.expenseName;
+      const mergedExpenseName = updated.expenseName !== undefined ? updated.expenseName?.trim() : (existing?.expenseName || (catRes.fallbackName && catRes.fallbackName !== mergedCategory ? catRes.fallbackName : undefined));
       const mergedPaidTo = updated.paidTo !== undefined ? updated.paidTo?.trim() : existing?.paidTo;
       const mergedReferenceNo = updated.referenceNo !== undefined ? updated.referenceNo?.trim() : existing?.referenceNo;
       const mergedNotes = updated.notes !== undefined ? updated.notes?.trim() : existing?.notes;
@@ -707,6 +757,12 @@ export class ExpenseService {
         store.setExpenses([exp, ...storeExps]);
       }
     }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent(isEdit ? 'vistaar:expense_updated' : 'vistaar:expense_created', { detail: exp })
+      );
+    }
   }
 
   private removeExpenseLocally(id: string): void {
@@ -714,6 +770,19 @@ export class ExpenseService {
     const filtered = local.filter((e) => e.id !== id);
     safeSaveTenantStorage(LOCAL_EXPENSES_KEY, filtered);
     store.deleteExpense(id);
+
+    // Also clean local cashbook cache
+    try {
+      const localCb = safeGetTenantStorage<any>('vistaar_local_cashbook_db', []);
+      const filteredCb = localCb.filter((t: any) => !(t.sourceType === 'EXPENSE' && t.sourceId === id));
+      safeSaveTenantStorage('vistaar_local_cashbook_db', filteredCb);
+    } catch (e) {
+      // ignore
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('vistaar:expense_deleted', { detail: { id } }));
+    }
   }
 }
 

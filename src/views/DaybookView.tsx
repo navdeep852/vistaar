@@ -103,10 +103,21 @@ export const DaybookView: React.FC = () => {
 
   useEffect(() => {
     loadData();
-    const handleBranchChanged = () => loadData();
-    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
+    const handleRefresh = () => loadData();
+    window.addEventListener('vistaar:branch_changed', handleRefresh);
+    window.addEventListener('vistaar:expense_created', handleRefresh);
+    window.addEventListener('vistaar:expense_updated', handleRefresh);
+    window.addEventListener('vistaar:expense_deleted', handleRefresh);
+    const unsubscribeStore = store.subscribe(() => {
+      loadData();
+    });
+
     return () => {
-      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
+      window.removeEventListener('vistaar:branch_changed', handleRefresh);
+      window.removeEventListener('vistaar:expense_created', handleRefresh);
+      window.removeEventListener('vistaar:expense_updated', handleRefresh);
+      window.removeEventListener('vistaar:expense_deleted', handleRefresh);
+      unsubscribeStore();
     };
   }, [dateRange, startDate, endDate, transactionType, paymentMode, paymentStatus, currentBranch?.id]);
 

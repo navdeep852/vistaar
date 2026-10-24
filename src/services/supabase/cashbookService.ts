@@ -481,6 +481,156 @@ export class CashbookService {
       } catch (storeEx) {
         // ignore
       }
+
+      // 3c. Authoritative Operational Expenses (Cash & Bank Outflows)
+      try {
+        let expQuery = supabase
+          .from('expenses')
+          .select('*')
+          .eq('workspace_id', wsId);
+
+        if (start) expQuery = expQuery.gte('expense_date', start);
+        if (end) expQuery = expQuery.lte('expense_date', end);
+
+        let { data: expData, error: expErr } = await expQuery;
+        if (!expErr && expData) {
+          for (const exp of expData) {
+            const b = exp.branch_id || exp.branchId;
+            if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+              if (b ? b !== effectiveBranchId : !isMainBranch) continue;
+            }
+            const amt = Number(exp.amount) || 0;
+            const method = exp.payment_mode || exp.paymentMode || 'Cash';
+            if (amt <= 0) continue;
+            if (['Credit', 'Credit / Udhari', 'Udhari'].includes(method)) continue;
+            if ((exp.status || 'PAID').toUpperCase() === 'UNPAID') continue;
+
+            const txDate = exp.expense_date || (exp.created_at ? exp.created_at.split('T')[0] : new Date().toISOString().split('T')[0]);
+            const key = `EXPENSE:${exp.id}:OUT`;
+            const rRef = exp.reference_no || exp.category || '';
+            const receiptKey = `OUT:${rRef}:${amt}:${txDate}`;
+            if (seenKeys.has(key) || (rRef && seenReceiptKeys.has(receiptKey))) continue;
+
+            seenKeys.add(key);
+            if (rRef) seenReceiptKeys.add(receiptKey);
+
+            mergedList.push({
+              id: `cb-exp-${exp.id}`,
+              workspaceId: exp.workspace_id,
+              branchId: exp.branch_id,
+              transactionCode: `CB-EXP-${(exp.reference_no || exp.id).substring(0, 8)}`,
+              transactionDate: txDate,
+              transactionType: 'EXPENSE',
+              direction: 'OUT',
+              amount: amt,
+              paymentMode: method as any,
+              partyName: exp.paid_to || exp.category || 'Vendor',
+              referenceType: 'EXPENSE' as any,
+              referenceId: exp.id,
+              referenceNumber: exp.reference_no || exp.category,
+              description: exp.expense_name ? `${exp.category}: ${exp.expense_name}` : `${exp.category} Expense`,
+              notes: exp.notes,
+              status: 'COMPLETED',
+              createdAt: exp.created_at,
+            });
+          }
+        }
+      } catch (expEx) {
+        console.warn('[cashbookService] expenses query notice:', expEx);
+      }
+
+      // Also merge from store & local expenses
+      try {
+        const { store } = await import('../store');
+        for (const exp of store.getExpenses() || []) {
+          const b = exp.branchId || (exp as any).branch_id;
+          if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+            if (b ? b !== effectiveBranchId : !isMainBranch) continue;
+          }
+          const amt = Number(exp.amount) || 0;
+          const method = exp.paymentMode || 'Cash';
+          if (amt <= 0) continue;
+          if (['Credit', 'Credit / Udhari', 'Udhari'].includes(method)) continue;
+          if ((exp.status || 'PAID').toUpperCase() === 'UNPAID') continue;
+
+          const txDate = exp.date || (exp.createdAt ? exp.createdAt.split('T')[0] : new Date().toISOString().split('T')[0]);
+          const key = `EXPENSE:${exp.id}:OUT`;
+          const rRef = exp.referenceNo || exp.category || '';
+          const receiptKey = `OUT:${rRef}:${amt}:${txDate}`;
+          if (seenKeys.has(key) || (rRef && seenReceiptKeys.has(receiptKey))) continue;
+
+          seenKeys.add(key);
+          if (rRef) seenReceiptKeys.add(receiptKey);
+
+          mergedList.push({
+            id: `cb-exp-${exp.id}`,
+            workspaceId: wsId,
+            branchId: exp.branchId,
+            transactionCode: `CB-EXP-${(exp.referenceNo || exp.id).substring(0, 8)}`,
+            transactionDate: txDate,
+            transactionType: 'EXPENSE',
+            direction: 'OUT',
+            amount: amt,
+            paymentMode: method as any,
+            partyName: exp.paidTo || exp.category || 'Vendor',
+            referenceType: 'EXPENSE' as any,
+            referenceId: exp.id,
+            referenceNumber: exp.referenceNo || exp.category,
+            description: exp.expenseName ? `${exp.category}: ${exp.expenseName}` : `${exp.category} Expense`,
+            notes: exp.notes,
+            status: 'COMPLETED',
+            createdAt: exp.createdAt,
+          });
+        }
+      } catch (storeExpEx) {
+        // ignore
+      }
+
+      try {
+        const localExps = safeGetTenantStorage<any>('vistaar_local_expenses_db', []);
+        for (const exp of localExps) {
+          const b = exp.branchId || exp.branch_id;
+          if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+            if (b ? b !== effectiveBranchId : !isMainBranch) continue;
+          }
+          const amt = Number(exp.amount) || 0;
+          const method = exp.paymentMode || exp.payment_mode || 'Cash';
+          if (amt <= 0) continue;
+          if (['Credit', 'Credit / Udhari', 'Udhari'].includes(method)) continue;
+          if ((exp.status || 'PAID').toUpperCase() === 'UNPAID') continue;
+
+          const txDate = exp.date || exp.expense_date || (exp.createdAt ? exp.createdAt.split('T')[0] : new Date().toISOString().split('T')[0]);
+          const key = `EXPENSE:${exp.id}:OUT`;
+          const rRef = exp.referenceNo || exp.reference_no || exp.category || '';
+          const receiptKey = `OUT:${rRef}:${amt}:${txDate}`;
+          if (seenKeys.has(key) || (rRef && seenReceiptKeys.has(receiptKey))) continue;
+
+          seenKeys.add(key);
+          if (rRef) seenReceiptKeys.add(receiptKey);
+
+          mergedList.push({
+            id: `cb-exp-${exp.id}`,
+            workspaceId: wsId,
+            branchId: exp.branchId || exp.branch_id,
+            transactionCode: `CB-EXP-${(exp.referenceNo || exp.reference_no || exp.id).substring(0, 8)}`,
+            transactionDate: txDate,
+            transactionType: 'EXPENSE',
+            direction: 'OUT',
+            amount: amt,
+            paymentMode: method as any,
+            partyName: exp.paidTo || exp.paid_to || exp.category || 'Vendor',
+            referenceType: 'EXPENSE' as any,
+            referenceId: exp.id,
+            referenceNumber: exp.referenceNo || exp.reference_no || exp.category,
+            description: exp.expenseName || exp.expense_name ? `${exp.category}: ${exp.expenseName || exp.expense_name}` : `${exp.category} Expense`,
+            notes: exp.notes,
+            status: 'COMPLETED',
+            createdAt: exp.createdAt || exp.created_at,
+          });
+        }
+      } catch (localExpEx) {
+        // ignore
+      }
     }
 
     // 4. Local Storage fallback / mirror check

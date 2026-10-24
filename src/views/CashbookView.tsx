@@ -119,10 +119,24 @@ export const CashbookView: React.FC = () => {
 
   useEffect(() => {
     loadData();
-    const handleBranchChanged = () => loadData();
-    window.addEventListener('vistaar:branch_changed', handleBranchChanged);
+    const handleRefresh = () => loadData();
+    const unsubscribe = store.subscribe(() => {
+      loadData();
+    });
+
+    window.addEventListener('vistaar:branch_changed', handleRefresh);
+    window.addEventListener('vistaar:expense_created', handleRefresh);
+    window.addEventListener('vistaar:expense_updated', handleRefresh);
+    window.addEventListener('vistaar:expense_deleted', handleRefresh);
+    window.addEventListener('vistaar:payment_recorded', handleRefresh);
+
     return () => {
-      window.removeEventListener('vistaar:branch_changed', handleBranchChanged);
+      unsubscribe();
+      window.removeEventListener('vistaar:branch_changed', handleRefresh);
+      window.removeEventListener('vistaar:expense_created', handleRefresh);
+      window.removeEventListener('vistaar:expense_updated', handleRefresh);
+      window.removeEventListener('vistaar:expense_deleted', handleRefresh);
+      window.removeEventListener('vistaar:payment_recorded', handleRefresh);
     };
   }, [selectedAccountId, selectedFY, dateRangePreset, paymentModeFilter, startDate, endDate, searchQuery, currentBranch?.id]);
 

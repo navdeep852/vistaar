@@ -956,6 +956,10 @@ export interface Expense {
   referenceNo?: string;
   notes?: string;
   isCompanyLevel?: boolean;
+  status?: 'PAID' | 'UNPAID' | 'PARTIAL' | string;
+  totalAmount?: number;
+  remainingAmount?: number;
+  paymentStatus?: 'PAID' | 'UNPAID' | 'PARTIAL' | string;
   sourceType?: 'MANUAL' | 'SALARY_PAYMENT' | string;
   sourceId?: string;
   createdAt: string;

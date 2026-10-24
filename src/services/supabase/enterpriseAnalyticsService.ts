@@ -553,7 +553,25 @@ export class EnterpriseAnalyticsService {
           });
         }
         if (prodRes.data) productsList = prodRes.data;
-        if (expRes.data) expensesList = expRes.data;
+        if (expRes.error && (expRes.error.code === '42703' || expRes.error.message?.includes('branch_id'))) {
+          const retryExp = await supabase
+            .from('expenses')
+            .select('*')
+            .eq('workspace_id', wsId)
+            .gte('expense_date', dateRange.startDateStr)
+            .lte('expense_date', dateRange.endDateStr);
+          if (retryExp.data) {
+            expensesList = retryExp.data.filter((e: any) => {
+              const b = e.branch_id || e.branchId;
+              if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+                return isRecordInBranch(effectiveBranchId, b, e.notes || '');
+              }
+              return true;
+            });
+          }
+        } else if (expRes.data) {
+          expensesList = expRes.data;
+        }
       } catch (err) {
         console.warn('[enterpriseAnalyticsService] Supabase query notice:', err);
       }

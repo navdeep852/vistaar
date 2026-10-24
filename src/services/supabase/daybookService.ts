@@ -77,39 +77,48 @@ export class DaybookService {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
         // 1. Query public.daybook_transactions first (Authoritative unified financial journal)
         try {
-          let dtQuery = supabase
-            .from('daybook_transactions')
-            .select('*', { count: 'exact' })
-            .eq('workspace_id', wsId);
+          const buildDtQuery = (includeBranch: boolean) => {
+            let q = supabase
+              .from('daybook_transactions')
+              .select('*', { count: 'exact' })
+              .eq('workspace_id', wsId);
 
-          if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
-            dtQuery = dtQuery.eq('branch_id', options.branchId);
+            if (includeBranch && options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
+              q = q.eq('branch_id', options.branchId);
+            }
+
+            const { start, end } = this.getDateBounds(options?.dateRange, options?.startDate, options?.endDate);
+            if (start) q = q.gte('transaction_date', start);
+            if (end) q = q.lte('transaction_date', end);
+
+            if (options?.transactionType && options.transactionType !== 'ALL') {
+              q = q.eq('transaction_type', options.transactionType);
+            }
+
+            if (options?.paymentStatus && options.paymentStatus !== 'ALL') {
+              q = q.eq('payment_status', options.paymentStatus);
+            }
+
+            if (options?.paymentMode && options.paymentMode !== 'ALL') {
+              q = q.eq('payment_mode', options.paymentMode);
+            }
+
+            if (options?.search && options.search.trim()) {
+              const s = `%${options.search.trim()}%`;
+              q = q.or(`transaction_code.ilike.${s},reference_number.ilike.${s},description.ilike.${s},party_name.ilike.${s}`);
+            }
+
+            return q.order('transaction_date', { ascending: false }).order('created_at', { ascending: false });
+          };
+
+          let { data: dtData, error: dtErr } = await buildDtQuery(true);
+          // If branch_id column does not exist in schema cache (42703), retry without branch_id
+          if (dtErr && (dtErr.code === '42703' || dtErr.message?.includes('branch_id'))) {
+            const retryRes = await buildDtQuery(false);
+            dtData = retryRes.data;
+            dtErr = retryRes.error;
           }
 
-          const { start, end } = this.getDateBounds(options?.dateRange, options?.startDate, options?.endDate);
-          if (start) dtQuery = dtQuery.gte('transaction_date', start);
-          if (end) dtQuery = dtQuery.lte('transaction_date', end);
-
-          if (options?.transactionType && options.transactionType !== 'ALL') {
-            dtQuery = dtQuery.eq('transaction_type', options.transactionType);
-          }
-
-          if (options?.paymentStatus && options.paymentStatus !== 'ALL') {
-            dtQuery = dtQuery.eq('payment_status', options.paymentStatus);
-          }
-
-          if (options?.paymentMode && options.paymentMode !== 'ALL') {
-            dtQuery = dtQuery.eq('payment_mode', options.paymentMode);
-          }
-
-          if (options?.search && options.search.trim()) {
-            const s = `%${options.search.trim()}%`;
-            dtQuery = dtQuery.or(`transaction_code.ilike.${s},reference_number.ilike.${s},description.ilike.${s},party_name.ilike.${s}`);
-          }
-
-          dtQuery = dtQuery.order('transaction_date', { ascending: false }).order('created_at', { ascending: false });
-
-          const { data: dtData, error: dtErr } = await dtQuery;
           if (!dtErr && dtData) {
             rawTransactions = dtData.map((row: any) => fromDbDaybookTransaction(row));
           }
@@ -129,10 +138,6 @@ export class DaybookService {
       });
 
       for (const lt of local) {
-        if (options?.branchId && options.branchId !== 'ALL') {
-          const entryBranch = lt.branchId || (lt as any).branch_id;
-          if (entryBranch !== options.branchId) continue;
-        }
         const refKey = `${lt.referenceType}:${lt.referenceId}`;
         if (!seenIds.has(lt.id) && !seenRefKeys.has(refKey)) {
           seenIds.add(lt.id);
@@ -633,6 +638,108 @@ export class DaybookService {
       }
     }
 
+    // 6c. Collect & Synthesize Expenses from Supabase, Store, and Local Storage
+    const expensesList: any[] = [];
+    const seenExpenseIds = new Set<string>();
+
+    try {
+      if (isSupabaseConfigured() && isValidUuid(wsId)) {
+        let expQ = supabase
+          .from('expenses')
+          .select('*')
+          .eq('workspace_id', wsId);
+
+        let { data: dbExps, error: expErr } = await expQ;
+        if (!expErr && dbExps) {
+          dbExps.forEach((e: any) => {
+            const b = e.branch_id || e.branchId;
+            if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+              if (b ? b !== effectiveBranchId : !isMainBranch) return;
+            }
+            if (!seenExpenseIds.has(e.id)) {
+              seenExpenseIds.add(e.id);
+              expensesList.push(e);
+            }
+          });
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      const { store } = await import('../store');
+      (store.getExpenses() || []).forEach((e: any) => {
+        const b = e.branchId || e.branch_id;
+        if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+          if (b ? b !== effectiveBranchId : !isMainBranch) return;
+        }
+        if (e.id && !seenExpenseIds.has(e.id)) {
+          seenExpenseIds.add(e.id);
+          expensesList.push(e);
+        }
+      });
+    } catch {
+      // ignore
+    }
+
+    try {
+      const localExps = safeGetTenantStorage<any>('vistaar_local_expenses_db', []);
+      localExps.forEach((e: any) => {
+        const b = e.branchId || e.branch_id;
+        if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+          if (b ? b !== effectiveBranchId : !isMainBranch) return;
+        }
+        if (e.id && !seenExpenseIds.has(e.id)) {
+          seenExpenseIds.add(e.id);
+          expensesList.push(e);
+        }
+      });
+    } catch {
+      // ignore
+    }
+
+    for (const exp of expensesList) {
+      const expRefKey = `EXPENSE:${exp.id}`;
+      const hasExpTx = seenTxKeys.has(expRefKey) || seenTxKeys.has(exp.id) || unifiedList.some((t) => t.referenceId === exp.id && t.referenceType === 'EXPENSE');
+
+      if (!hasExpTx) {
+        const amt = Number(exp.amount) || 0;
+        const eDate = (exp.date || exp.expense_date || exp.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0];
+        const desc = exp.expenseName || exp.expense_name ? `${exp.category}: ${exp.expenseName || exp.expense_name}` : `${exp.category || 'Operational'} Expense`;
+        const party = exp.paidTo || exp.paid_to || exp.category || 'Operational Vendor';
+        const mode = exp.paymentMode || exp.payment_mode || 'Cash';
+        const isPaid = (exp.status || 'PAID').toUpperCase() !== 'UNPAID';
+
+        unifiedList.push({
+          id: `db-syn-exp-${exp.id}`,
+          workspaceId: wsId,
+          branchId: exp.branchId || exp.branch_id,
+          transactionCode: `EXP-${(exp.referenceNo || exp.reference_no || exp.id).substring(0, 8)}`,
+          transactionDate: eDate,
+          transactionType: 'EXPENSE',
+          direction: 'OUT',
+          amount: amt,
+          totalAmount: amt,
+          remainingAmount: 0,
+          paymentStatus: isPaid ? 'PAID' : 'UNPAID',
+          paymentMode: mode as any,
+          partyType: 'other',
+          partyName: party,
+          referenceType: 'EXPENSE',
+          referenceId: exp.id,
+          referenceNumber: exp.referenceNo || exp.reference_no || exp.category,
+          description: desc,
+          notes: exp.notes,
+          status: 'COMPLETED',
+          createdAt: exp.created_at || exp.createdAt,
+        });
+
+        seenTxKeys.add(expRefKey);
+        seenTxKeys.add(exp.id);
+      }
+    }
+
     // 7. Deduplicate identical upfront payments recorded as both SALE and PAYMENT on the same invoice/sale & date
     const finalFiltered: DaybookTransaction[] = [];
     const seenInflowsByInvoiceAndDate = new Set<string>();
@@ -661,7 +768,7 @@ export class DaybookService {
     const result = finalFiltered.filter((tx) => {
       if (options?.branchId && options.branchId !== 'ALL') {
         const txBId = (tx as any).branchId || (tx as any).branch_id;
-        if (txBId && txBId !== options.branchId) return false;
+        if (txBId ? txBId !== options.branchId : !isMainBranch) return false;
       }
       const txDate = (tx.transactionDate || '').split('T')[0];
       if (start && txDate < start) return false;
@@ -882,8 +989,13 @@ export class DaybookService {
         totalInflow += amt;
         modeBreakdown[mode] = (modeBreakdown[mode] || 0) + amt;
       } else if (tx.direction === 'OUT') {
-        totalOutflow += amt;
-        modeBreakdown[mode] = (modeBreakdown[mode] || 0) - amt;
+        // STRICT ACCOUNTING RULE:
+        // Cash Outflow represents actual money disbursed.
+        // Unpaid expenses/transactions are liabilities, not cash outflow!
+        if (tx.paymentStatus !== 'UNPAID') {
+          totalOutflow += amt;
+          modeBreakdown[mode] = (modeBreakdown[mode] || 0) - amt;
+        }
       }
     }
 
@@ -970,6 +1082,7 @@ export class DaybookService {
             delete dtPayload.total_amount;
             delete dtPayload.remaining_amount;
             delete dtPayload.payment_status;
+            delete dtPayload.branch_id;
             await supabase.from('daybook_transactions').update(dtPayload).eq('id', existing.id);
           }
           savedDbId = existing.id;
@@ -985,6 +1098,7 @@ export class DaybookService {
             delete dtPayload.total_amount;
             delete dtPayload.remaining_amount;
             delete dtPayload.payment_status;
+            delete dtPayload.branch_id;
             const retry = await supabase.from('daybook_transactions').insert([dtPayload]).select('id').single();
             if (!retry.error && retry.data) {
               savedDbId = retry.data.id;
@@ -1325,12 +1439,14 @@ export class DaybookService {
   private getFilteredLocalTransactions(wsId: string, options?: DaybookFilterOptions): DaybookTransaction[] {
     const local = safeGetTenantStorage<DaybookTransaction>(LOCAL_DAYBOOK_KEY, []);
     const { start, end } = this.getDateBounds(options?.dateRange, options?.startDate, options?.endDate);
+    const mainBranchId = safeGetTenantItem('main_branch_id');
+    const isMainBranch = !options?.branchId || options.branchId === 'ALL' || options.branchId === mainBranchId || String(options.branchId).toLowerCase().includes('main');
 
     return local.filter((t) => {
       if (t.workspaceId && wsId && t.workspaceId !== wsId) return false;
       if (options?.branchId && options.branchId !== 'ALL') {
         const entryBranch = t.branchId || (t as any).branch_id;
-        if (entryBranch !== options.branchId) return false;
+        if (entryBranch ? entryBranch !== options.branchId : !isMainBranch) return false;
       }
       if (start && t.transactionDate < start) return false;
       if (end && t.transactionDate > end) return false;
