@@ -2898,6 +2898,14 @@ class StoreService {
       return 0;
     }
 
+    if (effectiveBranchId === 'ALL') {
+      const allInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
+      const matchingBranchInv = allInv.filter((bi: any) => (bi.productId || bi.product_id) === productId);
+      if (matchingBranchInv.length > 0) {
+        return matchingBranchInv.reduce((sum: number, bi: any) => sum + (Number(bi.currentStock ?? bi.current_stock) || 0), 0);
+      }
+    }
+
     let prod = (this.state.products || []).find((p) => p.id === productId);
     if (!prod) {
       const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
@@ -2945,20 +2953,23 @@ class StoreService {
     if (!this.state.products) this.state.products = [];
     if (!this.state.stockReceipts) this.state.stockReceipts = [];
 
-    // Recalculate availableStock dynamically for every active product
-    this.state.products.forEach((p) => {
-      const avail = this.getProductAvailableStock(p.id, branchId);
-      p.currentStock = avail;
-      (p as any).stock = avail;
-      p.productName = p.productName || p.name;
-      p.partNumber = p.partNumber || p.sku;
-      p.currentBuyPrice = p.currentBuyPrice || p.buyPrice;
-      p.currentSellPrice = p.currentSellPrice || p.sellingPrice;
-      p.minimumStockLevel = p.minimumStockLevel !== undefined ? p.minimumStockLevel : p.minimumStock;
-      p.active = p.active !== undefined ? p.active : true;
-    });
-
-    return this.state.products.filter((p) => p.active !== false);
+    // Recalculate availableStock dynamically for every active product without mutating master currentStock in place
+    return this.state.products
+      .filter((p) => p.active !== false)
+      .map((p) => {
+        const avail = this.getProductAvailableStock(p.id, branchId);
+        return {
+          ...p,
+          currentStock: avail,
+          stock: avail,
+          productName: p.productName || p.name,
+          partNumber: p.partNumber || p.sku,
+          currentBuyPrice: p.currentBuyPrice || p.buyPrice,
+          currentSellPrice: p.currentSellPrice || p.sellingPrice,
+          minimumStockLevel: p.minimumStockLevel !== undefined ? p.minimumStockLevel : p.minimumStock,
+          active: p.active !== undefined ? p.active : true,
+        };
+      });
   }
 
   public getStockReceipts(productId?: string): StockReceipt[] {

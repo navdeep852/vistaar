@@ -264,7 +264,7 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
   }
 
   // Open Pre-Submission Review Modal
-  const handleOpenReviewModal = () => {
+  const handleOpenReviewModal = async () => {
     if (custPhone && !isValidIndianPhoneNumber(custPhone, false)) {
       setCustPhoneError('Enter a valid 10-digit mobile number starting with 6–9.');
       document.getElementById('counter-sale-phone')?.focus();
@@ -277,6 +277,27 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
       showToast(validationErrors[0], 'error');
       return;
     }
+
+    // Revalidate authoritative stock live before opening modal
+    try {
+      let hasShortage = false;
+      const refreshedItems = await Promise.all(
+        lineItems.map(async (item) => {
+          if (!item.productId) return item;
+          const freshStock = await productService.getProductAvailableStock(item.productId, currentBranch?.id);
+          if (item.quantity > freshStock) {
+            hasShortage = true;
+            showToast(`Authoritative stock for "${item.productName}" is ${freshStock}. Requested ${item.quantity} exceeds available stock.`, 'error');
+          }
+          return { ...item, availableStock: freshStock };
+        })
+      );
+      setLineItems(refreshedItems);
+      if (hasShortage) return;
+    } catch {
+      // Proceed if network is unavailable
+    }
+
     setReviewModalOpen(true);
   };
 
@@ -1211,21 +1232,29 @@ export const CounterSaleView: React.FC<CounterSaleViewProps> = ({
 
           {/* Stock Impact Summary */}
           <div className="space-y-2">
-            <span className="font-bold text-slate-500 dark:text-slate-400 uppercase block">Stock After Sale Breakdown:</span>
-            {lineItems.filter((item) => item.productId).map((item, idx) => (
-              <div key={item.productId || idx} className="flex justify-between items-center p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-                <div>
-                  <span className="font-bold text-slate-900 dark:text-slate-100">{item.productName}</span>
-                  <span className="text-[10px] text-slate-400 dark:text-slate-500 block font-mono">Part #: {item.partNumber || 'N/A'}</span>
+            <span className="font-bold text-slate-500 dark:text-slate-400 uppercase block text-[11px]">Authoritative Stock Breakdown:</span>
+            {lineItems.filter((item) => item.productId).map((item, idx) => {
+              const beforeSale = item.availableStock ?? 0;
+              const soldQty = item.quantity;
+              const afterSale = beforeSale - soldQty;
+              return (
+                <div key={item.productId || idx} className="flex justify-between items-center p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                  <div>
+                    <span className="font-bold text-slate-900 dark:text-slate-100">{item.productName}</span>
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500 block font-mono">Part #: {item.partNumber || 'N/A'}</span>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 block mt-0.5">
+                      Available before sale: <strong className="text-slate-700 dark:text-slate-300 font-mono">{beforeSale}</strong>
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="font-black text-rose-600 dark:text-rose-400 block">-{soldQty} {item.unit || 'Pcs'}</span>
+                    <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold block">
+                      Expected after sale: <strong className="font-mono">{afterSale}</strong> units
+                    </span>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <span className="font-black text-rose-600 dark:text-rose-400">-{item.quantity} {item.unit || 'Pcs'}</span>
-                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold block">
-                    ({(item.availableStock ?? 0) - item.quantity} units remaining)
-                  </span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center">

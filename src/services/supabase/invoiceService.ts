@@ -509,46 +509,49 @@ export class InvoiceService {
 
     try {
       // Step 1: Try executing PostgreSQL RPC function on Supabase if available
-      const { data, error } = await supabase.rpc('finalize_invoice_stock', { p_invoice_id: invoiceId });
+      if (isSupabaseConfigured() && isValidUuid(invoiceId)) {
+        const { data, error } = await supabase.rpc('finalize_invoice_stock', { p_invoice_id: invoiceId });
 
-      if (!error && data && data.success) {
-        console.log('[finalizeInvoice] RPC finalize_invoice_stock succeeded:', data);
-        // Sync local store product stock without performing duplicate stock deduction
-        try {
-          const { invoice } = await this.getInvoiceById(invoiceId);
-          const items = invoice?.invoice_items || invoice?.items || [];
-          for (const item of items) {
-            const pId = item.product_id || item.productId;
-            if (pId) {
-              const liveStock = await productService.getProductAvailableStock(pId);
-              store.syncProductStock(pId, liveStock);
+        if (!error && data && data.success) {
+          console.log('[finalizeInvoice] RPC finalize_invoice_stock succeeded:', data);
+          // Sync local store product stock without performing duplicate stock deduction
+          try {
+            const { invoice } = await this.getInvoiceById(invoiceId);
+            const items = invoice?.invoice_items || invoice?.items || [];
+            for (const item of items) {
+              const pId = item.product_id || item.productId;
+              if (pId) {
+                const liveStock = await productService.getProductAvailableStock(pId);
+                store.syncProductStock(pId, liveStock);
+              }
             }
+          } catch (syncErr) {
+            console.warn('[finalizeInvoice] Post-finalization local store sync warning:', syncErr);
           }
-        } catch (syncErr) {
-          console.warn('[finalizeInvoice] Post-finalization local store sync warning:', syncErr);
+          return { success: true };
         }
-        return { success: true };
-      }
 
-      if (error) {
-        console.error('[finalizeInvoice] RPC finalize_invoice_stock returned error:', error);
+        if (error) {
+          console.error('[finalizeInvoice] RPC finalize_invoice_stock returned error:', error);
 
-        const code = (error as any).code || '';
-        let msg = (error as any).message || '';
-        const isUnavailable =
-          code === 'PGRST202' ||
-          code === 'P0001' ||
-          msg.includes('UNAUTHORIZED') ||
-          msg.includes('Could not find the function') ||
-          msg.includes('does not exist') ||
-          msg.startsWith('Failed to fetch') ||
-          msg.includes('NetworkError');
+          const code = (error as any).code || '';
+          let msg = (error as any).message || '';
+          const isUnavailable =
+            code === '22P02' ||
+            code === 'PGRST202' ||
+            code === 'P0001' ||
+            msg.includes('UNAUTHORIZED') ||
+            msg.includes('Could not find the function') ||
+            msg.includes('does not exist') ||
+            msg.startsWith('Failed to fetch') ||
+            msg.includes('NetworkError');
 
-        if (!isUnavailable) {
-          if (msg.includes('INSUFFICIENT_STOCK:')) {
-            msg = msg.replace(/^.*?INSUFFICIENT_STOCK:\s*/, '');
+          if (!isUnavailable) {
+            if (msg.includes('INSUFFICIENT_STOCK:')) {
+              msg = msg.replace(/^.*?INSUFFICIENT_STOCK:\s*/, '');
+            }
+            return { success: false, error: msg || 'Invoice finalization failed.' };
           }
-          return { success: false, error: msg || 'Invoice finalization failed.' };
         }
       }
 
@@ -610,33 +613,21 @@ export class InvoiceService {
                 .eq('id', productId);
             }
 
-            if (branchId) {
-              const allLocalBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
-              const targetBEntry = allLocalBInv.find((bi: any) => (bi.branchId === branchId || bi.branch_id === branchId) && (bi.productId === productId || bi.product_id === productId));
-              if (targetBEntry) {
-                const curB = Number(targetBEntry.currentStock ?? targetBEntry.current_stock ?? 0);
-                targetBEntry.currentStock = Math.max(0, curB - req.qty);
-                targetBEntry.current_stock = targetBEntry.currentStock;
-                targetBEntry.updatedAt = new Date().toISOString();
-                safeSaveTenantStorage('vistaar_local_branch_inventory_db', allLocalBInv);
-              }
+            if (branchId && isValidUuid(branchId)) {
+              const { data: bProd } = await supabase
+                .from('branch_inventory')
+                .select('current_stock')
+                .eq('branch_id', branchId)
+                .eq('product_id', productId)
+                .maybeSingle();
 
-              if (isValidUuid(branchId)) {
-                const { data: bProd } = await supabase
+              if (bProd) {
+                const newBStock = Math.max(0, (Number(bProd.current_stock) || 0) - req.qty);
+                await supabase
                   .from('branch_inventory')
-                  .select('current_stock')
+                  .update({ current_stock: newBStock, updated_at: new Date().toISOString() })
                   .eq('branch_id', branchId)
-                  .eq('product_id', productId)
-                  .maybeSingle();
-
-                if (bProd) {
-                  const newBStock = Math.max(0, (Number(bProd.current_stock) || 0) - req.qty);
-                  await supabase
-                    .from('branch_inventory')
-                    .update({ current_stock: newBStock, updated_at: new Date().toISOString() })
-                    .eq('branch_id', branchId)
-                    .eq('product_id', productId);
-                }
+                  .eq('product_id', productId);
               }
             }
           } catch (e) {

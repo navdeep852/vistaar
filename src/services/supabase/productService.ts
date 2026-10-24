@@ -923,16 +923,32 @@ export class ProductService {
     // If targetBranchId is specified and not 'ALL', query branch-specific authoritative stock
     if (targetBranchId && targetBranchId !== 'ALL') {
       if (isSupabaseConfigured() && isValidUuid(productId)) {
+        // 1. Try authoritative branch stock RPC with both parameter conventions
         try {
+          const wsId = await this.getOrFetchWorkspaceId();
           const { data: bStock, error: bErr } = await supabase.rpc('get_authoritative_branch_product_stock', {
-            p_branch_id: targetBranchId,
             p_product_id: productId,
+            p_branch_id: targetBranchId,
+            p_workspace_id: isValidUuid(wsId) ? wsId : undefined,
           });
           if (!bErr && bStock !== null && bStock !== undefined && !isNaN(Number(bStock))) {
             return Math.max(0, Number(bStock));
           }
         } catch {}
 
+        try {
+          const { data: bStock2, error: bErr2 } = await supabase.rpc('get_authoritative_branch_product_stock', {
+            p_branch_id: targetBranchId,
+            p_product_id: productId,
+          });
+          if (!bErr2 && bStock2 !== null && bStock2 !== undefined && !isNaN(Number(bStock2))) {
+            return Math.max(0, Number(bStock2));
+          }
+        } catch {}
+
+        // 2. Query branch_inventory current_stock and active stock_receipts
+        let branchStockVal = 0;
+        let receiptStockVal = 0;
         try {
           const { data: biRow } = await supabase
             .from('branch_inventory')
@@ -941,16 +957,59 @@ export class ProductService {
             .eq('product_id', productId)
             .maybeSingle();
           if (biRow) {
-            return Math.max(0, Number(biRow.current_stock) || 0);
+            branchStockVal = Math.max(0, Number(biRow.current_stock) || 0);
+          }
+        } catch {}
+
+        try {
+          const { data: receipts } = await supabase
+            .from('stock_receipts')
+            .select('quantity_remaining')
+            .eq('branch_id', targetBranchId)
+            .eq('product_id', productId)
+            .gt('quantity_remaining', 0);
+          if (receipts && Array.isArray(receipts)) {
+            receiptStockVal = receipts.reduce((sum, r) => sum + Math.max(0, Number(r.quantity_remaining) || 0), 0);
+          }
+        } catch {}
+
+        const authoritativeBranchStock = Math.max(branchStockVal, receiptStockVal);
+        if (authoritativeBranchStock > 0) {
+          return authoritativeBranchStock;
+        }
+
+        // 3. If 0 and branch is Main Branch, fall back to master product stock
+        try {
+          const { data: bObj } = await supabase
+            .from('branches')
+            .select('is_main_branch')
+            .eq('id', targetBranchId)
+            .maybeSingle();
+          if (bObj?.is_main_branch) {
+            const { data: pRow } = await supabase
+              .from('products')
+              .select('current_stock')
+              .eq('id', productId)
+              .maybeSingle();
+            if (pRow && Number(pRow.current_stock) > 0) {
+              return Math.max(0, Number(pRow.current_stock));
+            }
           }
         } catch {}
       }
 
-      // Local branch_inventory lookup
+      // Local branch_inventory & receipts lookup
       const allLocalBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
       const bRow = allLocalBInv.find((bi: any) => bi.branchId === targetBranchId && bi.productId === productId);
-      if (bRow) {
-        return Math.max(0, Number(bRow.currentStock ?? bRow.current_stock) || 0);
+      const localBranchStock = bRow ? Math.max(0, Number(bRow.currentStock ?? bRow.current_stock) || 0) : 0;
+
+      const localReceipts = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []).filter(
+        (r: any) => (r.branchId === targetBranchId || r.branch_id === targetBranchId) && (r.productId === productId || r.product_id === productId)
+      );
+      const localReceiptStock = localReceipts.reduce((sum: number, r: any) => sum + Math.max(0, Number(r.quantity_remaining) || 0), 0);
+      const localAuthoritative = Math.max(localBranchStock, localReceiptStock);
+      if (localAuthoritative > 0) {
+        return localAuthoritative;
       }
 
       // Check if branch is Main Branch
