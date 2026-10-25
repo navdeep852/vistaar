@@ -1153,7 +1153,7 @@ export class InvoiceService {
             branchId: payload.branchId,
             transactionType: 'SALE',
             direction: 'IN',
-            amount: effectivePaid, // Inflow = actual cash received
+            amount: 0, // Commercial document records gross sale volume (totalAmount); cash inflow is recorded authoritatively by payment record
             totalAmount: finalGrandTotal, // Gross sales volume
             remainingAmount: effectiveBalance,
             paymentStatus: pStatusTag,

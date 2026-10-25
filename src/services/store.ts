@@ -1184,12 +1184,12 @@ class StoreService {
     const newQuotation: Quotation = {
       ...quotationData,
       items: filterValidLineItems(quotationData.items) as QuotationItem[],
-      id: `qt-${Date.now()}`,
-      quotationNumber,
+      id: (quotationData as any).id || (quotationData as any).quotation_id || `qt-${Date.now()}`,
+      quotationNumber: (quotationData as any).quotationNumber || (quotationData as any).quotation_number || quotationNumber,
       templateId: quotationData.templateId || 'qt-modern-blue',
       snapshot,
       isSnapshotFinalized: true,
-      createdAt: new Date().toISOString(),
+      createdAt: (quotationData as any).createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
@@ -1587,7 +1587,12 @@ class StoreService {
       const saleIdx = localDaybook.findIndex(
         (t: any) => t.referenceType === 'INVOICE' && (t.referenceId === newInvoice.id || t.referenceNumber === newInvoice.invoiceNumber)
       );
-      const pStatus = newInvoice.balanceAmount <= 0.005 ? 'PAID' : (newInvoice.paidAmount > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+      const hasPayments = (this.state.payments || []).some(
+        (p) => p.invoiceId === newInvoice.id || (p.invoiceNumber && p.invoiceNumber === newInvoice.invoiceNumber)
+      );
+      const initialInflow = hasPayments ? 0 : (newInvoice.paidAmount || 0);
+      const pStatus = (newInvoice as any).paymentStatus || (newInvoice.balanceAmount <= 0 ? 'PAID' : (newInvoice.paidAmount || 0) > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+
       const saleEntry = {
         id: `db-sale-${newInvoice.id}`,
         workspaceId: (newInvoice as any).workspaceId || '',
@@ -1595,7 +1600,7 @@ class StoreService {
         transactionDate: newInvoice.date || new Date().toISOString().split('T')[0],
         transactionType: 'SALE',
         direction: 'IN',
-        amount: newInvoice.paidAmount,
+        amount: initialInflow,
         totalAmount: newInvoice.grandTotal,
         remainingAmount: newInvoice.balanceAmount,
         paymentStatus: pStatus,
@@ -2131,7 +2136,7 @@ class StoreService {
             ...localDaybook[saleIdx],
             totalAmount: inv.grandTotal,
             remainingAmount: inv.balanceAmount,
-            amount: inv.paidAmount,
+            amount: 0, // CRITICAL: The payment row carries the inflow; invoice entry represents commercial volume
             paymentStatus: pStatus,
             updatedAt: now,
           };
@@ -2143,7 +2148,7 @@ class StoreService {
             transactionDate: inv.date || payDate,
             transactionType: 'SALE',
             direction: 'IN',
-            amount: inv.paidAmount,
+            amount: 0, // CRITICAL: The payment row carries the inflow; invoice entry represents commercial volume
             totalAmount: inv.grandTotal,
             remainingAmount: inv.balanceAmount,
             paymentStatus: pStatus,
@@ -2176,42 +2181,58 @@ class StoreService {
         const csBal = cs ? Number(cs.balanceAmount ?? 0) : 0;
         const pStatus = csBal <= 0.01 ? 'PAID' : 'PARTIALLY PAID';
 
-        const paymentRow: any = {
-          id: `db-pay-${paymentId}`,
-          workspaceId: '',
-          branchId: data.branchId || cs?.branchId,
-          transactionCode: paymentNumber,
-          transactionDate: payDate,
-          transactionType: 'CUSTOMER_PAYMENT',
-          direction: 'IN',
-          amount: amount,
-          totalAmount: csTotal,
-          remainingAmount: csBal,
-          paymentStatus: pStatus,
-          paymentMode: data.paymentMethod || 'Cash',
-          partyType: 'customer',
-          partyId: data.customerId || cs?.customerId,
-          partyName: customerName,
-          referenceType: 'COUNTER_SALE',
-          referenceId: data.counterSaleId || cs?.id || paymentId,
-          referenceNumber: cs?.saleNumber || cs?.invoiceNumber || paymentNumber,
-          description: `Counter Sale Payment #${cs?.saleNumber || cs?.invoiceNumber || ''}`.trim(),
-          notes: data.notes || (data.reference ? `Ref: ${data.reference}` : undefined),
-          status: 'COMPLETED',
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        const existingPayIdx = localDaybook.findIndex(
-          (t: any) => t.referenceId === paymentId || (t.referenceType === 'PAYMENT' && t.referenceId === paymentId)
+        // Check if an authoritative COUNTER_SALE entry already exists for this counter sale
+        const existingSaleIdx = localDaybook.findIndex(
+          (t: any) => (t.referenceType === 'COUNTER_SALE' || t.transactionType === 'SALE') &&
+            (t.referenceId === (data.counterSaleId || cs?.id) ||
+             (cs?.saleNumber && t.referenceNumber === cs.saleNumber) ||
+             (cs?.invoiceNumber && t.referenceNumber === cs.invoiceNumber))
         );
-        if (existingPayIdx >= 0) {
-          localDaybook[existingPayIdx] = { ...localDaybook[existingPayIdx], ...paymentRow, id: localDaybook[existingPayIdx].id };
-        } else {
-          localDaybook.unshift(paymentRow);
-        }
 
-        safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, localDaybook);
+        // If this is the initial upfront payment recorded during counter sale creation,
+        // the counter sale entry itself records the initial cash receipt. Do not duplicate.
+        if (existingSaleIdx >= 0 || data.isUpfrontInvoicePayment) {
+          // If the sale entry exists, update its balance and payment status without duplicating inflow
+          if (existingSaleIdx >= 0) {
+            localDaybook[existingSaleIdx] = {
+              ...localDaybook[existingSaleIdx],
+              totalAmount: csTotal,
+              remainingAmount: csBal,
+              paymentStatus: pStatus,
+              updatedAt: now,
+            };
+            safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, localDaybook);
+          }
+        } else {
+          // Additional subsequent payment collected later for a credit counter sale
+          const paymentRow: any = {
+            id: `db-pay-${paymentId}`,
+            workspaceId: '',
+            branchId: data.branchId || cs?.branchId,
+            transactionCode: paymentNumber,
+            transactionDate: payDate,
+            transactionType: 'CUSTOMER_PAYMENT',
+            direction: 'IN',
+            amount: amount,
+            totalAmount: csTotal,
+            remainingAmount: csBal,
+            paymentStatus: pStatus,
+            paymentMode: data.paymentMethod || 'Cash',
+            partyType: 'customer',
+            partyId: data.customerId || cs?.customerId,
+            partyName: customerName,
+            referenceType: 'COUNTER_SALE',
+            referenceId: data.counterSaleId || cs?.id || paymentId,
+            referenceNumber: cs?.saleNumber || cs?.invoiceNumber || paymentNumber,
+            description: `Counter Sale Payment #${cs?.saleNumber || cs?.invoiceNumber || ''}`.trim(),
+            notes: data.notes || (data.reference ? `Ref: ${data.reference}` : undefined),
+            status: 'COMPLETED',
+            createdAt: now,
+            updatedAt: now,
+          };
+          localDaybook.unshift(paymentRow);
+          safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, localDaybook);
+        }
       } catch (dbErr) {
         console.warn('[recordUnifiedCustomerPayment] Counter Sale Daybook sync notice:', dbErr);
       }

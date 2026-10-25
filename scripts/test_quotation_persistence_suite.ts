@@ -31,6 +31,12 @@ const mockSessionStorage = {
 
 (global as any).localStorage = mockLocalStorage;
 (global as any).sessionStorage = mockSessionStorage;
+if (typeof (global as any).btoa === 'undefined') {
+  (global as any).btoa = (str: string) => Buffer.from(str, 'binary').toString('base64');
+}
+if (typeof (global as any).atob === 'undefined') {
+  (global as any).atob = (b64: string) => Buffer.from(b64, 'base64').toString('binary');
+}
 if (typeof (global as any).window === 'undefined') {
   (global as any).window = {
     localStorage: mockLocalStorage,
@@ -38,6 +44,8 @@ if (typeof (global as any).window === 'undefined') {
     addEventListener: () => {},
     removeEventListener: () => {},
     dispatchEvent: () => true,
+    btoa: (global as any).btoa,
+    atob: (global as any).atob,
   };
 }
 

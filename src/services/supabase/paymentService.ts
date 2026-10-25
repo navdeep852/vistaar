@@ -136,7 +136,7 @@ export class PaymentService {
           referenceNumber: finalInvNumber,
           transactionType: 'SALE',
           direction: 'IN',
-          amount: totalPaid,
+          amount: 0, // Payment records carry the cash inflow; invoice row represents commercial volume
           totalAmount: grandTotal,
           remainingAmount: balanceAmount,
           paymentStatus: pStatus,

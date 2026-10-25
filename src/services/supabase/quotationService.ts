@@ -321,7 +321,12 @@ export class QuotationService {
             id: qt.id || `qt-${Date.now()}`,
             items: validItems,
           });
-          store.addQuotation(localFallback);
+          const savedFallback = store.addQuotation(localFallback);
+          try {
+            const currentTenantQt = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
+            currentTenantQt.unshift(savedFallback);
+            safeSaveTenantStorage(LOCAL_QUOTATIONS_KEY, currentTenantQt);
+          } catch {}
 
           return { error: errStr };
         }
@@ -781,8 +786,12 @@ export class QuotationService {
         wsId = await this.getWorkspaceId();
       }
 
-      // 1. Resolve quotation from store or Supabase
+      // 1. Resolve quotation from store, local tenant storage, or Supabase
       let targetQt: any = store.getQuotations().find((q) => q.id === qId || q.quotationNumber === qId);
+      if (!targetQt) {
+        const localQuotations = safeGetTenantStorage<any>(LOCAL_QUOTATIONS_KEY, []);
+        targetQt = localQuotations.find((q: any) => q.id === qId || q.quotationNumber === qId || q.quotation_number === qId);
+      }
       if (!targetQt && isSupabaseConfigured() && isValidUuid(wsId)) {
         let dbQuery = supabase
           .from('quotations')
@@ -930,6 +939,10 @@ export class QuotationService {
           const remaining = Math.max(0, Number((grandTotal - paid).toFixed(2)));
           const pStatus = remaining <= 0.01 ? 'PAID' : (paid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
 
+          const storePayments = store.getPayments();
+          const hasPayments = storePayments.some((p) => p.invoiceId === inv.id || (p.invoiceNumber && p.invoiceNumber === inv.invoiceNumber));
+          const effectiveInflow = hasPayments ? 0 : paid;
+
           // Ensure Daybook entry
           try {
             const { daybookService } = await import('./daybookService');
@@ -939,7 +952,7 @@ export class QuotationService {
               referenceNumber: inv.invoiceNumber,
               transactionType: 'SALE',
               direction: 'IN',
-              amount: paid,
+              amount: effectiveInflow,
               totalAmount: grandTotal,
               remainingAmount: remaining,
               paymentStatus: pStatus,
@@ -955,8 +968,8 @@ export class QuotationService {
             // ignore
           }
 
-          // Ensure Cashbook if paid > 0
-          if (paid > 0) {
+          // Ensure Cashbook if paid > 0 and no distinct payment record exists
+          if (paid > 0 && !hasPayments) {
             try {
               const { cashbookService } = await import('./cashbookService');
               await cashbookService.recordCashbookEntry({

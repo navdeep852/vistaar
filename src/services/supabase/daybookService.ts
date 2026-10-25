@@ -483,8 +483,11 @@ export class DaybookService {
           const invPaid = Number(linkedInv.paid_amount) || 0;
           const invBal = Number(linkedInv.balance_amount) || Math.max(0, grandTotal - invPaid);
 
-          // If payments exist as distinct transactions, the invoice row should not duplicate inflow
-          if (invPayments.length > 0 && (seenPaymentIdsInTx.size > 0 || invoiceIdsWithPaymentTx.has(linkedInv.invoice_number))) {
+          // STRICT ACCOUNTING RULE:
+          // Commercial document (Invoice) represents commercial revenue (totalAmount: grandTotal).
+          // If payments exist as distinct records in payments table or unified list, the payment rows
+          // represent the financial inflows. The invoice row itself must NOT duplicate the inflow!
+          if (invPayments.length > 0 || seenPaymentIdsInTx.size > 0 || invoiceIdsWithPaymentTx.has(linkedInv.invoice_number) || invoiceIdsWithPaymentTx.has(linkedInv.id)) {
             // Unpaid invoice sale row
             tx.amount = 0;
             tx.remainingAmount = invBal;
@@ -566,10 +569,14 @@ export class DaybookService {
       const hasInvoiceTx = seenTxKeys.has(invRefKey) || seenTxKeys.has(invNumRefKey) || unifiedList.some((t) => t.referenceId === inv.id || t.referenceNumber === inv.invoice_number);
 
       if (!hasInvoiceTx) {
+        const invPayments = paymentsByInvoice.get(inv.id) || paymentsByInvoice.get(inv.invoice_number) || [];
         const grandTotal = Number(inv.grand_total) || 0;
         const paid = Number(inv.paid_amount) || 0;
         const remaining = Number(inv.balance_amount) || Math.max(0, grandTotal - paid);
         const pStatus = remaining <= 0.01 ? 'PAID' : (paid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+
+        // If payments exist as distinct records in payments table, the synthesized invoice row has amount = 0
+        const effectiveInflow = invPayments.length > 0 ? 0 : paid;
 
         unifiedList.push({
           id: `db-syn-inv-${inv.id}`,
@@ -578,7 +585,7 @@ export class DaybookService {
           transactionDate: (inv.date || '').split('T')[0] || new Date().toISOString().split('T')[0],
           transactionType: 'SALE',
           direction: 'IN',
-          amount: paid,
+          amount: effectiveInflow,
           totalAmount: grandTotal,
           remainingAmount: remaining,
           paymentStatus: pStatus as any,
@@ -740,9 +747,38 @@ export class DaybookService {
       }
     }
 
-    // 7. Deduplicate identical upfront payments recorded as both SALE and PAYMENT on the same invoice/sale & date
+    // 7. Robust Deduplication and Financial Event Isolation
+    // Pass 1: Identify all invoices and counter sales that have distinct payment records
+    const invoiceNumbersWithPayments = new Set<string>();
+    const invoiceIdsWithPayments = new Set<string>();
+    const counterSaleNumbersWithPayments = new Set<string>();
+    const counterSaleIdsWithPayments = new Set<string>();
+
+    for (const tx of unifiedList) {
+      if (tx.status === 'VOID' || tx.paymentStatus === 'CANCELLED') continue;
+      if (tx.referenceType === 'PAYMENT' && tx.amount > 0) {
+        if (tx.referenceNumber) {
+          invoiceNumbersWithPayments.add(tx.referenceNumber.toLowerCase().trim());
+          counterSaleNumbersWithPayments.add(tx.referenceNumber.toLowerCase().trim());
+        }
+        if (tx.referenceId) {
+          invoiceIdsWithPayments.add(tx.referenceId.toLowerCase().trim());
+          counterSaleIdsWithPayments.add(tx.referenceId.toLowerCase().trim());
+        }
+      }
+    }
+
+    // Also check paymentsByInvoice map
+    for (const [key, pList] of paymentsByInvoice.entries()) {
+      if (pList && pList.length > 0) {
+        invoiceNumbersWithPayments.add(key.toLowerCase().trim());
+        invoiceIdsWithPayments.add(key.toLowerCase().trim());
+      }
+    }
+
     const finalFiltered: DaybookTransaction[] = [];
-    const seenInflowsByInvoiceAndDate = new Set<string>();
+    const seenPaymentEventKeys = new Set<string>();
+    const seenCounterSaleRefs = new Set<string>();
 
     for (const tx of unifiedList) {
       if (tx.status === 'VOID' || tx.paymentStatus === 'CANCELLED') {
@@ -750,17 +786,56 @@ export class DaybookService {
         continue;
       }
 
-      // Check if this transaction represents an invoice or counter sale payment
-      const isPayOrSale = (tx.referenceType === 'INVOICE' || tx.referenceType === 'PAYMENT' || tx.referenceType === 'COUNTER_SALE') && tx.amount > 0;
-      if (isPayOrSale && tx.referenceNumber) {
-        const dedupKey = `${tx.referenceNumber}:${tx.transactionDate}:${tx.amount}`;
-        if (seenInflowsByInvoiceAndDate.has(dedupKey) && (tx.referenceType === 'INVOICE' || tx.referenceType === 'COUNTER_SALE')) {
-          // If a distinct PAYMENT entry already recorded this exact inflow on this date, zero out the sale row inflow
+      // 1. INVOICE commercial rows:
+      // If payment records exist for this invoice, the invoice row represents the commercial contract (totalAmount)
+      // and unpaid balance (remainingAmount), with inflow amount = 0 so payments carry the cash movement.
+      if (tx.referenceType === 'INVOICE') {
+        const refNumKey = (tx.referenceNumber || '').toLowerCase().trim();
+        const refIdKey = (tx.referenceId || '').toLowerCase().trim();
+        if ((refNumKey && invoiceNumbersWithPayments.has(refNumKey)) || (refIdKey && invoiceIdsWithPayments.has(refIdKey))) {
           tx.amount = 0;
-        } else {
-          seenInflowsByInvoiceAndDate.add(dedupKey);
         }
+        finalFiltered.push(tx);
+        continue;
       }
+
+      // 2. COUNTER_SALE rows:
+      // A Counter Sale is a direct POS cash receipt. Its inflow is authoritative.
+      if (tx.referenceType === 'COUNTER_SALE') {
+        const csKey = (tx.referenceNumber || tx.referenceId || tx.id).toLowerCase().trim();
+        seenCounterSaleRefs.add(csKey);
+        if (tx.referenceNumber) seenCounterSaleRefs.add(tx.referenceNumber.toLowerCase().trim());
+        if (tx.referenceId) seenCounterSaleRefs.add(tx.referenceId.toLowerCase().trim());
+        finalFiltered.push(tx);
+        continue;
+      }
+
+      // 3. PAYMENT rows:
+      if (tx.referenceType === 'PAYMENT') {
+        const refNumKey = (tx.referenceNumber || '').toLowerCase().trim();
+        const refIdKey = (tx.referenceId || '').toLowerCase().trim();
+
+        // If this payment is linked to a Counter Sale that already recorded the inflow, zero out duplicate payment inflow
+        if ((refNumKey && seenCounterSaleRefs.has(refNumKey)) || (refIdKey && seenCounterSaleRefs.has(refIdKey))) {
+          tx.amount = 0;
+          finalFiltered.push(tx);
+          continue;
+        }
+
+        // Check for duplicate representation of the exact same payment event
+        // Stable event key: referenceId (the canonical payment ID) or transactionCode
+        const stableEventKey = tx.referenceId ? `PAY_REF:${tx.referenceId}` : `PAY_CODE:${tx.transactionCode}`;
+        if (seenPaymentEventKeys.has(stableEventKey)) {
+          // Exact duplicate payment entry with same ID/code: drop
+          continue;
+        }
+
+        seenPaymentEventKeys.add(stableEventKey);
+        finalFiltered.push(tx);
+        continue;
+      }
+
+      // Other transaction types (EXPENSE, SALARY, ADJUSTMENT, etc.)
       finalFiltered.push(tx);
     }
 

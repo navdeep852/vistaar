@@ -575,6 +575,7 @@ export class CustomerPaymentService {
                   await supabase
                     .from('daybook_transactions')
                     .update({
+                      amount: 0, // CRITICAL: Payment entry carries the inflow; invoice entry represents commercial volume
                       total_amount: updatedInvTotal,
                       remaining_amount: updatedInvBal,
                       payment_status: pStatusTag,

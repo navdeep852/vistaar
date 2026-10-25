@@ -287,15 +287,15 @@ export class EnterpriseAnalyticsService {
 
       const csId = p.counter_sale_id || p.counterSaleId;
       if (csId) {
-        seenCsIdsInPayments.add(String(csId).toLowerCase());
+        seenCsIdsInPayments.add(String(csId).toLowerCase().trim());
       }
       const invId = p.invoice_id || p.invoiceId;
       if (invId) {
-        seenInvIdsInPayments.add(String(invId).toLowerCase());
+        seenInvIdsInPayments.add(String(invId).toLowerCase().trim());
       }
       const invNum = p.invoice_number || p.invoiceNumber;
       if (invNum) {
-        seenInvIdsInPayments.add(String(invNum).toLowerCase());
+        seenInvIdsInPayments.add(String(invNum).toLowerCase().trim());
       }
 
       const splitCash = Number(p.cash_amount ?? p.cashAmount ?? 0);
@@ -351,8 +351,8 @@ export class EnterpriseAnalyticsService {
       const paid = Number(inv.paid_amount ?? inv.paidAmount ?? 0);
       if (paid <= 0) return;
 
-      const id = inv.id ? String(inv.id).toLowerCase() : '';
-      const num = (inv.invoice_number || inv.invoiceNumber) ? String(inv.invoice_number || inv.invoiceNumber).toLowerCase() : '';
+      const id = inv.id ? String(inv.id).toLowerCase().trim() : '';
+      const num = (inv.invoice_number || inv.invoiceNumber) ? String(inv.invoice_number || inv.invoiceNumber).toLowerCase().trim() : '';
       if ((id && seenInvIdsInPayments.has(id)) || (num && seenInvIdsInPayments.has(num))) {
         return; // Already accounted for in payments
       }

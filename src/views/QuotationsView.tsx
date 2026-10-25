@@ -91,8 +91,8 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
 
   const updateData = useCallback(() => {
     const all = store.getQuotations();
-    if (currentBranch) {
-      setQuotations(all.filter((q) => q.branchId === currentBranch.id || (!q.branchId && (currentBranch.isMainBranch || currentBranch.id === 'ALL'))));
+    if (currentBranch && currentBranch.id !== 'ALL') {
+      setQuotations(all.filter((q) => q.branchId === currentBranch.id || (!q.branchId && currentBranch.isMainBranch)));
     } else {
       setQuotations(all);
     }
@@ -292,7 +292,7 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
       setConvertModalOpen(false);
       setPreviewModalOpen(false);
       setQuotationToConvert(null);
-      setQuotations(store.getQuotations());
+      updateData();
     } catch (err: any) {
       console.error('Conversion execution error:', err);
       showToast(err?.message || 'Error converting quotation to invoice.', 'error');
