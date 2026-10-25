@@ -3,7 +3,7 @@ import { Invoice, Product, InvoiceStatus, Payment } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { store } from '../store';
-import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from './safeStorage';
 import { productService } from './productService';
 import { fromDbInvoice } from './types';
 import { calculateInvoiceFinancials } from '../financialCalculationService';
@@ -77,7 +77,13 @@ export class InvoiceService {
     }
 
     if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
-      query = query.eq('branch_id', options.branchId);
+      const mainBranchId = safeGetTenantItem('main_branch_id');
+      const isMain = options.branchId === mainBranchId || String(options.branchId).toLowerCase().includes('main');
+      if (isMain) {
+        query = query.or(`branch_id.eq.${options.branchId},branch_id.is.null`);
+      } else {
+        query = query.eq('branch_id', options.branchId);
+      }
     }
 
     if (options?.status) {

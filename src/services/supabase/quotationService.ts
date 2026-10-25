@@ -3,7 +3,7 @@ import { Quotation, QuotationItem, QuotationStatus } from '../../types';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { store, LOCAL_QUOTATIONS_KEY } from '../store';
-import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
+import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from './safeStorage';
 import { filterValidLineItems, isEmptyLineItem } from '../../lib/productHelpers';
 import { fromDbQuotation } from './types';
 
@@ -102,9 +102,16 @@ export class QuotationService {
           .select('*, quotation_items(*)')
           .eq('workspace_id', wsId);
 
+        const mainBranchId = safeGetTenantItem('main_branch_id');
+        const isMain = !options?.branchId || options.branchId === 'ALL' || options.branchId === mainBranchId || String(options.branchId).toLowerCase().includes('main');
+
         let branchFilterAppliedInDb = false;
         if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
-          query = query.eq('branch_id', options.branchId);
+          if (isMain) {
+            query = query.or(`branch_id.eq.${options.branchId},branch_id.is.null`);
+          } else {
+            query = query.eq('branch_id', options.branchId);
+          }
           branchFilterAppliedInDb = true;
         }
 
@@ -143,7 +150,7 @@ export class QuotationService {
         if (!branchFilterAppliedInDb && options?.branchId && options.branchId !== 'ALL') {
           remoteList = remoteList.filter((rq: any) => {
             const bId = rq.branch_id || rq.snapshot?.branch_id || rq.snapshot?.branchId;
-            return bId === options.branchId;
+            return bId === options.branchId || (!bId && isMain);
           });
         }
 
@@ -152,6 +159,15 @@ export class QuotationService {
           const mapped = fromDbQuotation(rq);
           const qNumKey = mapped.quotationNumber?.trim();
           const idKey = mapped.id?.trim();
+
+          // Purge stale local temporary key from mergedMap if quotationNumber now has authoritative remote UUID
+          if (qNumKey) {
+            for (const [k, v] of mergedMap.entries()) {
+              if (k !== qNumKey && k !== idKey && v.quotationNumber?.trim() === qNumKey) {
+                mergedMap.delete(k);
+              }
+            }
+          }
 
           const existing = (qNumKey ? mergedMap.get(qNumKey) : null) || (idKey ? mergedMap.get(idKey) : null);
           const isConverted = mapped.status === 'Converted' || (existing && existing.status === 'Converted');

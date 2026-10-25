@@ -133,15 +133,29 @@ export class DaybookService {
       const seenRefKeys = new Set<string>();
 
       rawTransactions.forEach((t) => {
-        if (t.id) seenIds.add(t.id);
-        if (t.referenceType && t.referenceId) seenRefKeys.add(`${t.referenceType}:${t.referenceId}`);
+        if (t.id) seenIds.add(t.id.toLowerCase().trim());
+        if (t.referenceType && t.referenceId) seenRefKeys.add(`${t.referenceType}:${t.referenceId}`.toLowerCase().trim());
+        if (t.referenceType && t.referenceNumber) seenRefKeys.add(`${t.referenceType}:${t.referenceNumber}`.toLowerCase().trim());
+        if (t.transactionCode) seenRefKeys.add(`CODE:${t.transactionCode}`.toLowerCase().trim());
       });
 
       for (const lt of local) {
-        const refKey = `${lt.referenceType}:${lt.referenceId}`;
-        if (!seenIds.has(lt.id) && !seenRefKeys.has(refKey)) {
-          seenIds.add(lt.id);
-          seenRefKeys.add(refKey);
+        const idKey = lt.id ? lt.id.toLowerCase().trim() : '';
+        const refIdKey = lt.referenceType && lt.referenceId ? `${lt.referenceType}:${lt.referenceId}`.toLowerCase().trim() : '';
+        const refNumKey = lt.referenceType && lt.referenceNumber ? `${lt.referenceType}:${lt.referenceNumber}`.toLowerCase().trim() : '';
+        const codeKey = lt.transactionCode ? `CODE:${lt.transactionCode}`.toLowerCase().trim() : '';
+
+        const isDuplicate =
+          (idKey && seenIds.has(idKey)) ||
+          (refIdKey && seenRefKeys.has(refIdKey)) ||
+          (refNumKey && seenRefKeys.has(refNumKey)) ||
+          (codeKey && seenRefKeys.has(codeKey));
+
+        if (!isDuplicate) {
+          if (idKey) seenIds.add(idKey);
+          if (refIdKey) seenRefKeys.add(refIdKey);
+          if (refNumKey) seenRefKeys.add(refNumKey);
+          if (codeKey) seenRefKeys.add(codeKey);
           rawTransactions.push(lt);
         }
       }
@@ -505,7 +519,20 @@ export class DaybookService {
 
     // 5. Synthesize any missing payments from payments table (e.g. Payment 2 made later)
     for (const p of paymentsList) {
-      if (seenPaymentIdsInTx.has(p.id) || seenTxKeys.has(`PAYMENT:${p.id}`) || seenTxKeys.has(`db-pay-${p.id}`)) {
+      const pAmt = Number(p.amount) || 0;
+      const isAlreadyRepresented =
+        seenPaymentIdsInTx.has(p.id) ||
+        seenTxKeys.has(`PAYMENT:${p.id}`) ||
+        seenTxKeys.has(`db-pay-${p.id}`) ||
+        unifiedList.some(
+          (t) =>
+            (t.referenceType === 'PAYMENT' || t.transactionType === 'CUSTOMER_PAYMENT') &&
+            t.referenceNumber &&
+            (t.referenceNumber === p.invoice_number || t.referenceNumber === p.counter_sale_number) &&
+            (t.referenceId === p.id || Math.abs(t.amount - pAmt) < 0.01)
+        );
+
+      if (isAlreadyRepresented) {
         continue;
       }
 
@@ -528,7 +555,6 @@ export class DaybookService {
       const remaining = Math.max(0, Number((grandTotal - cumulativePaid).toFixed(2)));
       const pStatus = remaining <= 0.01 ? 'PAID' : 'PARTIALLY PAID';
 
-      const pAmt = Number(p.amount) || 0;
       const newPayTx: DaybookTransaction = {
         id: `db-pay-${p.id}`,
         workspaceId: wsId,
@@ -754,25 +780,37 @@ export class DaybookService {
     const counterSaleNumbersWithPayments = new Set<string>();
     const counterSaleIdsWithPayments = new Set<string>();
 
+    // First populate from paymentsList directly (authoritative source)
+    for (const p of paymentsList) {
+      if (p.invoice_id) invoiceIdsWithPayments.add(String(p.invoice_id).toLowerCase().trim());
+      if (p.invoice_number) invoiceNumbersWithPayments.add(String(p.invoice_number).toLowerCase().trim());
+      if (p.counter_sale_id) counterSaleIdsWithPayments.add(String(p.counter_sale_id).toLowerCase().trim());
+      if (p.counter_sale_number) counterSaleNumbersWithPayments.add(String(p.counter_sale_number).toLowerCase().trim());
+    }
+
+    // Also populate from unified list payments
     for (const tx of unifiedList) {
       if (tx.status === 'VOID' || tx.paymentStatus === 'CANCELLED') continue;
-      if (tx.referenceType === 'PAYMENT' && tx.amount > 0) {
+      const isPayTx = tx.referenceType === 'PAYMENT' || tx.transactionType === 'CUSTOMER_PAYMENT';
+      if (isPayTx && tx.amount > 0) {
         if (tx.referenceNumber) {
-          invoiceNumbersWithPayments.add(tx.referenceNumber.toLowerCase().trim());
-          counterSaleNumbersWithPayments.add(tx.referenceNumber.toLowerCase().trim());
+          const numKey = tx.referenceNumber.toLowerCase().trim();
+          invoiceNumbersWithPayments.add(numKey);
+          counterSaleNumbersWithPayments.add(numKey);
         }
-        if (tx.referenceId) {
-          invoiceIdsWithPayments.add(tx.referenceId.toLowerCase().trim());
-          counterSaleIdsWithPayments.add(tx.referenceId.toLowerCase().trim());
-        }
+        // Link to invoice map to resolve underlying invoice ID
+        const linkedInv = tx.referenceId ? invoiceMap.get(tx.referenceId) : (tx.referenceNumber ? invoiceMap.get(tx.referenceNumber) : null);
+        if (linkedInv?.id) invoiceIdsWithPayments.add(String(linkedInv.id).toLowerCase().trim());
+        if (linkedInv?.invoice_number) invoiceNumbersWithPayments.add(String(linkedInv.invoice_number).toLowerCase().trim());
       }
     }
 
     // Also check paymentsByInvoice map
     for (const [key, pList] of paymentsByInvoice.entries()) {
       if (pList && pList.length > 0) {
-        invoiceNumbersWithPayments.add(key.toLowerCase().trim());
-        invoiceIdsWithPayments.add(key.toLowerCase().trim());
+        const k = key.toLowerCase().trim();
+        invoiceNumbersWithPayments.add(k);
+        invoiceIdsWithPayments.add(k);
       }
     }
 
@@ -811,7 +849,7 @@ export class DaybookService {
       }
 
       // 3. PAYMENT rows:
-      if (tx.referenceType === 'PAYMENT') {
+      if (tx.referenceType === 'PAYMENT' || tx.transactionType === 'CUSTOMER_PAYMENT') {
         const refNumKey = (tx.referenceNumber || '').toLowerCase().trim();
         const refIdKey = (tx.referenceId || '').toLowerCase().trim();
 
@@ -824,7 +862,7 @@ export class DaybookService {
 
         // Check for duplicate representation of the exact same payment event
         // Stable event key: referenceId (the canonical payment ID) or transactionCode
-        const stableEventKey = tx.referenceId ? `PAY_REF:${tx.referenceId}` : `PAY_CODE:${tx.transactionCode}`;
+        const stableEventKey = tx.referenceId ? `PAY_REF:${tx.referenceId.toLowerCase().trim()}` : `PAY_CODE:${tx.transactionCode.toLowerCase().trim()}`;
         if (seenPaymentEventKeys.has(stableEventKey)) {
           // Exact duplicate payment entry with same ID/code: drop
           continue;
@@ -1477,15 +1515,19 @@ export class DaybookService {
         .eq('status', 'COMPLETED');
 
       for (const sale of (sales || [])) {
+        const isCredit = ['Credit', 'Credit / Udhari', 'Udhari'].includes(sale.payment_method);
+        const recAmt = Number(sale.amount_received !== undefined ? sale.amount_received : (isCredit ? 0 : sale.final_total)) || 0;
+        const balAmt = Number(sale.balance_amount !== undefined ? sale.balance_amount : (isCredit ? sale.final_total : 0)) || 0;
+
         await this.recordFinancialTransaction({
           referenceType: 'COUNTER_SALE',
           referenceId: sale.id,
           referenceNumber: sale.invoice_number || sale.sale_number,
           transactionType: 'SALE',
           direction: 'IN',
-          amount: Number(sale.final_total) || 0,
+          amount: recAmt,
           totalAmount: Number(sale.final_total) || 0,
-          remainingAmount: Number(sale.balance_amount) || 0,
+          remainingAmount: balAmt,
           paymentMode: sale.payment_method || 'Cash',
           partyName: sale.customer_name || 'Walk-in Customer',
           description: `Counter Sale #${sale.invoice_number || sale.sale_number}`,

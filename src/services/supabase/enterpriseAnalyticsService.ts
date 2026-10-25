@@ -289,6 +289,10 @@ export class EnterpriseAnalyticsService {
       if (csId) {
         seenCsIdsInPayments.add(String(csId).toLowerCase().trim());
       }
+      const csNum = p.counter_sale_number || p.counterSaleNumber;
+      if (csNum) {
+        seenCsIdsInPayments.add(String(csNum).toLowerCase().trim());
+      }
       const invId = p.invoice_id || p.invoiceId;
       if (invId) {
         seenInvIdsInPayments.add(String(invId).toLowerCase().trim());
@@ -296,6 +300,11 @@ export class EnterpriseAnalyticsService {
       const invNum = p.invoice_number || p.invoiceNumber;
       if (invNum) {
         seenInvIdsInPayments.add(String(invNum).toLowerCase().trim());
+      }
+      const refNo = p.reference_no || p.referenceNo || p.reference_number || p.referenceNumber;
+      if (refNo) {
+        seenCsIdsInPayments.add(String(refNo).toLowerCase().trim());
+        seenInvIdsInPayments.add(String(refNo).toLowerCase().trim());
       }
 
       const splitCash = Number(p.cash_amount ?? p.cashAmount ?? 0);
@@ -316,8 +325,15 @@ export class EnterpriseAnalyticsService {
 
     // 2. Process counter sales in this period (skip if already accounted for via linked payment)
     counterSales.forEach((cs) => {
-      const csId = cs.id ? String(cs.id).toLowerCase() : '';
-      if (csId && seenCsIdsInPayments.has(csId)) {
+      const csId = cs.id ? String(cs.id).toLowerCase().trim() : '';
+      const saleNum = (cs.sale_number || cs.saleNumber) ? String(cs.sale_number || cs.saleNumber).toLowerCase().trim() : '';
+      const invNum = (cs.invoice_number || cs.invoiceNumber) ? String(cs.invoice_number || cs.invoiceNumber).toLowerCase().trim() : '';
+
+      if (
+        (csId && seenCsIdsInPayments.has(csId)) ||
+        (saleNum && seenCsIdsInPayments.has(saleNum)) ||
+        (invNum && seenCsIdsInPayments.has(invNum))
+      ) {
         return; // Already accounted for in payments
       }
 

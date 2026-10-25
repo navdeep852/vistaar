@@ -377,7 +377,7 @@ class StoreService {
     const cleanedPayments: Payment[] = [];
     for (const p of payments) {
       const invRef = p.invoiceNumber || p.invoiceId;
-      const isUpfront = p.notes?.includes('recorded at invoice finalization') || p.notes?.includes('Initial payment');
+      const isUpfront = p.notes?.includes('recorded at invoice finalization') || p.notes?.includes('Initial payment') || p.notes?.includes('recorded at quotation conversion');
       if (invRef && isUpfront) {
         const key = `${invRef}:${p.amount}`;
         if (seenUpfrontInvoices.has(key)) {
@@ -718,6 +718,14 @@ class StoreService {
       const branchName = r.branch_name || r.branchName || r.snapshot?.branch_name || r.snapshot?.branchName || found?.branchName || undefined;
 
       if (found) {
+        if (id && found.id !== id) {
+          found.id = id;
+          changed = true;
+        }
+        if (invNum && found.invoiceNumber !== invNum) {
+          found.invoiceNumber = invNum;
+          changed = true;
+        }
         if (!found.branchId && branchId) {
           found.branchId = branchId;
           changed = true;
@@ -1184,7 +1192,7 @@ class StoreService {
     const newQuotation: Quotation = {
       ...quotationData,
       items: filterValidLineItems(quotationData.items) as QuotationItem[],
-      id: (quotationData as any).id || (quotationData as any).quotation_id || `qt-${Date.now()}`,
+      id: (quotationData as any).id || (quotationData as any).quotation_id || `qt-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
       quotationNumber: (quotationData as any).quotationNumber || (quotationData as any).quotation_number || quotationNumber,
       templateId: quotationData.templateId || 'qt-modern-blue',
       snapshot,
@@ -1292,6 +1300,7 @@ class StoreService {
       invoiceDate?: string;
       paymentDate?: string;
       dueDate?: string;
+      skipStockDeduction?: boolean;
     }
   ): Invoice | null {
     const qt = this.state.quotations.find((q) => q.id === quotationId);
@@ -1324,6 +1333,7 @@ class StoreService {
       date: options?.invoiceDate || new Date().toISOString().split('T')[0],
       dueDate: options?.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
       items: qt.items.map((i) => ({ ...i })),
+      skipStockDeduction: options?.skipStockDeduction,
       subtotal: qt.subtotal,
       discountTotal: qt.discountTotal,
       taxTotal: qt.taxTotal,
@@ -1444,7 +1454,14 @@ class StoreService {
     return this.state.invoices;
   }
 
-  public addInvoice(invoiceData: Omit<Invoice, 'id' | 'invoiceNumber' | 'createdAt' | 'updatedAt'>): Invoice {
+  public addInvoice(
+    invoiceData: Omit<Invoice, 'id' | 'invoiceNumber' | 'createdAt' | 'updatedAt'> & {
+      skipStockDeduction?: boolean;
+      invoiceNumber?: string;
+      id?: string;
+      createdAt?: string;
+    }
+  ): Invoice {
     const count = this.state.invoices.length + 1;
     const year = new Date().getFullYear();
     const invoiceNumber = (invoiceData as any).invoiceNumber || `INV-${year}-${String(count).padStart(4, '0')}`;
@@ -2221,8 +2238,8 @@ class StoreService {
             partyType: 'customer',
             partyId: data.customerId || cs?.customerId,
             partyName: customerName,
-            referenceType: 'COUNTER_SALE',
-            referenceId: data.counterSaleId || cs?.id || paymentId,
+            referenceType: 'PAYMENT',
+            referenceId: paymentId,
             referenceNumber: cs?.saleNumber || cs?.invoiceNumber || paymentNumber,
             description: `Counter Sale Payment #${cs?.saleNumber || cs?.invoiceNumber || ''}`.trim(),
             notes: data.notes || (data.reference ? `Ref: ${data.reference}` : undefined),

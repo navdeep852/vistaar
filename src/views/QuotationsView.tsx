@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { store } from '../services/store';
 import { quotationService } from '../services/supabase/quotationService';
+import { safeGetTenantItem } from '../services/supabase/safeStorage';
 import { Quotation, QuotationStatus } from '../types';
 import { Modal } from '../components/Modal';
 import { TemplateGalleryModal } from '../components/TemplateGalleryModal';
@@ -91,8 +92,10 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
 
   const updateData = useCallback(() => {
     const all = store.getQuotations();
+    const mainBranchId = safeGetTenantItem('main_branch_id');
+    const isMain = currentBranch ? (Boolean(currentBranch.isMainBranch) || currentBranch.id === mainBranchId || String(currentBranch.id).toLowerCase().includes('main')) : true;
     if (currentBranch && currentBranch.id !== 'ALL') {
-      setQuotations(all.filter((q) => q.branchId === currentBranch.id || (!q.branchId && currentBranch.isMainBranch)));
+      setQuotations(all.filter((q) => q.branchId === currentBranch.id || (!q.branchId && isMain)));
     } else {
       setQuotations(all);
     }
