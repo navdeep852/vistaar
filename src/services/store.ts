@@ -690,10 +690,107 @@ class StoreService {
     const inv = this.state.invoices?.find(
       (i) => i.id === invoiceIdOrNumber || i.invoiceNumber === invoiceIdOrNumber
     );
-    if (!inv) return undefined;
+    if (!inv) {
+      const cs = (this.state.counterSales || []).find(
+        (s) => s.id === invoiceIdOrNumber || s.invoiceNumber === invoiceIdOrNumber || s.saleNumber === invoiceIdOrNumber
+      );
+      if (cs) {
+        return this.counterSaleToInvoice(cs);
+      }
+      return undefined;
+    }
     return {
       ...inv,
       payments: this.getPaymentsForInvoice(inv.id || inv.invoiceNumber),
+    };
+  }
+
+  public counterSaleToInvoice(sale: CounterSale): Invoice {
+    const isCredit = sale.paymentMethod === 'Credit / Udhari' || sale.paymentMethod === 'Credit';
+    const finalTotal = Number(sale.finalTotal) || 0;
+    const amountReceived = sale.amountReceived !== undefined ? Number(sale.amountReceived) : (isCredit ? 0 : finalTotal);
+    const balanceAmount = sale.balanceAmount !== undefined ? Number(sale.balanceAmount) : Math.max(0, finalTotal - amountReceived);
+    
+    let status: any = 'Paid';
+    if (sale.status === 'CANCELLED') {
+      status = 'Cancelled';
+    } else if (balanceAmount > 0.01) {
+      status = amountReceived > 0 ? 'Partially Paid' : 'Issued';
+    }
+
+    const items: InvoiceItem[] = (Array.isArray(sale.items) ? sale.items : []).map((item: any, idx: number) => {
+      const qty = Math.abs(Number(item.quantity) || 0);
+      const rate = Number(item.rate) || 0;
+      const amount = Number(item.amount) || (qty * rate);
+      return {
+        id: item.id || `cs-item-${idx + 1}`,
+        branchId: sale.branchId,
+        itemType: 'product',
+        productId: item.productId,
+        productName: item.productNameSnapshot || item.productName || item.name || 'Product',
+        partNumber: item.partNumberSnapshot || item.partNumber || item.productCode || '',
+        sku: item.sku || '',
+        unit: item.unit || 'Pcs',
+        quantity: qty,
+        buyPrice: Number(item.buyPriceSnapshot || item.buyPrice || 0),
+        sellingPrice: rate,
+        discountAmount: Number(item.discountAmount) || 0,
+        taxPercent: Number(item.taxPercent) || 0,
+        taxAmount: Number(item.taxAmount) || 0,
+        total: amount,
+      };
+    });
+
+    const payments: Payment[] = [];
+    if (amountReceived > 0 && status !== 'Cancelled') {
+      payments.push({
+        id: `pay-${sale.id || sale.saleNumber}`,
+        paymentNumber: `PAY-${sale.saleNumber || sale.invoiceNumber}`,
+        invoiceId: sale.id,
+        invoiceNumber: sale.invoiceNumber || sale.saleNumber,
+        counterSaleId: sale.id,
+        customerId: sale.customerId || 'walk-in-customer',
+        customerName: sale.customerName || 'Walk-in Customer',
+        amount: amountReceived,
+        date: sale.saleDate || new Date().toISOString().split('T')[0],
+        method: (sale.paymentMethod as any) || 'Cash',
+        referenceNo: sale.paymentReference || sale.estimateReference || undefined,
+        notes: sale.paymentNotes || `Counter Sale Payment #${sale.saleNumber || sale.invoiceNumber}`,
+        createdAt: sale.createdAt || new Date().toISOString(),
+      });
+    }
+
+    const notesList = [
+      sale.notes,
+      sale.paymentMethod ? `Payment Method: ${sale.paymentMethod}` : '',
+      sale.saleNumber ? `Counter Sale Ref: ${sale.saleNumber}` : '',
+      sale.estimateReference ? `Estimate Ref: ${sale.estimateReference}` : '',
+    ].filter(Boolean);
+
+    return {
+      id: sale.id,
+      branchId: sale.branchId,
+      invoiceNumber: sale.invoiceNumber || sale.saleNumber,
+      counterSaleId: sale.id,
+      saleNumber: sale.saleNumber,
+      customerId: sale.customerId,
+      customerName: sale.customerName || 'Walk-in Customer',
+      customerPhone: sale.phoneNumber || '',
+      status,
+      date: sale.saleDate || new Date().toISOString().split('T')[0],
+      dueDate: sale.saleDate || new Date().toISOString().split('T')[0],
+      items,
+      subtotal: Number(sale.subtotal) || finalTotal,
+      discountTotal: Number(sale.discountAmount) || 0,
+      taxTotal: Number(sale.taxAmount) || 0,
+      grandTotal: finalTotal,
+      paidAmount: amountReceived,
+      balanceAmount: balanceAmount,
+      notes: notesList.join(' • '),
+      templateId: 'modern',
+      payments,
+      createdAt: sale.createdAt || new Date().toISOString(),
+      updatedAt: sale.updatedAt || new Date().toISOString(),
     };
   }
 

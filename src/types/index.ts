@@ -501,6 +501,8 @@ export interface CounterSale {
   discountType: 'fixed' | 'percentage';
   discountValue: number;
   discountAmount: number;
+  taxAmount?: number;
+  roundOff?: number;
   finalTotal: number;
   status: CounterSaleStatus;
   items: CounterSaleItem[];
@@ -681,6 +683,8 @@ export interface Invoice {
   branchName?: string;
   invoiceNumber: string; // e.g. INV-2026-0001
   quotationId?: string;
+  counterSaleId?: string;
+  saleNumber?: string;
   customerId?: string;
   customerName: string;
   customerPhone: string;

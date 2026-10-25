@@ -11,7 +11,7 @@
  * 4. Zero accounting side-effects (read/render operation only).
  */
 
-import { Invoice, Quotation, InvoiceItem, QuotationItem, Payment } from '../../types';
+import { Invoice, Quotation, InvoiceItem, QuotationItem, Payment, CounterSale } from '../../types';
 import { BrandingConfig, ThemeConfig, DocumentCustomization } from '../../types/template';
 import { DocumentRendererProps } from '../../components/DocumentRenderer';
 import { calculateInvoiceFinancials, PAYMENT_TOLERANCE, roundTo2 } from '../financialCalculationService';
@@ -413,4 +413,116 @@ export function documentDataToRendererProps(data: NormalizedDocumentData, isPrin
     isPrintMode,
     paymentHistory: data.paymentHistory,
   };
+}
+
+/**
+ * Converts a CounterSale domain object into an authoritative Invoice representation
+ * for document rendering, printing, and PDF generation.
+ */
+export function counterSaleToInvoice(sale: CounterSale): Invoice {
+  const isCredit = sale.paymentMethod === 'Credit / Udhari' || sale.paymentMethod === 'Credit';
+  const finalTotal = Number(sale.finalTotal) || 0;
+  const amountReceived = sale.amountReceived !== undefined ? Number(sale.amountReceived) : (isCredit ? 0 : finalTotal);
+  const balanceAmount = sale.balanceAmount !== undefined ? Number(sale.balanceAmount) : Math.max(0, finalTotal - amountReceived);
+  
+  let status: any = 'Paid';
+  if (sale.status === 'CANCELLED') {
+    status = 'Cancelled';
+  } else if (balanceAmount > 0.01) {
+    status = amountReceived > 0 ? 'Partially Paid' : 'Issued';
+  }
+
+  const items: InvoiceItem[] = (Array.isArray(sale.items) ? sale.items : []).map((item: any, idx: number) => {
+    const qty = Math.abs(Number(item.quantity) || 0);
+    const rate = Number(item.rate) || 0;
+    const taxPercent = Number(item.taxPercent) || 0;
+    const taxAmount = Number(item.taxAmount) || 0;
+    const discountAmount = Number(item.discountAmount) || 0;
+    const amount = Number(item.amount) || (qty * rate + taxAmount - discountAmount);
+    return {
+      id: item.id || `cs-item-${idx + 1}`,
+      branchId: sale.branchId,
+      itemType: 'product',
+      productId: item.productId,
+      productName: item.productNameSnapshot || item.productName || item.name || 'Product',
+      partNumber: item.partNumberSnapshot || item.partNumber || item.productCode || '',
+      sku: item.sku || '',
+      unit: item.unit || 'Pcs',
+      quantity: qty,
+      buyPrice: Number(item.buyPriceSnapshot || item.buyPrice || 0),
+      sellingPrice: rate,
+      discountAmount,
+      taxPercent,
+      taxAmount,
+      total: amount,
+    };
+  });
+
+  const payments: Payment[] = [];
+  if (amountReceived > 0 && status !== 'Cancelled') {
+    payments.push({
+      id: `pay-${sale.id || sale.saleNumber}`,
+      paymentNumber: `PAY-${sale.saleNumber || sale.invoiceNumber}`,
+      invoiceId: sale.id,
+      invoiceNumber: sale.invoiceNumber || sale.saleNumber,
+      counterSaleId: sale.id,
+      customerId: sale.customerId || 'walk-in-customer',
+      customerName: sale.customerName || 'Walk-in Customer',
+      amount: amountReceived,
+      date: sale.saleDate || new Date().toISOString().split('T')[0],
+      method: (sale.paymentMethod as any) || 'Cash',
+      referenceNo: sale.paymentReference || sale.estimateReference || undefined,
+      notes: sale.paymentNotes || `Counter Sale Payment #${sale.saleNumber || sale.invoiceNumber}`,
+      createdAt: sale.createdAt || new Date().toISOString(),
+    });
+  }
+
+  const notesList = [
+    sale.notes,
+    sale.paymentMethod ? `Payment Method: ${sale.paymentMethod}` : '',
+    sale.saleNumber ? `Counter Sale Ref: ${sale.saleNumber}` : '',
+    sale.estimateReference ? `Estimate Ref: ${sale.estimateReference}` : '',
+  ].filter(Boolean);
+
+  return {
+    id: sale.id,
+    branchId: sale.branchId,
+    invoiceNumber: sale.invoiceNumber || sale.saleNumber,
+    counterSaleId: sale.id,
+    saleNumber: sale.saleNumber,
+    customerId: sale.customerId,
+    customerName: sale.customerName || 'Walk-in Customer',
+    customerPhone: sale.phoneNumber || '',
+    status,
+    date: sale.saleDate || new Date().toISOString().split('T')[0],
+    dueDate: sale.saleDate || new Date().toISOString().split('T')[0],
+    items,
+    subtotal: Number(sale.subtotal) || finalTotal,
+    discountTotal: Number(sale.discountAmount) || 0,
+    taxTotal: Number(sale.taxAmount) || 0,
+    grandTotal: finalTotal,
+    paidAmount: amountReceived,
+    balanceAmount: balanceAmount,
+    notes: notesList.join(' • '),
+    templateId: 'modern',
+    payments,
+    createdAt: sale.createdAt || new Date().toISOString(),
+    updatedAt: sale.updatedAt || new Date().toISOString(),
+  };
+}
+
+/**
+ * Normalizes a CounterSale directly into NormalizedDocumentData with full branding,
+ * customer information, line items, and payment breakdown for invoice preview and download.
+ */
+export function normalizeCounterSaleToDocument(
+  sale: CounterSale,
+  settings: any,
+  overrideCustomization?: DocumentCustomization
+): NormalizedDocumentData {
+  const invoice = counterSaleToInvoice(sale);
+  const doc = normalizeInvoiceToDocument(invoice, settings, overrideCustomization, invoice.payments);
+  // Ensure document number reflects official invoice number
+  doc.documentNumber = sale.invoiceNumber || sale.saleNumber;
+  return doc;
 }

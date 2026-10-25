@@ -362,7 +362,7 @@ export class InventoryService {
       return { success: true };
     }
 
-    const wsId = this.getWorkspaceId();
+      const wsId = this.getWorkspaceId();
     try {
       const { error } = await supabase.from('stock_receipts').delete().eq('workspace_id', wsId).eq('id', id);
       if (error) {
@@ -373,6 +373,198 @@ export class InventoryService {
       return { success: false, error: handleSupabaseError(e, 'deleteStockReceipt') };
     }
   }
+
+  /**
+   * Authoritative, persistent stock receipt history for a specific product.
+   * Reconciles stock_receipts, stock_movements, and local tenant ledgers
+   * to provide documentary proof of when stock was received, how much was added,
+   * unit purchase costs, supplier references, and batch details without mutating current stock.
+   */
+  public async getProductStockReceiptHistory(
+    productId: string,
+    branchId?: string
+  ): Promise<{ data: ProductStockReceiptEvent[]; error?: string }> {
+    const wsId = this.getWorkspaceId();
+    const events: ProductStockReceiptEvent[] = [];
+    const seenReceiptKeys = new Set<string>();
+
+    try {
+      if (isSupabaseConfigured() && isValidUuid(wsId)) {
+        // 1. Fetch from authoritative stock_receipts table
+        let query = supabase
+          .from('stock_receipts')
+          .select('*')
+          .eq('workspace_id', wsId)
+          .eq('product_id', productId);
+
+        if (branchId && branchId !== 'ALL' && isValidUuid(branchId)) {
+          query = query.or(`branch_id.eq.${branchId},branch_id.is.null`);
+        }
+
+        const { data: receipts } = await query.order('received_date', { ascending: false });
+
+        if (receipts && receipts.length > 0) {
+          for (const r of receipts) {
+            const key = `rec:${r.id || r.receipt_number}`;
+            seenReceiptKeys.add(key);
+            if (r.receipt_number) seenReceiptKeys.add(`num:${String(r.receipt_number).toLowerCase()}`);
+
+            const qty = Number(r.quantity_received) || 0;
+            const buyPrice = r.buy_price !== null && r.buy_price !== undefined ? Number(r.buy_price) : undefined;
+            const total = buyPrice !== undefined ? Math.round(qty * buyPrice * 100) / 100 : undefined;
+
+            events.push({
+              id: r.id,
+              productId: r.product_id,
+              receiptNumber: r.receipt_number || `GRN-${r.id.substring(0, 8)}`,
+              purchaseOrderNumber: r.purchase_order_number || undefined,
+              supplierName: r.supplier_name || undefined,
+              receivedDate: r.received_date || r.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+              quantityReceived: qty,
+              quantityRemaining: r.quantity_remaining !== null && r.quantity_remaining !== undefined ? Number(r.quantity_remaining) : qty,
+              unitCost: buyPrice,
+              totalCost: total,
+              notes: r.notes || undefined,
+              branchId: r.branch_id || undefined,
+              eventType: 'PURCHASE_RECEIPT',
+              status: (r.quantity_remaining !== null && Number(r.quantity_remaining) === 0) ? 'Depleted' : 'Active',
+            });
+          }
+        }
+
+        // 2. Fetch distinct inward events from stock_movements (initial stock, returns, inward adjustments)
+        let movQuery = supabase
+          .from('stock_movements')
+          .select('*')
+          .eq('workspace_id', wsId)
+          .eq('product_id', productId)
+          .gt('quantity', 0);
+
+        if (branchId && branchId !== 'ALL' && isValidUuid(branchId)) {
+          movQuery = movQuery.or(`branch_id.eq.${branchId},branch_id.is.null`);
+        }
+
+        const { data: movements } = await movQuery.order('movement_date', { ascending: false });
+
+        if (movements && movements.length > 0) {
+          for (const m of movements) {
+            const refNo = m.reference_id || m.reference_number || '';
+            const recId = m.stock_receipt_id || '';
+
+            // Skip if this movement is already represented by a stock_receipts entry
+            if (recId && seenReceiptKeys.has(`rec:${recId}`)) continue;
+            if (refNo && seenReceiptKeys.has(`num:${String(refNo).toLowerCase()}`)) continue;
+
+            const mType = String(m.type || m.movement_type || '').toUpperCase();
+            let eventType: ProductStockReceiptEvent['eventType'] = 'MANUAL_INWARD';
+            let label = refNo || `MOV-${m.id.substring(0, 8)}`;
+
+            if (mType === 'STOCK_RECEIVED') {
+              eventType = 'PURCHASE_RECEIPT';
+            } else if (mType.includes('INITIAL') || m.notes?.toLowerCase().includes('initial') || m.reference_type === 'INITIAL_STOCK') {
+              eventType = 'INITIAL_STOCK';
+              label = refNo || 'INITIAL-STOCK';
+            } else if (mType === 'RETURN' || m.reference_type?.includes('RETURN')) {
+              eventType = 'CUSTOMER_RETURN';
+              label = refNo || `RETURN-${m.id.substring(0, 8)}`;
+            } else if (mType === 'TRANSFER_IN' || m.reference_type === 'TRANSFER_IN') {
+              eventType = 'TRANSFER_IN';
+              label = refNo || `TRF-IN-${m.id.substring(0, 8)}`;
+            }
+
+            const qty = Math.abs(Number(m.quantity) || 0);
+
+            events.push({
+              id: m.id,
+              productId: m.product_id,
+              receiptNumber: label,
+              purchaseOrderNumber: m.reference_type || undefined,
+              receivedDate: m.movement_date || m.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+              quantityReceived: qty,
+              quantityRemaining: qty,
+              notes: m.notes || undefined,
+              branchId: m.branch_id || undefined,
+              eventType,
+              status: 'Completed',
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[getProductStockReceiptHistory] Remote query error, merging local cache:', err);
+    }
+
+    // 3. Fallback and local merge from tenant storage
+    try {
+      const localRecsA = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []);
+      const localRecsB = safeGetTenantStorage<any>(LOCAL_RECEIPTS_KEY, []);
+      const localPool = [...localRecsA, ...localRecsB].filter(
+        (r: any) => (r.productId === productId || r.product_id === productId)
+      );
+
+      for (const r of localPool) {
+        const idKey = r.id || r.receiptNumber || r.receipt_number;
+        const numKey = String(r.receiptNumber || r.receipt_number || '').toLowerCase();
+        if (idKey && seenReceiptKeys.has(`rec:${idKey}`)) continue;
+        if (numKey && seenReceiptKeys.has(`num:${numKey}`)) continue;
+
+        seenReceiptKeys.add(`rec:${idKey}`);
+        if (numKey) seenReceiptKeys.add(`num:${numKey}`);
+
+        const qty = Number(r.quantityReceived ?? r.quantity_received ?? 0);
+        const buyPrice = r.buyPrice !== undefined ? Number(r.buyPrice) : (r.buy_price !== undefined ? Number(r.buy_price) : undefined);
+        const total = buyPrice !== undefined ? Math.round(qty * buyPrice * 100) / 100 : undefined;
+
+        events.push({
+          id: r.id || `local-rec-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+          productId: r.productId || r.product_id || productId,
+          receiptNumber: r.receiptNumber || r.receipt_number || 'GRN-LOCAL',
+          purchaseOrderNumber: r.purchaseOrderNumber || r.purchase_order_number || undefined,
+          supplierName: r.supplierName || r.supplier_name || undefined,
+          receivedDate: r.receivedDate || r.received_date || new Date().toISOString().split('T')[0],
+          quantityReceived: qty,
+          quantityRemaining: Number(r.quantityRemaining ?? r.quantity_remaining ?? qty),
+          unitCost: buyPrice,
+          totalCost: total,
+          notes: r.notes || undefined,
+          branchId: r.branchId || r.branch_id || undefined,
+          eventType: 'PURCHASE_RECEIPT',
+          status: 'Active',
+        });
+      }
+    } catch {}
+
+    // Sort descending by received date
+    events.sort((a, b) => new Date(b.receivedDate).getTime() - new Date(a.receivedDate).getTime());
+
+    return { data: events };
+  }
+}
+
+export interface ProductStockReceiptEvent {
+  id: string;
+  productId: string;
+  productName?: string;
+  partNumber?: string;
+  receiptNumber: string;
+  purchaseOrderNumber?: string;
+  supplierName?: string;
+  receivedDate: string;
+  receivedTime?: string;
+  quantityReceived: number;
+  quantityRemaining?: number;
+  unit?: string;
+  unitCost?: number;
+  totalCost?: number;
+  batchNumber?: string;
+  expiryDate?: string;
+  location?: string;
+  branchId?: string;
+  branchName?: string;
+  recordedBy?: string;
+  notes?: string;
+  status?: string;
+  eventType: 'PURCHASE_RECEIPT' | 'INITIAL_STOCK' | 'MANUAL_INWARD' | 'CUSTOMER_RETURN' | 'TRANSFER_IN';
 }
 
 export const inventoryService = new InventoryService();

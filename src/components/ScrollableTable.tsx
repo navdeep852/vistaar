@@ -1,12 +1,16 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
+import { HeaderScrollableTable } from './HeaderScrollableTable';
+
 export interface ScrollableTableProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;
+  header?: React.ReactNode;
   className?: string;
   containerClassName?: string;
   minWidth?: number | string;
   showScrollButtons?: boolean;
+  scrollbarPosition?: 'bottom' | 'below-header';
 }
 
 /**
@@ -14,15 +18,35 @@ export interface ScrollableTableProps extends React.HTMLAttributes<HTMLDivElemen
  * Prevents page-level overflow, guarantees visible sleek scrollbar,
  * supports touch swipe, trackpad, and keyboard accessibility,
  * and maintains natural column widths.
+ *
+ * When scrollbarPosition="below-header", positions a dedicated horizontal
+ * scrollbar directly below the table header and above the scrollable data rows.
  */
 export const ScrollableTable: React.FC<ScrollableTableProps> = ({
   children,
+  header,
   className = '',
   containerClassName = '',
   minWidth,
   showScrollButtons = true,
+  scrollbarPosition = 'bottom',
   ...rest
 }) => {
+  if (scrollbarPosition === 'below-header') {
+    return (
+      <HeaderScrollableTable
+        header={header}
+        className={className}
+        containerClassName={containerClassName}
+        minWidth={minWidth}
+        showScrollButtons={showScrollButtons}
+        {...rest}
+      >
+        {children}
+      </HeaderScrollableTable>
+    );
+  }
+
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
@@ -114,4 +138,5 @@ export const ScrollableTable: React.FC<ScrollableTableProps> = ({
 };
 
 export const HorizontalScrollTable = ScrollableTable;
+export { HeaderScrollableTable } from './HeaderScrollableTable';
 export default ScrollableTable;

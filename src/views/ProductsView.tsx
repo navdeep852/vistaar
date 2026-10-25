@@ -25,6 +25,7 @@ import {
   Tag,
   Boxes,
   Edit2,
+  History,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { productService, inventoryService } from '../services/supabase';
@@ -46,6 +47,7 @@ import { QuantityInput } from '../components/QuantityInput';
 import { GstRateInput, GST_RATE_SLABS } from '../components/GstRateInput';
 import { ScrollableTable } from '../components/ScrollableTable';
 import { useBranch } from '../context/BranchContext';
+import { ProductStockReceiptModal } from '../components/ProductStockReceiptModal';
 
 interface ProductsViewProps {
   initialOpenCreate?: boolean;
@@ -92,6 +94,13 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
   const [addProductModalOpen, setAddProductModalOpen] = useState(false);
   const [receiveStockModalOpen, setReceiveStockModalOpen] = useState(false);
   const [detailsDrawerOpen, setDetailsDrawerOpen] = useState(false);
+  const [stockReceiptModalOpen, setStockReceiptModalOpen] = useState(false);
+  const [targetProductForReceipts, setTargetProductForReceipts] = useState<Product | null>(null);
+
+  const handleOpenReceiptHistory = (product: Product) => {
+    setTargetProductForReceipts(product);
+    setStockReceiptModalOpen(true);
+  };
 
   // Product Details Loading & State
   const [loadingDetails, setLoadingDetails] = useState<boolean>(false);
@@ -1363,7 +1372,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
             <>
               {/* DESKTOP TABLE VIEW (SECTIONS 17, 57) */}
               <div className="hidden md:block bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-card overflow-hidden transition-colors">
-                <ScrollableTable minWidth="1180px">
+                <ScrollableTable minWidth="1180px" scrollbarPosition="below-header">
                   <table className="w-full min-w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
@@ -1377,7 +1386,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                         <th className="p-4 min-w-[110px] text-right whitespace-nowrap">Sell Price</th>
                         <th className="p-4 min-w-[120px] text-right whitespace-nowrap">Stock Value</th>
                         <th className="p-4 min-w-[110px] whitespace-nowrap">Status</th>
-                        <th className="p-4 min-w-[120px] text-center whitespace-nowrap">Actions</th>
+                        <th className="p-4 min-w-[210px] text-center whitespace-nowrap">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1434,14 +1443,23 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                                 {isOut ? 'Out of Stock' : isLow ? 'Low Stock' : 'In Stock'}
                               </span>
                             </td>
-                            <td className="p-4 min-w-[120px] text-center whitespace-nowrap">
+                            <td className="p-4 min-w-[210px] text-center whitespace-nowrap">
                               <div className="flex items-center justify-center gap-1.5">
                                 <button
                                   onClick={() => handleViewDetails(p.id)}
                                   className="px-2.5 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold text-xs transition-colors flex items-center gap-1 cursor-pointer"
+                                  title="Product Details & Overview"
                                 >
                                   <Eye className="w-3.5 h-3.5" />
                                   <span>Details</span>
+                                </button>
+                                <button
+                                  onClick={() => handleOpenReceiptHistory(p)}
+                                  className="px-2 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 font-bold text-xs transition-colors flex items-center gap-1 cursor-pointer"
+                                  title="View Persistent Stock Receipt History & Audit"
+                                >
+                                  <History className="w-3.5 h-3.5" />
+                                  <span>Receipts</span>
                                 </button>
                                 <button
                                   onClick={() => handleOpenEditProduct(p)}
@@ -1529,29 +1547,38 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 pt-1">
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
                         <button
                           onClick={() => handleViewDetails(p.id)}
-                          className="flex-1 py-2.5 px-3 rounded-xl bg-blue-600 text-white font-bold text-xs hover:bg-blue-500 text-center cursor-pointer min-h-[44px] flex items-center justify-center"
+                          className="flex-1 py-2 px-3 rounded-xl bg-blue-600 text-white font-bold text-xs hover:bg-blue-500 text-center cursor-pointer min-h-[40px] flex items-center justify-center gap-1"
                         >
-                          View Details
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Details</span>
+                        </button>
+                        <button
+                          onClick={() => handleOpenReceiptHistory(p)}
+                          className="py-2 px-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold text-xs hover:bg-indigo-100 dark:hover:bg-indigo-900/60 cursor-pointer min-h-[40px] flex items-center justify-center gap-1"
+                          title="Stock Receipt History"
+                        >
+                          <History className="w-3.5 h-3.5" />
+                          <span>Receipts</span>
                         </button>
                         <button
                           onClick={() => handleOpenEditProduct(p)}
-                          className="py-2.5 px-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 font-bold text-xs hover:bg-amber-100 cursor-pointer min-h-[44px] flex items-center justify-center"
+                          className="py-2 px-3 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 font-bold text-xs hover:bg-amber-100 cursor-pointer min-h-[40px] flex items-center justify-center"
                         >
                           Edit
                         </button>
                         <button
                           onClick={() => handleOpenReceiveStock(p.id)}
-                          className="py-2.5 px-3.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer min-h-[44px] flex items-center justify-center"
+                          className="py-2 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer min-h-[40px] flex items-center justify-center"
                         >
                           + Receive
                         </button>
                         {isOwner && (
                           <button
                             onClick={() => handleOpenDeleteConfirm(p)}
-                            className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 font-bold text-xs hover:bg-rose-100 dark:hover:bg-rose-900/60 cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center"
+                            className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 font-bold text-xs hover:bg-rose-100 dark:hover:bg-rose-900/60 cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center"
                             title="Delete Product (Owner Only)"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -2254,6 +2281,16 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                       >
                         + Add Receipt Batch
                       </button>
+                      <button
+                        onClick={() => {
+                          setDetailsDrawerOpen(false);
+                          handleOpenReceiptHistory(p);
+                        }}
+                        className="text-xs text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer inline-flex items-center gap-1"
+                      >
+                        <History className="w-3 h-3" />
+                        <span>Full Stock History</span>
+                      </button>
                     </div>
                   </div>
 
@@ -2734,6 +2771,16 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
           )}
         </div>
       </Modal>
+
+      {/* 7. PRODUCT STOCK RECEIPT HISTORY MODAL */}
+      <ProductStockReceiptModal
+        isOpen={stockReceiptModalOpen}
+        onClose={() => setStockReceiptModalOpen(false)}
+        product={targetProductForReceipts}
+        branchId={currentBranch?.id}
+        branchName={currentBranch?.branchName}
+      />
     </div>
   );
 };
+

@@ -216,20 +216,44 @@ export class InvoiceService {
         query = query.eq('workspace_id', wsId);
       }
 
-      const { data, error } = await query.single();
+      let { data, error } = await query.maybeSingle();
 
-      if (error) {
+      if (!data && isValidUuid(wsId)) {
+        // Query counter_sales if not found in invoices
+        try {
+          const { data: csData } = await supabase
+            .from('counter_sales')
+            .select('*, counter_sale_items(*)')
+            .eq('workspace_id', wsId)
+            .or(`id.eq.${id},invoice_number.eq.${id},sale_number.eq.${id}`)
+            .maybeSingle();
+          if (csData) {
+            const { fromDbCounterSale } = await import('./types');
+            const cs = fromDbCounterSale(csData);
+            return { invoice: store.counterSaleToInvoice(cs) };
+          }
+        } catch {}
+      }
+
+      if (error && !data) {
         const errStr = handleSupabaseError(error, 'getInvoiceById');
         const fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
         const match = fallback.find((inv) => inv.id === id || inv.invoice_number === id);
-        return { invoice: match ? fromDbInvoice(match) : undefined, error: match ? undefined : errStr };
+        if (match) return { invoice: fromDbInvoice(match) };
+        const storeMatch = store.getInvoice(id);
+        if (storeMatch) return { invoice: storeMatch };
+        return { invoice: undefined, error: errStr };
       }
-      return { invoice: data ? fromDbInvoice(data) : undefined };
+      if (data) return { invoice: fromDbInvoice(data) };
+      const storeMatch = store.getInvoice(id);
+      return { invoice: storeMatch };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getInvoiceById');
       const fallback = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
       const match = fallback.find((inv) => inv.id === id || inv.invoice_number === id);
-      return { invoice: match ? fromDbInvoice(match) : undefined, error: match ? undefined : errStr };
+      if (match) return { invoice: fromDbInvoice(match) };
+      const storeMatch = store.getInvoice(id);
+      return { invoice: storeMatch, error: storeMatch ? undefined : errStr };
     }
   }
 

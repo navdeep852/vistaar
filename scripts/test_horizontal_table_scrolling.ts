@@ -54,7 +54,7 @@ async function runTests() {
   const productsContent = fs.readFileSync(productsViewPath, 'utf8');
 
   assert(productsContent.includes("import { ScrollableTable } from '../components/ScrollableTable'"), 'ProductsView imports ScrollableTable');
-  assert(productsContent.includes('<ScrollableTable minWidth="1180px">'), 'Products desktop table wrapped in ScrollableTable with min-width 1180px');
+  assert(productsContent.includes('<ScrollableTable minWidth="1180px"') && productsContent.includes('scrollbarPosition="below-header"'), 'Products desktop table wrapped in ScrollableTable with min-width 1180px and below-header scrollbar');
   assert(productsContent.includes('min-w-[180px]'), 'Product Name column has min-width: 180px');
   assert(productsContent.includes('min-w-[150px] whitespace-nowrap'), 'Part Number column has min-width: 150px and nowrap');
   assert(productsContent.includes('min-w-[110px] whitespace-nowrap'), 'HSN/SAC column has min-width: 110px and nowrap');
@@ -74,7 +74,7 @@ async function runTests() {
   const counterSaleContent = fs.readFileSync(counterSalePath, 'utf8');
 
   assert(counterSaleContent.includes("import { ScrollableTable } from '../components/ScrollableTable'"), 'CounterSaleView imports ScrollableTable');
-  assert(counterSaleContent.includes('<ScrollableTable minWidth="1100px">'), 'Counter Sale table wrapped in ScrollableTable with min-width 1100px');
+  assert(counterSaleContent.includes('<ScrollableTable minWidth="1100px"') && counterSaleContent.includes('scrollbarPosition="below-header"'), 'Counter Sale table wrapped in ScrollableTable with min-width 1100px and below-header scrollbar');
   assert(counterSaleContent.includes('mobileViewMode'), 'CounterSaleView supports mobileViewMode for swipeable table');
   assert(counterSaleContent.includes('Table (Swipeable)'), 'CounterSaleView provides Table (Swipeable) mode on mobile');
   assert(counterSaleContent.includes('min-w-[160px]'), 'Customer Name has min-width 160px');
