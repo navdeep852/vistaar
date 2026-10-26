@@ -1,0 +1,400 @@
+{
+  "followUps": [
+    {
+      "customerId": "cust-1787493583207",
+      "customerName": "Navdeep Maurya",
+      "customerPhone": "8176013733",
+      "title": "Demo",
+      "notes": "",
+      "dueDate": "2026-08-23",
+      "dueTime": "19:32",
+      "priority": "High",
+      "assignedTo": "Staff Member",
+      "status": "Completed",
+      "id": "fol-1787493617423",
+      "createdAt": "2026-08-23T14:00:17.423Z",
+      "actionType": "INTERNAL_REMINDER",
+      "actionConfig": {},
+      "attemptCount": 0,
+      "maxAttempts": 3,
+      "executionLogs": []
+    },
+    {
+      "customerId": "cust-1",
+      "customerName": "Rajesh Enterprise",
+      "customerPhone": "9820011223",
+      "title": "Quotation",
+      "notes": "",
+      "dueDate": "2026-08-23",
+      "dueTime": "19:31",
+      "priority": "High",
+      "assignedTo": "Staff Member",
+      "status": "Completed",
+      "id": "fol-1787493537615",
+      "createdAt": "2026-08-23T13:58:57.615Z",
+      "actionType": "INTERNAL_REMINDER",
+      "actionConfig": {},
+      "attemptCount": 0,
+      "maxAttempts": 3,
+      "executionLogs": []
+    },
+    {
+      "id": "test-fol-1787494404003",
+      "customerId": "cust-1",
+      "customerName": "Rajesh Enterprise",
+      "customerPhone": "9820011223",
+      "title": "Demo Follow-up Action Test",
+      "notes": "Testing automated background scheduler and IST timezone",
+      "dueDate": "2026-08-23",
+      "dueTime": "19:43",
+      "priority": "High",
+      "status": "Completed",
+      "createdAt": "2026-08-23T14:13:24.003Z",
+      "actionType": "INTERNAL_REMINDER",
+      "actionConfig": {},
+      "attemptCount": 0,
+      "maxAttempts": 3,
+      "executionLogs": []
+    },
+    {
+      "id": "test-fol-1787494736952",
+      "customerId": "cust-1",
+      "customerName": "Rajesh Enterprise",
+      "customerPhone": "9820011223",
+      "title": "Demo Follow-up Action Test",
+      "notes": "Testing automated background scheduler and IST timezone",
+      "dueDate": "2026-08-23",
+      "dueTime": "19:48",
+      "priority": "High",
+      "status": "Completed",
+      "createdAt": "2026-08-23T14:18:56.952Z",
+      "actionType": "INTERNAL_REMINDER",
+      "actionConfig": {},
+      "attemptCount": 0,
+      "maxAttempts": 3,
+      "executionLogs": []
+    },
+    {
+      "id": "fol-internal-1787501278808",
+      "customerId": "cust-1",
+      "customerName": "Rajesh Enterprise",
+      "customerPhone": "9820011223",
+      "title": "Call Rajesh regarding bulk order",
+      "dueDate": "2026-08-23",
+      "dueTime": "21:37",
+      "priority": "High",
+      "assignedTo": "Rajesh Staff",
+      "status": "Completed",
+      "actionType": "INTERNAL_REMINDER",
+      "actionConfig": {
+        "reminderMessage": "Remind staff to confirm delivery"
+      },
+      "attemptCount": 1,
+      "maxAttempts": 3,
+      "executionLogs": [
+        {
+          "timestamp": "2026-08-23T16:07:58.946Z",
+          "level": "info",
+          "message": "Scheduler started attempt 1/3 for action type: INTERNAL_REMINDER"
+        },
+        {
+          "timestamp": "2026-08-23T16:07:58.949Z",
+          "level": "info",
+          "message": "Action executed successfully: Internal notification created for Rajesh Staff regarding Rajesh Enterprise."
+        }
+      ],
+      "createdAt": "2026-08-23T16:07:58.808Z",
+      "lastAttemptAt": "2026-08-23T16:07:58.946Z",
+      "completedAt": "2026-08-23T16:07:58.949Z"
+    },
+    {
+      "id": "fol-wa-invalid-1787501278809",
+      "customerId": "cust-bad",
+      "customerName": "No Phone Customer",
+      "customerPhone": "",
+      "title": "WhatsApp Offer Message",
+      "dueDate": "2026-08-23",
+      "dueTime": "21:37",
+      "priority": "Medium",
+      "assignedTo": "Staff Member",
+      "status": "Failed",
+      "actionType": "WHATSAPP_MESSAGE",
+      "actionConfig": {
+        "message": "Hi! Special discount on headsets."
+      },
+      "attemptCount": 1,
+      "maxAttempts": 3,
+      "executionLogs": [
+        {
+          "timestamp": "2026-08-23T16:07:58.950Z",
+          "level": "info",
+          "message": "Scheduler started attempt 1/3 for action type: WHATSAPP_MESSAGE"
+        },
+        {
+          "timestamp": "2026-08-23T16:07:58.952Z",
+          "level": "error",
+          "message": "Execution failed (Attempt 1/3): Customer does not have a valid WhatsApp phone number."
+        }
+      ],
+      "createdAt": "2026-08-23T16:07:58.809Z",
+      "lastAttemptAt": "2026-08-23T16:07:58.950Z",
+      "failedAt": "2026-08-23T16:07:58.952Z",
+      "errorMessage": "Customer does not have a valid WhatsApp phone number."
+    },
+    {
+      "id": "fol-email-invalid-1787501278809",
+      "customerId": "cust-bad-email",
+      "customerName": "No Email Customer",
+      "customerPhone": "9811122233",
+      "customerEmail": "",
+      "title": "Email Invoice Follow-up",
+      "dueDate": "2026-08-23",
+      "dueTime": "21:37",
+      "priority": "Low",
+      "assignedTo": "Staff Member",
+      "status": "Failed",
+      "actionType": "EMAIL",
+      "actionConfig": {
+        "subject": "Invoice Summary",
+        "message": "Please see attached invoice."
+      },
+      "attemptCount": 1,
+      "maxAttempts": 3,
+      "executionLogs": [
+        {
+          "timestamp": "2026-08-23T16:07:58.954Z",
+          "level": "info",
+          "message": "Scheduler started attempt 1/3 for action type: EMAIL"
+        },
+        {
+          "timestamp": "2026-08-23T16:07:58.955Z",
+          "level": "error",
+          "message": "Execution failed (Attempt 1/3): Customer does not have a valid email address."
+        }
+      ],
+      "createdAt": "2026-08-23T16:07:58.809Z",
+      "lastAttemptAt": "2026-08-23T16:07:58.954Z",
+      "failedAt": "2026-08-23T16:07:58.955Z",
+      "errorMessage": "Customer does not have a valid email address."
+    },
+    {
+      "customerId": "cust-1787493583207",
+      "customerName": "Navdeep Maurya",
+      "customerPhone": "8176013733",
+      "customerEmail": "mauryanavdeep80@gmail.com",
+      "customerWhatsapp": "8176013733",
+      "title": "Demo1",
+      "notes": "",
+      "dueDate": "2026-08-23",
+      "dueTime": "22:41",
+      "priority": "High",
+      "assignedTo": "Staff Member",
+      "status": "Due",
+      "actionType": "WHATSAPP_MESSAGE",
+      "actionConfig": {
+        "message": "Demo1",
+        "templateId": "tmpl_payment_reminder"
+      },
+      "attemptCount": 0,
+      "maxAttempts": 3,
+      "executionLogs": [
+        {
+          "timestamp": "2026-08-23T16:10:54.268Z",
+          "level": "info",
+          "message": "Scheduled follow-up action (WHATSAPP_MESSAGE) for 2026-08-23 at 22:41 IST."
+        },
+        {
+          "timestamp": "2026-08-23T17:11:43.082Z",
+          "level": "info",
+          "message": "Follow-up is now Due. Generated message prepared for Navdeep Maurya (******3733)."
+        }
+      ],
+      "id": "fol-1787501454268",
+      "createdAt": "2026-08-23T16:10:54.268Z"
+    },
+    {
+      "id": "fol-human-1787503036856",
+      "customerId": "cust-navdeep",
+      "customerName": "Navdeep Maurya",
+      "customerPhone": "8176013733",
+      "title": "Demo follow-up (QT-2026-008)",
+      "notes": "Hi Navdeep, just following up regarding the quotation QT-2026-008 we shared. Please let me know if you've had a chance to review it or if you'd like me to clarify anything.",
+      "dueDate": "2026-08-23",
+      "dueTime": "09:00",
+      "priority": "High",
+      "assignedTo": "Staff Member",
+      "status": "Completed",
+      "actionType": "WHATSAPP_MESSAGE",
+      "actionConfig": {
+        "topic": "Demo follow-up",
+        "message": "Hi Navdeep, just following up regarding the quotation QT-2026-008 we shared. Please let me know if you've had a chance to review it or if you'd like me to clarify anything.",
+        "tone": "Natural",
+        "sendVia": "WhatsApp",
+        "wasWhatsAppOpened": true,
+        "whatsappOpenedAt": "2026-08-23T16:38:08.350Z"
+      },
+      "attemptCount": 0,
+      "maxAttempts": 3,
+      "executionLogs": [
+        {
+          "timestamp": "2026-08-23T16:37:16.959Z",
+          "level": "info",
+          "message": "Follow-up is now Due. Generated message prepared for Navdeep Maurya (******3733)."
+        },
+        {
+          "timestamp": "2026-08-23T16:38:08.350Z",
+          "level": "info",
+          "message": "Opened in WhatsApp Web / App for manual user review and dispatch."
+        }
+      ],
+      "createdAt": "2026-08-23T16:37:16.856Z",
+      "completedAt": "2026-08-23T16:39:37.304Z"
+    },
+    {
+      "id": "fol-navdeep-1787502248565",
+      "customerId": "cust-navdeep",
+      "customerName": "Navdeep Maurya",
+      "customerPhone": "8176013733",
+      "title": "WhatsApp Confirmation Follow-up",
+      "dueDate": "2026-08-23",
+      "dueTime": "21:56",
+      "priority": "High",
+      "assignedTo": "Staff Member",
+      "status": "Failed",
+      "actionType": "WHATSAPP_MESSAGE",
+      "actionConfig": {
+        "sendMode": "freeform",
+        "message": "Test message from Vistaar Follow-up Engine to Navdeep ji."
+      },
+      "attemptCount": 1,
+      "maxAttempts": 3,
+      "executionLogs": [
+        {
+          "timestamp": "2026-08-23T16:24:08.706Z",
+          "level": "info",
+          "message": "Scheduler started attempt 1/3 for action type: WHATSAPP_MESSAGE"
+        },
+        {
+          "timestamp": "2026-08-23T16:24:08.709Z",
+          "level": "info",
+          "message": "[WhatsApp] Initiated request to https://graph.facebook.com/v18.0/100654321987/messages for recipient ********3733"
+        },
+        {
+          "timestamp": "2026-08-23T16:24:10.388Z",
+          "level": "error",
+          "message": "[WhatsApp] Provider returned HTTP 401"
+        },
+        {
+          "timestamp": "2026-08-23T16:24:10.388Z",
+          "level": "error",
+          "message": "[Follow-up] Execution failed (Attempt 1/3): Provider returned HTTP 401: Malformed access token EAAG_test_meta_cloud_api_access_token_12345"
+        }
+      ],
+      "createdAt": "2026-08-23T16:24:08.565Z",
+      "lastAttemptAt": "2026-08-23T16:24:08.706Z",
+      "failedAt": "2026-08-23T16:24:10.388Z",
+      "errorMessage": "Provider returned HTTP 401: Malformed access token EAAG_test_meta_cloud_api_access_token_12345"
+    },
+    {
+      "id": "fol-navdeep-1787501904920",
+      "customerId": "cust-navdeep",
+      "customerName": "Navdeep Maurya",
+      "customerPhone": "8176013733",
+      "title": "WhatsApp Confirmation Follow-up",
+      "dueDate": "2026-08-23",
+      "dueTime": "21:50",
+      "priority": "High",
+      "assignedTo": "Staff Member",
+      "status": "Failed",
+      "actionType": "WHATSAPP_MESSAGE",
+      "actionConfig": {
+        "sendMode": "freeform",
+        "message": "Test message from Vistaar Follow-up Engine to Navdeep ji."
+      },
+      "attemptCount": 1,
+      "maxAttempts": 3,
+      "executionLogs": [
+        {
+          "timestamp": "2026-08-23T16:18:25.061Z",
+          "level": "info",
+          "message": "Scheduler started attempt 1/3 for action type: WHATSAPP_MESSAGE"
+        },
+        {
+          "timestamp": "2026-08-23T16:18:25.066Z",
+          "level": "error",
+          "message": "[Follow-up] Execution failed (Attempt 1/3): WhatsApp integration is not configured for this business. Missing API credentials in environment."
+        }
+      ],
+      "createdAt": "2026-08-23T16:18:24.920Z",
+      "lastAttemptAt": "2026-08-23T16:18:25.061Z",
+      "failedAt": "2026-08-23T16:18:25.066Z",
+      "errorMessage": "WhatsApp integration is not configured for this business. Missing API credentials in environment."
+    }
+  ],
+  "notifications": [
+    {
+      "id": "notif-1787501278948-fnj0",
+      "type": "followup_due",
+      "title": "Follow-up Due (Call Rajesh regarding bulk order): Rajesh Enterprise",
+      "message": "Assigned to: Rajesh Staff. Phone: 9820011223. Priority: High. Notes: Remind staff to confirm delivery",
+      "date": "2026-08-23T16:07:58.948Z",
+      "read": false,
+      "linkRoute": "follow-ups"
+    },
+    {
+      "id": "notif-1787494737175-o3in",
+      "type": "followup_due",
+      "title": "Follow-up Due (Demo Action): Demo Follow-up Action Test",
+      "message": "Customer: Rajesh Enterprise (9820011223). Priority: High. Assigned to: undefined. Notes: Testing automated background scheduler and IST timezone",
+      "date": "2026-08-23T14:18:57.175Z",
+      "read": false,
+      "linkRoute": "follow-ups"
+    },
+    {
+      "id": "notif-1787494404154-l28s",
+      "type": "followup_due",
+      "title": "Follow-up Due (Demo Action): Demo Follow-up Action Test",
+      "message": "Customer: Rajesh Enterprise (9820011223). Priority: High. Assigned to: undefined. Notes: Testing automated background scheduler and IST timezone",
+      "date": "2026-08-23T14:13:24.154Z",
+      "read": false,
+      "linkRoute": "follow-ups"
+    },
+    {
+      "id": "notif-1787494367480-jhox",
+      "type": "followup_due",
+      "title": "Follow-up Due (Quotation Action): Quotation",
+      "message": "Customer: Rajesh Enterprise (9820011223). Priority: High. Assigned to: Staff Member.",
+      "date": "2026-08-23T14:12:47.480Z",
+      "read": false,
+      "linkRoute": "follow-ups"
+    },
+    {
+      "id": "notif-1787494367469-2aa6",
+      "type": "followup_due",
+      "title": "Follow-up Due (Demo Action): Demo",
+      "message": "Customer: Navdeep Maurya (8176013733). Priority: High. Assigned to: Staff Member.",
+      "date": "2026-08-23T14:12:47.469Z",
+      "read": false,
+      "linkRoute": "follow-ups"
+    },
+    {
+      "id": "notif-1787503036959-wnnc",
+      "type": "followup_due",
+      "title": "Follow-up Due (Demo follow-up): Navdeep Maurya",
+      "message": "Assigned to: Staff Member. Customer: Navdeep Maurya (******3733). Pre-filled message ready for WhatsApp.",
+      "date": "2026-08-23T16:37:16.959Z",
+      "read": false,
+      "linkRoute": "follow-ups"
+    },
+    {
+      "id": "notif-1787505103082-gz2z",
+      "type": "followup_due",
+      "title": "Follow-up Due (Demo1): Navdeep Maurya",
+      "message": "Assigned to: Staff Member. Customer: Navdeep Maurya (******3733). Pre-filled message ready for WhatsApp.",
+      "date": "2026-08-23T17:11:43.082Z",
+      "read": false,
+      "linkRoute": "follow-ups"
+    }
+  ],
+  "lastUpdated": "2026-08-24T02:17:37.082Z"
+}

@@ -1,0 +1,52 @@
+{
+  "backupTimestamp": "2026-08-25T10:10:00.000Z",
+  "storageKeys": {
+    "vistaar_workspaces_db": {
+      "id": "ws-default-vistaar",
+      "companyName": "Vistaar Business OS Demo Company",
+      "ownerName": "Rajesh Kumar",
+      "ownerEmail": "admin@vistaar.com",
+      "ownerPhone": "9820011223",
+      "createdAt": "2026-08-25T00:00:00.000Z"
+    },
+    "vistaar_accounts_db": [
+      {
+        "id": "usr-owner-001",
+        "companyId": "ws-default-vistaar",
+        "employeeId": "VST-00001",
+        "name": "Rajesh Kumar",
+        "email": "admin@vistaar.com",
+        "phone": "9820011223",
+        "role": "owner",
+        "status": "Active",
+        "department": "Management",
+        "designation": "Managing Director"
+      },
+      {
+        "id": "usr-staff-002",
+        "companyId": "ws-default-vistaar",
+        "employeeId": "VST-00002",
+        "name": "Priya Sharma",
+        "email": "priya@vistaar.com",
+        "phone": "9820099887",
+        "role": "staff",
+        "status": "Active",
+        "department": "Sales",
+        "designation": "Sales Representative"
+      }
+    ],
+    "vistaar_app_state_v2": {
+      "customersCount": 3,
+      "categoriesCount": 2,
+      "suppliersCount": 1,
+      "productsCount": 3,
+      "stockReceiptsCount": 5,
+      "counterSalesCount": 1,
+      "quotationsCount": 1,
+      "invoicesCount": 1,
+      "paymentsCount": 1,
+      "udhariCount": 1,
+      "expensesCount": 2
+    }
+  }
+}

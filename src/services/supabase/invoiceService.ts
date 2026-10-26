@@ -98,7 +98,7 @@ export class InvoiceService {
       query = query.lte('date', options.endDate);
     }
 
-    query = query.order('created_at', { ascending: false });
+    query = query.order('created_at', { ascending: false }).limit(options?.pageSize || 100);
 
     let supabaseInvoices: any[] = [];
     let queryError: string | undefined;
@@ -106,9 +106,9 @@ export class InvoiceService {
     try {
       let { data, error } = await query;
 
-      // Resilience against unmigrated schema: if branch_id does not exist, retry query without branch_id
-      if (error && (error.code === 'PGRST204' || error.message?.includes('branch_id'))) {
-        console.warn('[getInvoices] Supabase column branch_id does not exist (PGRST204); querying workspace-wide');
+      // Resilience against unmigrated schema or statement timeout: retry query without branch_id
+      if (error && (error.code === 'PGRST204' || error.code === '42703' || error.code === '57014' || error.message?.includes('branch_id') || error.message?.includes('timeout'))) {
+        console.warn('[getInvoices] Database statement notice (code: ' + error.code + '); querying workspace-wide with limit');
         let retryQuery = supabase.from('invoices').select('*, invoice_items(*)', { count: 'exact' });
         if (isValidUuid(wsId)) {
           retryQuery = retryQuery.eq('workspace_id', wsId);
@@ -122,7 +122,7 @@ export class InvoiceService {
         if (options?.endDate) {
           retryQuery = retryQuery.lte('date', options.endDate);
         }
-        retryQuery = retryQuery.order('created_at', { ascending: false });
+        retryQuery = retryQuery.order('created_at', { ascending: false }).limit(options?.pageSize || 100);
         const retryRes = await retryQuery;
         data = retryRes.data;
         error = retryRes.error;
@@ -353,14 +353,6 @@ export class InvoiceService {
           hint: parentErr.hint,
         });
         const errStr = handleSupabaseError(parentErr, 'createInvoice');
-        if (errStr.startsWith('Network Error') || parentErr.code === '42501' || parentErr.code === 'PGRST301' || !supabaseAuthService.isAuthenticated()) {
-          const newId = `inv-${Date.now()}`;
-          const localInv = { id: newId, invoice_number: invNumber, ...invoice, invoice_items: items, createdAt: new Date().toISOString() };
-          const local = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
-          local.unshift(localInv);
-          safeSaveTenantStorage(LOCAL_INVOICES_KEY, local);
-          return { invoiceId: newId };
-        }
         return { error: errStr };
       }
 
@@ -525,12 +517,8 @@ export class InvoiceService {
       return { invoiceId };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'createInvoice');
-      const newId = `inv-${Date.now()}`;
-      const localInv = { id: newId, invoice_number: invNumber, ...invoice, invoice_items: items, createdAt: new Date().toISOString() };
-      const local = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
-      local.unshift(localInv);
-      safeSaveTenantStorage(LOCAL_INVOICES_KEY, local);
-      return { invoiceId: newId };
+      console.error('[createInvoice] Critical execution error:', e);
+      return { error: errStr };
     }
   }
 

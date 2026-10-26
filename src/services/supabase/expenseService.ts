@@ -98,14 +98,25 @@ export class ExpenseService {
           }
         }
 
-        const { data, error } = await query
+        let { data, error } = await query
           .order('expense_date', { ascending: false })
-          .order('created_at', { ascending: false });
+          .limit(100);
+
+        if (error && (error.code === 'PGRST204' || error.code === '42703' || error.code === '57014' || error.message?.includes('branch_id') || error.message?.includes('timeout'))) {
+          console.warn('[ExpenseService.getExpenses] Database query notice (code: ' + error.code + '); querying workspace-wide with limit');
+          const retry = await supabase
+            .from('expenses')
+            .select('*')
+            .eq('workspace_id', wsId)
+            .order('expense_date', { ascending: false })
+            .limit(100);
+          data = retry.data;
+          error = retry.error;
+        }
 
         if (!error && data) {
           const mapped: Expense[] = data.map((row: any) => fromDbExpense(row));
           safeSaveTenantStorage(LOCAL_EXPENSES_KEY, mapped);
-          // Sync in-memory store so UI components reading store get authoritative data
           store.setExpenses(mapped);
           return { data: mapped };
         } else if (error) {
@@ -221,10 +232,24 @@ export class ExpenseService {
           .select('id')
           .single();
 
-        // If payment_mode column does not exist yet in schema cache, retry without it
-        if (expErr && (expErr.code === '42703' || expErr.message?.includes('payment_mode'))) {
-          delete payload.payment_mode;
-          const retry = await supabase.from('expenses').insert([payload]).select('id').single();
+        // If extended columns (payment_mode, paid_to, reference_no, branch_id) do not exist yet in schema cache, retry with core columns
+        if (expErr && (expErr.code === '42703' || expErr.code === 'PGRST204' || expErr.message?.includes('column') || expErr.message?.includes('payment_mode') || expErr.message?.includes('paid_to'))) {
+          let enrichedNotes = notes || '';
+          if (paidTo) enrichedNotes = (enrichedNotes ? `${enrichedNotes} ` : '') + `[paid_to: ${paidTo}]`;
+          if (referenceNo) enrichedNotes = (enrichedNotes ? `${enrichedNotes} ` : '') + `[ref: ${referenceNo}]`;
+          if (paymentMode) enrichedNotes = (enrichedNotes ? `${enrichedNotes} ` : '') + `[mode: ${paymentMode}]`;
+
+          const corePayload: any = {
+            id: expenseId,
+            workspace_id: wsId,
+            category,
+            expense_name: expenseName || null,
+            amount,
+            expense_date: dateStr,
+            notes: enrichedNotes || null,
+          };
+
+          const retry = await supabase.from('expenses').insert([corePayload]).select('id').single();
           expData = retry.data;
           expErr = retry.error;
         }

@@ -1,8 +1,12 @@
-import { supabaseAuthService } from '../supabaseAuth';
+function getMemoryStore(): Record<string, string> {
+  const g = globalThis as any;
+  if (!g.__vistaar_memory_store) {
+    g.__vistaar_memory_store = {};
+  }
+  return g.__vistaar_memory_store;
+}
 
-const memoryStore: Record<string, string> = {};
-
-const getActiveCompanyId = (): string => {
+function getActiveCompanyId(): string {
   try {
     if (typeof localStorage !== 'undefined') {
       const direct = localStorage.getItem('vistaar_current_company_id');
@@ -24,7 +28,7 @@ const getActiveCompanyId = (): string => {
     }
   } catch (e) {}
   return 'default';
-};
+}
 
 /**
  * Builds a strictly isolated cache key incorporating workspace and branch context.
@@ -36,6 +40,62 @@ export function buildTenantCacheKey(key: string, branchId?: string): string {
   return `workspace:${currentWorkspaceId}:branch:${branchPart}:${key}`;
 }
 
+function itemMatchesBranch(it: any, bId?: string | null): boolean {
+  if (!bId || bId === 'ALL') return true;
+  const itemBranch = it.branchId || it.branch_id;
+  if (itemBranch === bId) return true;
+  if (it.notes && typeof it.notes === 'string') {
+    const match = it.notes.match(/\[branch(?:_id)?:?\s*([^\]]+)\]/i);
+    if (match && match[1]) {
+      const embedded = match[1].trim();
+      if (embedded === bId || embedded.toLowerCase() === bId.toLowerCase()) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function readRaw<T = any>(k: string): T[] | null {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const stored = localStorage.getItem(k);
+      if (stored) return JSON.parse(stored);
+    } catch (e) {
+      console.warn(`Failed to read tenant storage key ${k}:`, e);
+    }
+  }
+  const store = getMemoryStore();
+  if (store[k]) {
+    try {
+      return JSON.parse(store[k]);
+    } catch (e) {
+      console.warn(`Failed to parse memory tenant key ${k}:`, e);
+    }
+  }
+  return null;
+}
+
+function readItem<T = any>(k: string): T | null {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const stored = localStorage.getItem(k);
+      if (stored) return JSON.parse(stored);
+    } catch (e) {
+      console.warn(`Failed to read tenant storage key ${k}:`, e);
+    }
+  }
+  const store = getMemoryStore();
+  if (store[k]) {
+    try {
+      return JSON.parse(store[k]);
+    } catch (e) {
+      console.warn(`Failed to parse memory tenant key ${k}:`, e);
+    }
+  }
+  return null;
+}
+
 /**
  * Tenant & Branch-scoped Local & In-Memory Storage Helper.
  * Strictly guarantees that cached data does not leak between workspaces or branches.
@@ -44,41 +104,6 @@ export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = [], b
   const tenantKey = buildTenantCacheKey(key, branchId);
   const unifiedKey = buildTenantCacheKey(key);
   const legacyKey = `${key}_${getActiveCompanyId()}`;
-
-  const itemMatchesBranch = (it: any, bId?: string | null): boolean => {
-    if (!bId || bId === 'ALL') return true;
-    const itemBranch = it.branchId || it.branch_id;
-    if (itemBranch === bId) return true;
-    if (it.notes && typeof it.notes === 'string') {
-      const match = it.notes.match(/\[branch(?:_id)?:?\s*([^\]]+)\]/i);
-      if (match && match[1]) {
-        const embedded = match[1].trim();
-        if (embedded === bId || embedded.toLowerCase() === bId.toLowerCase()) {
-          return true;
-        }
-      }
-    }
-    return false;
-  };
-
-  const readRaw = (k: string): T[] | null => {
-    if (typeof localStorage !== 'undefined') {
-      try {
-        const stored = localStorage.getItem(k);
-        if (stored) return JSON.parse(stored);
-      } catch (e) {
-        console.warn(`Failed to read tenant storage key ${k}:`, e);
-      }
-    }
-    if (memoryStore[k]) {
-      try {
-        return JSON.parse(memoryStore[k]);
-      } catch (e) {
-        console.warn(`Failed to parse memory tenant key ${k}:`, e);
-      }
-    }
-    return null;
-  };
 
   // Special handling for unified table: vistaar_local_branch_inventory_db
   if (key === 'vistaar_local_branch_inventory_db') {
@@ -177,7 +202,7 @@ export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = [], b
 export function safeSaveTenantStorage<T = any>(key: string, items: T[], branchId?: string): void {
   const tenantKey = buildTenantCacheKey(key, branchId);
   const jsonStr = JSON.stringify(items);
-  memoryStore[tenantKey] = jsonStr;
+  getMemoryStore()[tenantKey] = jsonStr;
 
   if (typeof localStorage !== 'undefined') {
     try {
@@ -199,7 +224,7 @@ export function safeSaveTenantStorage<T = any>(key: string, items: T[], branchId
     const filteredUnified = existingUnified.filter((it: any) => (it.branchId || it.branch_id) !== branchId);
     const merged = [...filteredUnified, ...items];
     const mergedStr = JSON.stringify(merged);
-    memoryStore[unifiedKey] = mergedStr;
+    getMemoryStore()[unifiedKey] = mergedStr;
     if (typeof localStorage !== 'undefined') {
       try {
         localStorage.setItem(unifiedKey, mergedStr);
@@ -215,26 +240,7 @@ export function safeGetTenantItem<T = any>(key: string, fallback: T = null as un
   const unifiedKey = buildTenantCacheKey(key);
   const legacyKey = `${key}_${getActiveCompanyId()}`;
 
-  const readItem = (k: string): T | null => {
-    if (typeof localStorage !== 'undefined') {
-      try {
-        const stored = localStorage.getItem(k);
-        if (stored) return JSON.parse(stored);
-      } catch (e) {
-        console.warn(`Failed to read tenant storage key ${k}:`, e);
-      }
-    }
-    if (memoryStore[k]) {
-      try {
-        return JSON.parse(memoryStore[k]);
-      } catch (e) {
-        console.warn(`Failed to parse memory tenant key ${k}:`, e);
-      }
-    }
-    return null;
-  };
-
-  const direct = readItem(tenantKey);
+  const direct = readItem<T>(tenantKey);
   if (direct !== null) return direct;
 
   const unified = readItem(unifiedKey);
@@ -275,7 +281,7 @@ export function safeGetTenantItem<T = any>(key: string, fallback: T = null as un
 export function safeSaveTenantItem<T>(key: string, item: T, branchId?: string): void {
   const tenantKey = buildTenantCacheKey(key, branchId);
   const jsonStr = JSON.stringify(item);
-  memoryStore[tenantKey] = jsonStr;
+  getMemoryStore()[tenantKey] = jsonStr;
 
   if (typeof localStorage !== 'undefined') {
     try {
@@ -299,8 +305,9 @@ export function clearTenantStorage(branchId?: string): void {
     ? `workspace:${currentWorkspaceId}:branch:${branchId}:`
     : `workspace:${currentWorkspaceId}:`;
 
-  Object.keys(memoryStore).forEach((k) => {
-    if (k.startsWith(prefix)) delete memoryStore[k];
+  const mem = getMemoryStore();
+  Object.keys(mem).forEach((k) => {
+    if (k.startsWith(prefix)) delete mem[k];
   });
 
   if (typeof localStorage !== 'undefined') {

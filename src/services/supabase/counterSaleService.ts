@@ -306,11 +306,11 @@ export class CounterSaleService {
           query = query.lte('sale_date', options.endDate);
         }
 
-        let { data, error } = await query.order('created_at', { ascending: false });
+        let { data, error } = await query.order('created_at', { ascending: false }).limit(100);
 
         if (error) {
           queryError = handleSupabaseError(error, 'getCounterSales');
-          console.warn('[getCounterSales] Supabase query notice, falling back to local merge:', error);
+          console.warn('[getCounterSales] Supabase query notice:', error);
         } else if (data) {
           supabaseSales = data;
         }
@@ -711,20 +711,42 @@ export class CounterSaleService {
           .select()
           .single();
 
-        if (insertErr && (insertErr.code === '42703' || insertErr.code === 'PGRST204' || insertErr.message?.includes('branch_id'))) {
-          delete salePayload.branch_id;
-          if (!salePayload.notes?.includes('[branch:')) {
-            salePayload.notes = (salePayload.notes ? salePayload.notes + ' ' : '') + `[branch: ${canonicalBranchId}]`;
-          }
-          const retry = await supabase.from('counter_sales').insert([salePayload]).select().single();
+        if (insertErr && (insertErr.code === '42703' || insertErr.code === 'PGRST204' || insertErr.message?.includes('branch_id') || insertErr.message?.includes('payment_'))) {
+          // Schema resilience: strip non-core columns and encode metadata into notes
+          const corePayload: any = {
+            workspace_id: wsId,
+            customer_id: (sale.customerId && isValidUuid(sale.customerId)) ? sale.customerId : null,
+            sale_number: saleNumber,
+            invoice_number: invoiceNumber,
+            customer_name: sale.customerName || 'Walk-in Customer',
+            phone_number: sale.phoneNumber || '',
+            sale_date: canonicalSaleDate,
+            estimate_reference: sale.estimateReference || null,
+            subtotal: sale.subtotal || 0,
+            discount_type: sale.discountType || 'fixed',
+            discount_value: sale.discountValue || 0,
+            discount_amount: sale.discountAmount || 0,
+            final_total: finalTotal,
+            status: 'COMPLETED',
+            notes: (sale.notes ? `${sale.notes} ` : '') + (canonicalBranchId && !sale.notes?.includes('[branch:') ? `[branch: ${canonicalBranchId}]` : ''),
+            payment_method: paymentMethod,
+            amount_received: amountReceived,
+            balance_amount: balanceAmount,
+          };
+          const retry = await supabase.from('counter_sales').insert([corePayload]).select().single();
           insertedSale = retry.data;
           insertErr = retry.error;
         }
 
         if (insertErr || !insertedSale) {
-          console.warn('[counterSaleService] Direct table insertion notice, falling back to local tenant persistence:', insertErr?.message);
-        } else {
-          const saleId = insertedSale.id;
+          console.error('[counterSaleService] Direct table insertion failed:', insertErr?.message);
+          return {
+            success: false,
+            error: `Failed to record counter sale in database: ${insertErr?.message || 'Database insert failed'}. Transaction was not committed.`,
+          };
+        }
+
+        const saleId = insertedSale.id;
         const itemRows = items.map((i: any) => ({
           workspace_id: wsId,
           counter_sale_id: saleId,
@@ -868,9 +890,12 @@ export class CounterSaleService {
         if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
 
         return { success: true, data: completeSale };
-        }
       } catch (directEx: any) {
-        console.warn('[counterSaleService] Direct table insertion notice, falling back to local tenant mode:', directEx);
+        console.error('[counterSaleService] Direct table insertion exception:', directEx);
+        return {
+          success: false,
+          error: `Failed to save counter sale: ${directEx?.message || 'Database transaction error'}`,
+        };
       }
     }
 

@@ -123,11 +123,6 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
     updateData();
     fetchQuotations();
 
-    // Also perform non-blocking reconciliation of previous conversions
-    quotationService.reconcileConversions().catch((err) => {
-      console.warn('Quotation conversion reconciliation background notice:', err);
-    });
-
     const handleBranchChanged = () => {
       fetchQuotations();
     };

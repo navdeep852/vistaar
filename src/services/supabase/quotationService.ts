@@ -100,7 +100,9 @@ export class QuotationService {
         let query = supabase
           .from('quotations')
           .select('*, quotation_items(*)')
-          .eq('workspace_id', wsId);
+          .eq('workspace_id', wsId)
+          .order('created_at', { ascending: false })
+          .limit(100);
 
         const mainBranchId = safeGetTenantItem('main_branch_id');
         const isMain = !options?.branchId || options.branchId === 'ALL' || options.branchId === mainBranchId || String(options.branchId).toLowerCase().includes('main');
@@ -115,19 +117,18 @@ export class QuotationService {
           branchFilterAppliedInDb = true;
         }
 
-        query = query.order('created_at', { ascending: false });
-
         let { data, error } = await query;
 
-        // Resilience against unmigrated schema: if branch_id column does not exist (PGRST204 / 42703)
-        if (error && (error.code === 'PGRST204' || error.code === '42703' || error.message?.includes('branch_id'))) {
-          console.warn('[getQuotations] Supabase column branch_id does not exist; querying workspace-wide and filtering in memory');
+        // Resilience against unmigrated schema or statement timeout on complex join/filter
+        if (error && (error.code === 'PGRST204' || error.code === '42703' || error.code === '57014' || error.message?.includes('branch_id') || error.message?.includes('timeout'))) {
+          console.warn('[getQuotations] Database statement notice (code: ' + error.code + '); querying workspace-wide with limit and filtering in memory');
           branchFilterAppliedInDb = false;
           const retryRes = await supabase
             .from('quotations')
             .select('*, quotation_items(*)')
             .eq('workspace_id', wsId)
-            .order('created_at', { ascending: false });
+            .order('created_at', { ascending: false })
+            .limit(100);
           data = retryRes.data;
           error = retryRes.error;
         }
@@ -140,8 +141,7 @@ export class QuotationService {
             errorCode: error.code,
             error: errStr,
           });
-          const localList = Array.from(new Set(mergedMap.values()));
-          return { data: localList, error: errStr };
+          return { data: [], error: errStr };
         }
 
         let remoteList = data || [];
