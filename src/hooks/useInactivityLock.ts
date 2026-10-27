@@ -16,6 +16,9 @@ export function useInactivityLock({
   onLockTriggered,
   onUnlockTriggered,
 }: UseInactivityLockOptions) {
+  // Track whether authentication just transitioned (e.g. fresh login)
+  const wasAuthenticatedRef = useRef<boolean>(isAuthenticated);
+
   // Initialize lock state from storage or elapsed inactivity
   const [isLocked, setIsLocked] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -205,14 +208,27 @@ export function useInactivityLock({
     if (!isAuthenticated) {
       setIsLocked(false);
       isLockedRef.current = false;
+      wasAuthenticatedRef.current = false;
       return;
     }
 
     // Initialize lastActivity timestamp
     const now = Date.now();
+    const justLoggedIn = !wasAuthenticatedRef.current;
+    wasAuthenticatedRef.current = true;
+
     try {
+      const persistedLock = localStorage.getItem(SCREEN_LOCK_STORAGE_KEY);
       const stored = localStorage.getItem(LAST_ACTIVITY_STORAGE_KEY);
-      if (stored) {
+
+      if (justLoggedIn && persistedLock !== 'true') {
+        // Fresh authentication transition: user actively logged in right now
+        lastActivityRef.current = now;
+        localStorage.setItem(LAST_ACTIVITY_STORAGE_KEY, String(now));
+        localStorage.setItem(SCREEN_LOCK_STORAGE_KEY, 'false');
+        setIsLocked(false);
+        isLockedRef.current = false;
+      } else if (stored) {
         const parsed = parseInt(stored, 10);
         if (!isNaN(parsed)) {
           lastActivityRef.current = parsed;
@@ -266,8 +282,10 @@ export function useInactivityLock({
       checkInactivityElapsed();
     }, 5000);
 
-    // Run immediate elapsed check on mount
-    checkInactivityElapsed();
+    // Run immediate elapsed check on mount ONLY if not a fresh login
+    if (!justLoggedIn) {
+      checkInactivityElapsed();
+    }
 
     return () => {
       activityEvents.forEach((eventName) => {

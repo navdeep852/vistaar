@@ -345,6 +345,16 @@ export class SupabaseAuthService {
             try {
               localStorage.removeItem('vistaar_current_company_id');
               localStorage.removeItem('vistaar_workspace_id');
+              localStorage.removeItem('vistaar_screen_locked');
+              localStorage.removeItem('vistaar_last_activity_time');
+              localStorage.removeItem('vistaar_screen_lock_failed_attempts');
+              localStorage.removeItem('vistaar_screen_lock_cooldown_until');
+            } catch {}
+          }
+          if (typeof sessionStorage !== 'undefined') {
+            try {
+              sessionStorage.removeItem('vistaar_screen_lock_failed_attempts');
+              sessionStorage.removeItem('vistaar_screen_lock_cooldown_until');
             } catch {}
           }
           try {
@@ -352,6 +362,23 @@ export class SupabaseAuthService {
           } catch {}
           this.notify();
           return;
+        }
+
+        if (event === 'SIGNED_IN') {
+          if (typeof localStorage !== 'undefined') {
+            try {
+              localStorage.setItem('vistaar_screen_locked', 'false');
+              localStorage.setItem('vistaar_last_activity_time', String(Date.now()));
+              localStorage.removeItem('vistaar_screen_lock_failed_attempts');
+              localStorage.removeItem('vistaar_screen_lock_cooldown_until');
+            } catch {}
+          }
+          if (typeof sessionStorage !== 'undefined') {
+            try {
+              sessionStorage.removeItem('vistaar_screen_lock_failed_attempts');
+              sessionStorage.removeItem('vistaar_screen_lock_cooldown_until');
+            } catch {}
+          }
         }
 
         if (session?.user) {
@@ -1194,6 +1221,20 @@ export class SupabaseAuthService {
         });
 
         this.saveSessionToStorage(this.currentProfile);
+        if (typeof localStorage !== 'undefined') {
+          try {
+            localStorage.setItem('vistaar_screen_locked', 'false');
+            localStorage.setItem('vistaar_last_activity_time', String(Date.now()));
+            localStorage.removeItem('vistaar_screen_lock_failed_attempts');
+            localStorage.removeItem('vistaar_screen_lock_cooldown_until');
+          } catch {}
+        }
+        if (typeof sessionStorage !== 'undefined') {
+          try {
+            sessionStorage.removeItem('vistaar_screen_lock_failed_attempts');
+            sessionStorage.removeItem('vistaar_screen_lock_cooldown_until');
+          } catch {}
+        }
         store.reloadTenantState();
         this.notify();
         return {
@@ -2934,6 +2975,16 @@ export class SupabaseAuthService {
       try {
         localStorage.removeItem('vistaar_current_company_id');
         localStorage.removeItem('vistaar_workspace_id');
+        localStorage.removeItem('vistaar_screen_locked');
+        localStorage.removeItem('vistaar_last_activity_time');
+        localStorage.removeItem('vistaar_screen_lock_failed_attempts');
+        localStorage.removeItem('vistaar_screen_lock_cooldown_until');
+      } catch {}
+    }
+    if (typeof sessionStorage !== 'undefined') {
+      try {
+        sessionStorage.removeItem('vistaar_screen_lock_failed_attempts');
+        sessionStorage.removeItem('vistaar_screen_lock_cooldown_until');
       } catch {}
     }
     try {

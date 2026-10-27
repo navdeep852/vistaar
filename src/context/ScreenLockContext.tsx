@@ -19,6 +19,10 @@ export interface ScreenLockContextType {
     sessionExpired?: boolean;
     error?: string;
   }>;
+  setupBranchPassword: (newPassword: string) => Promise<{
+    success: boolean;
+    error?: string;
+  }>;
   failedAttempts: number;
   isCooldown: boolean;
   cooldownRemaining: number;
@@ -26,6 +30,8 @@ export interface ScreenLockContextType {
   activeBranchName: string;
   activeBranchCode: string;
   currentUser: UserProfile | null;
+  isBranchLoading: boolean;
+  branchHasPassword: boolean;
   logoutAndReset: () => Promise<void>;
 }
 
@@ -33,6 +39,7 @@ const ScreenLockContext = createContext<ScreenLockContextType>({
   isLocked: false,
   lockScreen: () => {},
   unlockScreen: async () => ({ success: false }),
+  setupBranchPassword: async () => ({ success: false }),
   failedAttempts: 0,
   isCooldown: false,
   cooldownRemaining: 0,
@@ -40,11 +47,13 @@ const ScreenLockContext = createContext<ScreenLockContextType>({
   activeBranchName: '',
   activeBranchCode: '',
   currentUser: null,
+  isBranchLoading: false,
+  branchHasPassword: true,
   logoutAndReset: async () => {},
 });
 
 export const ScreenLockProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { currentBranch, allWorkspaceBranches } = useBranch();
+  const { currentBranch, allWorkspaceBranches, isLoadingBranches } = useBranch();
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => supabaseAuthService.getUser());
 
   // Listen to auth state changes to update currentUser
@@ -92,6 +101,11 @@ export const ScreenLockProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (targetBranch) return `${targetBranch.branchName} (HQ)`;
     return 'Main Branch';
   }, [currentBranch, targetBranch]);
+
+  const branchHasPassword = useMemo(() => {
+    if (!targetBranch) return false;
+    return Boolean(targetBranch.hasPassword);
+  }, [targetBranch]);
 
   const activeBranchCode = useMemo(() => {
     if (currentBranch) return currentBranch.branchCode;
@@ -270,11 +284,45 @@ export const ScreenLockProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     await supabaseAuthService.logout();
   }, [resetFailedAttempts]);
 
+  // Setup branch password (Owner only)
+  const setupBranchPassword = useCallback(
+    async (newPassword: string): Promise<{ success: boolean; error?: string }> => {
+      if (!newPassword || newPassword.trim().length < 4) {
+        return { success: false, error: 'Branch access password must be at least 4 characters long.' };
+      }
+
+      if (!targetBranch?.id) {
+        return { success: false, error: 'No active branch selected.' };
+      }
+
+      const role = (currentUser?.role || '').toLowerCase();
+      if (role !== 'owner') {
+        return { success: false, error: 'Permission denied: Only the Business Owner can configure branch passwords.' };
+      }
+
+      try {
+        const res = await branchService.setBranchPassword(targetBranch.id, newPassword);
+        if (!res.success) {
+          return { success: false, error: res.error || 'Failed to configure branch password.' };
+        }
+
+        targetBranch.hasPassword = true;
+        resetFailedAttempts();
+        unlockLocalSession();
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, error: err?.message || 'Error configuring branch password.' };
+      }
+    },
+    [targetBranch, currentUser?.role, resetFailedAttempts, unlockLocalSession]
+  );
+
   const value = useMemo<ScreenLockContextType>(
     () => ({
       isLocked,
       lockScreen,
       unlockScreen,
+      setupBranchPassword,
       failedAttempts,
       isCooldown: cooldownRemaining > 0,
       cooldownRemaining,
@@ -282,18 +330,23 @@ export const ScreenLockProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       activeBranchName,
       activeBranchCode,
       currentUser,
+      isBranchLoading: isLoadingBranches,
+      branchHasPassword,
       logoutAndReset,
     }),
     [
       isLocked,
       lockScreen,
       unlockScreen,
+      setupBranchPassword,
       failedAttempts,
       cooldownRemaining,
       targetBranch,
       activeBranchName,
       activeBranchCode,
       currentUser,
+      isLoadingBranches,
+      branchHasPassword,
       logoutAndReset,
     ]
   );

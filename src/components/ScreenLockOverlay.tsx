@@ -21,36 +21,52 @@ export const ScreenLockOverlay: React.FC = () => {
   const {
     isLocked,
     unlockScreen,
+    setupBranchPassword,
     failedAttempts,
     isCooldown,
     cooldownRemaining,
+    activeBranch,
     activeBranchName,
     activeBranchCode,
     currentUser,
+    isBranchLoading,
+    branchHasPassword,
     logoutAndReset,
   } = useScreenLock();
 
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSetupMode, setIsSetupMode] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
-  // Focus input whenever screen is locked
+  const isOwner = (currentUser?.role || '').toLowerCase() === 'owner';
+
+  // Focus input and sync setup mode whenever screen is locked
   useEffect(() => {
     if (isLocked) {
       setPassword('');
+      setConfirmPassword('');
       setErrorMessage(null);
       setShowPassword(false);
-      // Short delay for DOM render before focusing
+
+      // Auto-enter setup mode if the branch has no password configured and user is the owner
+      if (!branchHasPassword && isOwner) {
+        setIsSetupMode(true);
+      } else {
+        setIsSetupMode(false);
+      }
+
       const timer = setTimeout(() => {
         inputRef.current?.focus();
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [isLocked]);
+  }, [isLocked, branchHasPassword, isOwner]);
 
   // Trap keyboard focus and block global keyboard shortcuts while locked
   useEffect(() => {
@@ -60,7 +76,6 @@ export const ScreenLockOverlay: React.FC = () => {
       // Allow typing in inputs
       if (e.target === inputRef.current) {
         if (e.key === 'Enter') {
-          // Enter key submitted
           return;
         }
       }
@@ -100,6 +115,7 @@ export const ScreenLockOverlay: React.FC = () => {
     return null;
   }
 
+  // Handle Standard Unlock
   const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isVerifying || isCooldown) return;
@@ -116,7 +132,18 @@ export const ScreenLockOverlay: React.FC = () => {
     try {
       const res = await unlockScreen(password);
       if (!res.success) {
-        setErrorMessage(res.error || 'Incorrect branch password.');
+        if (res.requiresSetup) {
+          if (isOwner) {
+            setIsSetupMode(true);
+            setErrorMessage('Branch password has not been configured yet. Set up a secure password below.');
+          } else {
+            setErrorMessage(
+              res.error || 'Branch password has not been configured for this branch. Please contact your Business Owner.'
+            );
+          }
+        } else {
+          setErrorMessage(res.error || 'Incorrect branch password.');
+        }
         setPassword('');
         inputRef.current?.focus();
       } else {
@@ -131,7 +158,41 @@ export const ScreenLockOverlay: React.FC = () => {
     }
   };
 
-  const isOwner = (currentUser?.role || '').toLowerCase() === 'owner';
+  // Handle Initial Setup (Owner only)
+  const handleSetupPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isVerifying) return;
+
+    if (!password || password.trim().length < 4) {
+      setErrorMessage('Branch access password must be at least 4 characters long.');
+      inputRef.current?.focus();
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setErrorMessage('Passwords do not match. Please verify your entry.');
+      return;
+    }
+
+    setIsVerifying(true);
+    setErrorMessage(null);
+
+    try {
+      const res = await setupBranchPassword(password);
+      if (!res.success) {
+        setErrorMessage(res.error || 'Failed to configure branch access password.');
+      } else {
+        setPassword('');
+        setConfirmPassword('');
+        setErrorMessage(null);
+        setIsSetupMode(false);
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Error configuring branch password.');
+    } finally {
+      setIsVerifying(false);
+    }
+  };
 
   return (
     <div
@@ -162,18 +223,26 @@ export const ScreenLockOverlay: React.FC = () => {
             />
           </div>
 
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-amber-500/10 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400 mb-3 border border-amber-500/20">
-            <Lock className="w-6 h-6" />
+          <div
+            className={`inline-flex items-center justify-center w-12 h-12 rounded-2xl mb-3 border ${
+              isSetupMode
+                ? 'bg-blue-500/10 dark:bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20'
+                : 'bg-amber-500/10 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/20'
+            }`}
+          >
+            {isSetupMode ? <KeyRound className="w-6 h-6" /> : <Lock className="w-6 h-6" />}
           </div>
 
           <h1
             id="screen-lock-title"
             className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white uppercase"
           >
-            Screen Locked
+            {isSetupMode ? 'Branch Password Setup' : 'Screen Locked'}
           </h1>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400 font-medium">
-            Automatic lock after 5 minutes of inactivity. Re-enter your branch password to resume.
+            {isSetupMode
+              ? 'Initial setup: As the Business Owner, set a secure password (min 4 characters) to protect this branch location.'
+              : 'Automatic lock after 5 minutes of inactivity. Re-enter your branch password to resume.'}
           </p>
         </div>
 
@@ -224,12 +293,12 @@ export const ScreenLockOverlay: React.FC = () => {
             </div>
             <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1">
               <Shield className="w-3 h-3 text-emerald-500" />
-              <span>Protected</span>
+              <span>{branchHasPassword ? 'Protected' : 'Pending Setup'}</span>
             </span>
           </div>
         </div>
 
-        {/* Error or Cooldown Banner */}
+        {/* Error Banner */}
         {errorMessage && (
           <div className="mb-4 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center gap-2.5 text-rose-700 dark:text-rose-300 text-xs font-semibold">
             <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
@@ -237,6 +306,7 @@ export const ScreenLockOverlay: React.FC = () => {
           </div>
         )}
 
+        {/* Cooldown Banner */}
         {isCooldown && (
           <div className="mb-4 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-2.5 text-amber-700 dark:text-amber-400 text-xs font-semibold">
             <Clock className="w-4 h-4 shrink-0 text-amber-500 animate-spin" />
@@ -244,65 +314,174 @@ export const ScreenLockOverlay: React.FC = () => {
           </div>
         )}
 
-        {/* Password Form */}
-        <form onSubmit={handleUnlock} className="space-y-4">
-          <div className="space-y-1.5">
-            <label
-              htmlFor="branch-unlock-password"
-              className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider"
-            >
-              Branch Access Password
-            </label>
-            <div className="relative">
+        {/* Branch Loading State */}
+        {isBranchLoading && !activeBranch ? (
+          <div className="py-8 text-center space-y-3">
+            <Loader2 className="w-8 h-8 text-blue-500 animate-spin mx-auto" />
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+              Resolving branch security profile...
+            </p>
+          </div>
+        ) : isSetupMode ? (
+          /* OWNER INITIAL SETUP FORM */
+          <form onSubmit={handleSetupPassword} className="space-y-4">
+            <div className="space-y-1.5">
+              <label
+                htmlFor="branch-setup-password"
+                className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider"
+              >
+                New Branch Access Password
+              </label>
+              <div className="relative">
+                <input
+                  ref={inputRef}
+                  id="branch-setup-password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (errorMessage) setErrorMessage(null);
+                  }}
+                  disabled={isVerifying}
+                  placeholder="Create password (min 4 characters)"
+                  autoComplete="new-password"
+                  className="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-11 transition-all disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  disabled={isVerifying}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label
+                htmlFor="branch-setup-confirm-password"
+                className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider"
+              >
+                Confirm Branch Access Password
+              </label>
               <input
-                ref={inputRef}
-                id="branch-unlock-password"
+                id="branch-setup-confirm-password"
                 type={showPassword ? 'text' : 'password'}
-                value={password}
+                value={confirmPassword}
                 onChange={(e) => {
-                  setPassword(e.target.value);
+                  setConfirmPassword(e.target.value);
                   if (errorMessage) setErrorMessage(null);
                 }}
-                disabled={isVerifying || isCooldown}
-                placeholder="Enter branch access password"
-                autoComplete="current-password"
-                className="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-11 transition-all disabled:opacity-50"
+                disabled={isVerifying}
+                placeholder="Confirm password"
+                autoComplete="new-password"
+                className="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all disabled:opacity-50"
               />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                disabled={isVerifying || isCooldown}
-                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer"
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
-              >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
             </div>
-            {failedAttempts > 0 && !isCooldown && (
-              <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">
-                Failed attempts: {failedAttempts} / 5
-              </p>
-            )}
-          </div>
 
-          <button
-            type="submit"
-            disabled={isVerifying || isCooldown || !password.trim()}
-            className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl text-xs sm:text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-lg shadow-blue-600/30 transition-all cursor-pointer disabled:opacity-50"
-          >
-            {isVerifying ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Verifying Branch Password...</span>
-              </>
-            ) : (
-              <>
-                <KeyRound className="w-4 h-4" />
-                <span>Unlock Session</span>
-              </>
+            <button
+              type="submit"
+              disabled={isVerifying || password.length < 4 || password !== confirmPassword}
+              className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl text-xs sm:text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-lg shadow-blue-600/30 transition-all cursor-pointer disabled:opacity-50"
+            >
+              {isVerifying ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Configuring & Unlocking...</span>
+                </>
+              ) : (
+                <>
+                  <KeyRound className="w-4 h-4" />
+                  <span>Save Password & Unlock Screen</span>
+                </>
+              )}
+            </button>
+          </form>
+        ) : !branchHasPassword && !isOwner ? (
+          /* EMPLOYEE UNCONFIGURED NOTICE */
+          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-center space-y-3">
+            <p className="text-xs font-semibold text-amber-700 dark:text-amber-300">
+              Branch password has not been configured for this branch yet.
+            </p>
+            <p className="text-[11px] text-slate-600 dark:text-slate-400">
+              Only the Business Owner can set up the branch access password. Please contact your owner or log out below.
+            </p>
+          </div>
+        ) : (
+          /* STANDARD UNLOCK FORM */
+          <form onSubmit={handleUnlock} className="space-y-4">
+            <div className="space-y-1.5">
+              <label
+                htmlFor="branch-unlock-password"
+                className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider"
+              >
+                Branch Access Password
+              </label>
+              <div className="relative">
+                <input
+                  ref={inputRef}
+                  id="branch-unlock-password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (errorMessage) setErrorMessage(null);
+                  }}
+                  disabled={isVerifying || isCooldown}
+                  placeholder="Enter branch access password"
+                  autoComplete="current-password"
+                  className="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-11 transition-all disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  disabled={isVerifying || isCooldown}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              {failedAttempts > 0 && !isCooldown && (
+                <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                  Failed attempts: {failedAttempts} / 5
+                </p>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              disabled={isVerifying || isCooldown || !password.trim()}
+              className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl text-xs sm:text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-lg shadow-blue-600/30 transition-all cursor-pointer disabled:opacity-50"
+            >
+              {isVerifying ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Verifying Branch Password...</span>
+                </>
+              ) : (
+                <>
+                  <KeyRound className="w-4 h-4" />
+                  <span>Unlock Session</span>
+                </>
+              )}
+            </button>
+
+            {isOwner && !branchHasPassword && (
+              <div className="text-center pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsSetupMode(true)}
+                  className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                >
+                  Configure new branch password
+                </button>
+              </div>
             )}
-          </button>
-        </form>
+          </form>
+        )}
 
         {/* Footer: Safe Logout / Switch User Option */}
         <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800 text-center">

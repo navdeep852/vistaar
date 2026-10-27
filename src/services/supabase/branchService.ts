@@ -680,10 +680,36 @@ export class BranchService {
     // 1. Try Supabase RPC if configured
     if (isSupabaseConfigured() && isValidUuid(wsId) && isValidUuid(branchId)) {
       try {
-        const { data: rpcRes, error: rpcErr } = await supabase.rpc('set_branch_password', {
+        let { data: rpcRes, error: rpcErr } = await supabase.rpc('set_branch_password', {
           p_branch_id: branchId,
           p_new_password: cleanPass,
         });
+
+        if (rpcRes && !rpcRes.success && rpcRes.error === 'Branch not found.') {
+          // If branch was an auto-provisioned default main branch that only existed locally,
+          // create it in public.branches so server-side verify_branch_unlock_password RPC finds it
+          const localBranches = safeGetTenantStorage<Branch>(LOCAL_BRANCHES_KEY, []);
+          const targetLocal = localBranches.find((b) => b.id === branchId);
+          if (targetLocal && isOwner) {
+            try {
+              await supabase.from('branches').insert([{
+                id: branchId,
+                workspace_id: wsId,
+                branch_code: targetLocal.branchCode || 'MAIN',
+                branch_name: targetLocal.branchName || 'Main Branch',
+                branch_type: targetLocal.branchType || 'Store',
+                is_main_branch: Boolean(targetLocal.isMainBranch),
+                status: 'Active',
+              }]);
+              const retry = await supabase.rpc('set_branch_password', {
+                p_branch_id: branchId,
+                p_new_password: cleanPass,
+              });
+              rpcRes = retry.data;
+              rpcErr = retry.error;
+            } catch {}
+          }
+        }
 
         if (rpcErr || (rpcRes && !rpcRes.success)) {
           console.warn('[setBranchPassword] Server note:', rpcErr?.message || rpcRes?.error);
