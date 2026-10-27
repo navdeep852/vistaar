@@ -1,3 +1,5 @@
+import { isValidUuid } from '../../lib/supabaseError';
+
 function getMemoryStore(): Record<string, string> {
   const g = globalThis as any;
   if (!g.__vistaar_memory_store) {
@@ -6,28 +8,48 @@ function getMemoryStore(): Record<string, string> {
   return g.__vistaar_memory_store;
 }
 
-function getActiveCompanyId(): string {
+export type ActiveWorkspaceResolver = () => string | null;
+
+let activeWorkspaceResolver: ActiveWorkspaceResolver | null = null;
+
+export function registerActiveWorkspaceResolver(resolver: ActiveWorkspaceResolver): void {
+  activeWorkspaceResolver = resolver;
+}
+
+export function getActiveCompanyId(): string {
+  // 1. Authoritative in-memory / service resolver (Dependency Injection)
+  // Guarantees active session resolved by auth service is preferred over stale localStorage
   try {
-    if (typeof localStorage !== 'undefined') {
-      const direct = localStorage.getItem('vistaar_current_company_id');
-      if (direct && direct !== 'default') return direct;
-      const wsDirect = localStorage.getItem('vistaar_workspace_id');
-      if (wsDirect && wsDirect !== 'default') return wsDirect;
-      const stored = localStorage.getItem('vistaar_user_session');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed?.companyId) return parsed.companyId;
-        if (parsed?.workspaceId) return parsed.workspaceId;
+    if (activeWorkspaceResolver) {
+      const activeId = activeWorkspaceResolver();
+      if (activeId && isValidUuid(activeId)) {
+        return activeId;
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    console.warn('[safeStorage] Could not resolve active VISTAAR workspace from resolver:', e);
+  }
+
+  // 2. Authoritative session cache in localStorage
   try {
-    if (typeof supabaseAuthService !== 'undefined' && (supabaseAuthService as any)?.getAuthoritativeWorkspaceIdSync) {
-      const cid = (supabaseAuthService as any).getAuthoritativeWorkspaceIdSync();
-      if (cid) return cid;
+    if (typeof localStorage !== 'undefined') {
+      const storedSession = localStorage.getItem('vistaar_user_session');
+      if (storedSession) {
+        const parsed = JSON.parse(storedSession);
+        if (parsed?.companyId && isValidUuid(parsed.companyId) && parsed.companyId !== parsed.id) {
+          return parsed.companyId;
+        }
+      }
+      const direct = localStorage.getItem('vistaar_current_company_id');
+      if (direct && isValidUuid(direct)) return direct;
+      const wsDirect = localStorage.getItem('vistaar_workspace_id');
+      if (wsDirect && isValidUuid(wsDirect)) return wsDirect;
     }
-  } catch (e) {}
-  return 'default';
+  } catch (e) {
+    console.warn('[safeStorage] Could not resolve cached VISTAAR workspace:', e);
+  }
+
+  return 'unauthenticated';
 }
 
 /**
@@ -101,9 +123,14 @@ function readItem<T = any>(k: string): T | null {
  * Strictly guarantees that cached data does not leak between workspaces or branches.
  */
 export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = [], branchId?: string): T[] {
+  const currentWorkspaceId = getActiveCompanyId();
+  if (!currentWorkspaceId || currentWorkspaceId === 'unauthenticated') {
+    return fallback;
+  }
+
   const tenantKey = buildTenantCacheKey(key, branchId);
   const unifiedKey = buildTenantCacheKey(key);
-  const legacyKey = `${key}_${getActiveCompanyId()}`;
+  const legacyKey = `${key}_${currentWorkspaceId}`;
 
   // Special handling for unified table: vistaar_local_branch_inventory_db
   if (key === 'vistaar_local_branch_inventory_db') {
@@ -150,56 +177,15 @@ export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = [], b
     }
   }
 
-  // 5. Cross-workspace drift fallback (e.g. before auth resolution finishes)
-  const candidateWorkspaces = ['6f1c2f0f-1aca-4f87-a7e1-655dbdb89b18', 'default'];
-  for (const altWs of candidateWorkspaces) {
-    if (altWs !== getActiveCompanyId()) {
-      const altUnifiedKey = `workspace:${altWs}:branch:all:${key}`;
-      const altUnified = readRaw(altUnifiedKey);
-      if (altUnified && Array.isArray(altUnified) && altUnified.length > 0) {
-        if (branchId && branchId !== 'ALL') {
-          const bFiltered = altUnified.filter((it: any) => itemMatchesBranch(it, branchId));
-          if (bFiltered.length > 0) return bFiltered;
-        } else {
-          return altUnified;
-        }
-      }
-      const altLegacy = readRaw(`${key}_${altWs}`);
-      if (altLegacy && Array.isArray(altLegacy) && altLegacy.length > 0) {
-        if (branchId && branchId !== 'ALL') {
-          const bFiltered = altLegacy.filter((it: any) => itemMatchesBranch(it, branchId));
-          if (bFiltered.length > 0) return bFiltered;
-        } else {
-          return altLegacy;
-        }
-      }
-    }
-  }
-
-  // 6. Generic key scan fallback across localStorage
-  if (typeof localStorage !== 'undefined') {
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const lk = localStorage.key(i);
-        if (lk && (lk.endsWith(`:${key}`) || lk.startsWith(`${key}_`) || lk === key)) {
-          const val = readRaw(lk);
-          if (val && Array.isArray(val) && val.length > 0) {
-            if (branchId && branchId !== 'ALL') {
-              const bFiltered = val.filter((it: any) => itemMatchesBranch(it, branchId));
-              if (bFiltered.length > 0) return bFiltered;
-            } else {
-              return val;
-            }
-          }
-        }
-      }
-    } catch {}
-  }
-
   return fallback;
 }
 
 export function safeSaveTenantStorage<T = any>(key: string, items: T[], branchId?: string): void {
+  const currentWorkspaceId = getActiveCompanyId();
+  if (!currentWorkspaceId || currentWorkspaceId === 'unauthenticated') {
+    return;
+  }
+
   const tenantKey = buildTenantCacheKey(key, branchId);
   const jsonStr = JSON.stringify(items);
   getMemoryStore()[tenantKey] = jsonStr;
@@ -209,7 +195,7 @@ export function safeSaveTenantStorage<T = any>(key: string, items: T[], branchId
       localStorage.setItem(tenantKey, jsonStr);
       // Also update legacy key when writing consolidated/global items for backward compatibility
       if (!branchId || branchId === 'ALL') {
-        const legacyKey = `${key}_${getActiveCompanyId()}`;
+        const legacyKey = `${key}_${currentWorkspaceId}`;
         localStorage.setItem(legacyKey, jsonStr);
       }
     } catch (e) {
@@ -228,7 +214,7 @@ export function safeSaveTenantStorage<T = any>(key: string, items: T[], branchId
     if (typeof localStorage !== 'undefined') {
       try {
         localStorage.setItem(unifiedKey, mergedStr);
-        const legacyKey = `${key}_${getActiveCompanyId()}`;
+        const legacyKey = `${key}_${currentWorkspaceId}`;
         localStorage.setItem(legacyKey, mergedStr);
       } catch {}
     }
@@ -236,9 +222,14 @@ export function safeSaveTenantStorage<T = any>(key: string, items: T[], branchId
 }
 
 export function safeGetTenantItem<T = any>(key: string, fallback: T = null as unknown as T, branchId?: string): T {
+  const currentWorkspaceId = getActiveCompanyId();
+  if (!currentWorkspaceId || currentWorkspaceId === 'unauthenticated') {
+    return fallback;
+  }
+
   const tenantKey = buildTenantCacheKey(key, branchId);
   const unifiedKey = buildTenantCacheKey(key);
-  const legacyKey = `${key}_${getActiveCompanyId()}`;
+  const legacyKey = `${key}_${currentWorkspaceId}`;
 
   const direct = readItem<T>(tenantKey);
   if (direct !== null) return direct;
@@ -249,36 +240,15 @@ export function safeGetTenantItem<T = any>(key: string, fallback: T = null as un
   const legacy = readItem(legacyKey);
   if (legacy !== null) return legacy;
 
-  // Candidate alternative workspaces
-  const candidateWorkspaces = ['6f1c2f0f-1aca-4f87-a7e1-655dbdb89b18', 'default'];
-  for (const altWs of candidateWorkspaces) {
-    if (altWs !== getActiveCompanyId()) {
-      const altKey = `workspace:${altWs}:branch:${branchId && branchId !== 'ALL' ? branchId : 'all'}:${key}`;
-      const altVal = readItem(altKey);
-      if (altVal !== null) return altVal;
-
-      const altLegacy = readItem(`${key}_${altWs}`);
-      if (altLegacy !== null) return altLegacy;
-    }
-  }
-
-  // Scan localStorage for orphaned key
-  if (typeof localStorage !== 'undefined') {
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const lk = localStorage.key(i);
-        if (lk && (lk.endsWith(`:${key}`) || lk.startsWith(`${key}_`) || lk === key)) {
-          const val = readItem(lk);
-          if (val !== null) return val;
-        }
-      }
-    } catch {}
-  }
-
   return fallback;
 }
 
 export function safeSaveTenantItem<T>(key: string, item: T, branchId?: string): void {
+  const currentWorkspaceId = getActiveCompanyId();
+  if (!currentWorkspaceId || currentWorkspaceId === 'unauthenticated') {
+    return;
+  }
+
   const tenantKey = buildTenantCacheKey(key, branchId);
   const jsonStr = JSON.stringify(item);
   getMemoryStore()[tenantKey] = jsonStr;
@@ -287,7 +257,7 @@ export function safeSaveTenantItem<T>(key: string, item: T, branchId?: string): 
     try {
       localStorage.setItem(tenantKey, jsonStr);
       if (!branchId || branchId === 'ALL') {
-        const legacyKey = `${key}_${getActiveCompanyId()}`;
+        const legacyKey = `${key}_${currentWorkspaceId}`;
         localStorage.setItem(legacyKey, jsonStr);
       }
     } catch (e) {
@@ -301,6 +271,10 @@ export function safeSaveTenantItem<T>(key: string, item: T, branchId?: string): 
  */
 export function clearTenantStorage(branchId?: string): void {
   const currentWorkspaceId = getActiveCompanyId();
+  if (!currentWorkspaceId || currentWorkspaceId === 'unauthenticated') {
+    return;
+  }
+
   const prefix = branchId
     ? `workspace:${currentWorkspaceId}:branch:${branchId}:`
     : `workspace:${currentWorkspaceId}:`;
@@ -323,3 +297,4 @@ export function clearTenantStorage(branchId?: string): void {
     }
   }
 }
+

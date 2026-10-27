@@ -8,6 +8,7 @@ import { store } from './store';
 import { isValidUuid } from '../lib/supabaseError';
 import { registerCurrentUserResolver, hasPermission } from '../lib/permissions';
 import { auditLogService } from './supabase/auditLogService';
+import { registerActiveWorkspaceResolver } from './supabase/safeStorage';
 
 export { validateEmployeeId, normalizeEmployeeId };
 
@@ -149,6 +150,7 @@ export class SupabaseAuthService {
   constructor() {
     this.currentProfile = this.loadCachedSession();
     registerCurrentUserResolver(() => this.currentProfile);
+    registerActiveWorkspaceResolver(() => this.getAuthoritativeWorkspaceIdSync());
     if (!isSupabaseConfigured()) {
       if (this.currentProfile?.id) {
         const cid = this.currentProfile.companyId;
@@ -339,6 +341,12 @@ export class SupabaseAuthService {
           this.authResolutionState = 'unauthenticated';
           this.resolutionError = null;
           this.saveSessionToStorage(null);
+          if (typeof localStorage !== 'undefined') {
+            try {
+              localStorage.removeItem('vistaar_current_company_id');
+              localStorage.removeItem('vistaar_workspace_id');
+            } catch {}
+          }
           try {
             store?.reloadTenantState?.();
           } catch {}
@@ -420,6 +428,11 @@ export class SupabaseAuthService {
       }
     } else {
       this.authoritativeWorkspaceId = null;
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.removeItem('vistaar_current_company_id');
+        } catch {}
+      }
     }
   }
 
@@ -602,6 +615,12 @@ export class SupabaseAuthService {
       this.authoritativeWorkspaceId = dbWsId;
       this.authResolutionState = 'ready';
       this.resolutionError = null;
+
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.setItem('vistaar_current_company_id', dbWsId);
+        } catch {}
+      }
 
       this.saveSessionToStorage(this.currentProfile);
       store.reloadTenantState();
@@ -1259,6 +1278,14 @@ export class SupabaseAuthService {
           branchId: profile.default_branch_id || undefined,
           defaultBranchId: profile.default_branch_id || undefined,
         };
+        if (profile.workspace_id && isValidUuid(profile.workspace_id) && profile.workspace_id !== profile.id) {
+          this.authoritativeWorkspaceId = profile.workspace_id;
+          if (typeof localStorage !== 'undefined') {
+            try {
+              localStorage.setItem('vistaar_current_company_id', profile.workspace_id);
+            } catch {}
+          }
+        }
         this.saveSessionToStorage(this.currentProfile);
       }
     } catch (e) {
@@ -2903,6 +2930,12 @@ export class SupabaseAuthService {
     this.authResolutionState = 'unauthenticated';
     this.resolutionError = null;
     this.saveSessionToStorage(null);
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.removeItem('vistaar_current_company_id');
+        localStorage.removeItem('vistaar_workspace_id');
+      } catch {}
+    }
     try {
       store.resetState();
     } catch (e) {}
