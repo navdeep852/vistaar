@@ -2,8 +2,10 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { useBranch } from './BranchContext';
 import { supabaseAuthService } from '../services/supabaseAuth';
 import { branchService } from '../services/supabase/branchService';
-import { useInactivityLock, SCREEN_LOCK_STORAGE_KEY } from '../hooks/useInactivityLock';
+import { useInactivityLock, SCREEN_LOCK_STORAGE_KEY, SCREEN_LOCK_ENABLED } from '../hooks/useInactivityLock';
 import { Branch, UserProfile } from '../types';
+
+export { SCREEN_LOCK_ENABLED } from '../hooks/useInactivityLock';
 
 const FAILED_ATTEMPTS_STORAGE_KEY = 'vistaar_screen_lock_failed_attempts';
 const COOLDOWN_UNTIL_STORAGE_KEY = 'vistaar_screen_lock_cooldown_until';
@@ -114,9 +116,16 @@ export const ScreenLockProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [currentBranch, targetBranch]);
 
   // Hook for inactivity tracking and cross-tab lock synchronization
-  const { isLocked, lock: lockScreen, unlock: unlockLocalSession } = useInactivityLock({
+  const { isLocked: rawIsLocked, lock: rawLockScreen, unlock: unlockLocalSession } = useInactivityLock({
     isAuthenticated,
   });
+
+  const isLocked = SCREEN_LOCK_ENABLED ? rawIsLocked : false;
+
+  const lockScreen = useCallback(() => {
+    if (!SCREEN_LOCK_ENABLED) return;
+    rawLockScreen();
+  }, [rawLockScreen]);
 
   // Progressive failure cooldown countdown timer
   useEffect(() => {

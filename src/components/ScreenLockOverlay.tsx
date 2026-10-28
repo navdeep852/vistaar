@@ -12,7 +12,7 @@ import {
   Clock,
   KeyRound,
 } from 'lucide-react';
-import { useScreenLock } from '../context/ScreenLockContext';
+import { useScreenLock, SCREEN_LOCK_ENABLED } from '../context/ScreenLockContext';
 
 const logoFullNameLight = '/Vistaar_Logo_With_Name_Light.png';
 const logoFullNameDark = '/Vistaar_Logo_With_Name.png';
@@ -48,6 +48,7 @@ export const ScreenLockOverlay: React.FC = () => {
 
   // Focus input and sync setup mode whenever screen is locked
   useEffect(() => {
+    if (!SCREEN_LOCK_ENABLED || !isLocked) return;
     if (isLocked) {
       setPassword('');
       setConfirmPassword('');
@@ -70,7 +71,7 @@ export const ScreenLockOverlay: React.FC = () => {
 
   // Trap keyboard focus and block global keyboard shortcuts while locked
   useEffect(() => {
-    if (!isLocked) return;
+    if (!SCREEN_LOCK_ENABLED || !isLocked) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // Allow typing in inputs
@@ -111,7 +112,7 @@ export const ScreenLockOverlay: React.FC = () => {
     };
   }, [isLocked]);
 
-  if (!isLocked) {
+  if (!SCREEN_LOCK_ENABLED || !isLocked) {
     return null;
   }
 

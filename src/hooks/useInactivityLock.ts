@@ -1,5 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
+/**
+ * Master Screen Lock Configuration Flag
+ * Set to `false` during testing to temporarily disable all screen-locking mechanisms.
+ * Set to `true` to reactivate normal inactivity and manual screen locking.
+ */
+export const SCREEN_LOCK_ENABLED = false;
+
 export const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 300,000 ms (5 minutes)
 export const SCREEN_LOCK_STORAGE_KEY = 'vistaar_screen_locked';
 export const LAST_ACTIVITY_STORAGE_KEY = 'vistaar_last_activity_time';
@@ -21,6 +28,7 @@ export function useInactivityLock({
 
   // Initialize lock state from storage or elapsed inactivity
   const [isLocked, setIsLocked] = useState<boolean>(() => {
+    if (!SCREEN_LOCK_ENABLED) return false;
     if (typeof window === 'undefined') return false;
     if (!isAuthenticated) return false;
 
@@ -55,6 +63,7 @@ export function useInactivityLock({
 
   // Lock session helper
   const lock = useCallback(() => {
+    if (!SCREEN_LOCK_ENABLED) return;
     if (isLockedRef.current) return;
     isLockedRef.current = true;
     setIsLocked(true);
@@ -116,7 +125,7 @@ export function useInactivityLock({
 
   // Periodic elapsed time check (immune to timer suspension / background throttling)
   const checkInactivityElapsed = useCallback(() => {
-    if (isLockedRef.current || !isAuthenticated) return;
+    if (!SCREEN_LOCK_ENABLED || isLockedRef.current || !isAuthenticated) return;
 
     let lastActive = lastActivityRef.current;
     try {
@@ -150,7 +159,7 @@ export function useInactivityLock({
           const { type, timestamp } = event.data;
 
           if (type === 'LOCK') {
-            if (!isLockedRef.current) {
+            if (SCREEN_LOCK_ENABLED && !isLockedRef.current) {
               isLockedRef.current = true;
               setIsLocked(true);
             }
@@ -174,7 +183,7 @@ export function useInactivityLock({
     // Storage event listener fallback (for browsers or tabs without BroadcastChannel)
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === SCREEN_LOCK_STORAGE_KEY) {
-        if (e.newValue === 'true' && !isLockedRef.current) {
+        if (SCREEN_LOCK_ENABLED && e.newValue === 'true' && !isLockedRef.current) {
           isLockedRef.current = true;
           setIsLocked(true);
         } else if (e.newValue === 'false' && isLockedRef.current) {
@@ -210,6 +219,16 @@ export function useInactivityLock({
       isLockedRef.current = false;
       wasAuthenticatedRef.current = false;
       return;
+    }
+
+    if (!SCREEN_LOCK_ENABLED) {
+      setIsLocked(false);
+      isLockedRef.current = false;
+      try {
+        if (localStorage.getItem(SCREEN_LOCK_STORAGE_KEY) === 'true') {
+          localStorage.setItem(SCREEN_LOCK_STORAGE_KEY, 'false');
+        }
+      } catch {}
     }
 
     // Initialize lastActivity timestamp
