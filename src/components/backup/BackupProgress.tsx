@@ -11,10 +11,14 @@ export const BackupProgress: React.FC<BackupProgressProps> = ({ progress }) => {
     switch (progress.stage) {
       case 'collecting':
         return <Database className="w-5 h-5 text-blue-600 dark:text-blue-400 animate-pulse" />;
+      case 'compressing':
+        return <Loader2 className="w-5 h-5 text-blue-600 dark:text-blue-400 animate-spin" />;
       case 'encrypting':
         return <ShieldCheck className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />;
       case 'writing':
-        return <HardDrive className="w-5 h-5 text-purple-600 dark:text-purple-400 animate-bounce" />;
+        return <HardDrive className="w-5 h-5 text-purple-600 dark:text-purple-400 animate-pulse" />;
+      case 'verifying':
+        return <ShieldCheck className="w-5 h-5 text-amber-600 dark:text-amber-400 animate-pulse" />;
       case 'completed':
         return <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />;
       case 'failed':

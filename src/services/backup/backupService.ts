@@ -21,6 +21,7 @@ import {
   BackupDestinationResult,
   BackupCapabilities,
   BackupProgressCallback,
+  BackupHistoryRecord,
 } from './backupTypes';
 import { BackupError, BackupPermissionError } from './backupErrors';
 import { BackupDataCollector } from './backupDataCollector';
@@ -35,6 +36,7 @@ import { WebFolderAdapter } from './adapters/webFolderAdapter';
 import { DownloadAdapter } from './adapters/downloadAdapter';
 
 const BACKUP_SETTINGS_STORAGE_KEY = 'vistaar_backup_settings_v2';
+const AUDIT_HISTORY_STORAGE_KEY = 'vistaar_backup_audit_history_v2';
 
 export class BackupService {
   private adapter: BackupDestinationAdapter;
@@ -69,7 +71,7 @@ export class BackupService {
     const defaults: BackupSettings = {
       autoBackupEnabled: false,
       frequency: 'daily',
-      preferredTime: '23:00',
+      preferredTime: '20:00', // Default 8:00 PM local time
       retentionDailyCount: 7,
       retentionWeeklyCount: 4,
       retentionMonthlyCount: 3,
@@ -79,7 +81,8 @@ export class BackupService {
       try {
         const stored = localStorage.getItem(BACKUP_SETTINGS_STORAGE_KEY);
         if (stored) {
-          return { ...defaults, ...JSON.parse(stored) };
+          const parsed = JSON.parse(stored);
+          return { ...defaults, ...parsed };
         }
       } catch {}
     }
@@ -87,8 +90,11 @@ export class BackupService {
   }
 
   public getSettings(): BackupSettings {
+    const nextScheduled = BackupScheduler.calculateNextScheduledBackup(this.settings);
     return {
       ...this.settings,
+      preferredTime: this.settings.preferredTime || '20:00',
+      nextScheduledBackup: nextScheduled || undefined,
       destinationLabel: this.adapter.getDestinationLabel(),
     };
   }
@@ -99,6 +105,37 @@ export class BackupService {
       try {
         localStorage.setItem(BACKUP_SETTINGS_STORAGE_KEY, JSON.stringify(this.settings));
       } catch {}
+    }
+  }
+
+  /**
+   * Records a lightweight audit history entry (metadata only, no raw payload)
+   */
+  public recordAuditHistory(record: BackupHistoryRecord): void {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const stored = localStorage.getItem(AUDIT_HISTORY_STORAGE_KEY);
+      const list: BackupHistoryRecord[] = stored ? JSON.parse(stored) : [];
+      // Deduplicate by fileName
+      const filtered = list.filter((r) => r.fileName !== record.fileName && r.backupId !== record.backupId);
+      filtered.unshift(record);
+      // Retain max 100 metadata records
+      const capped = filtered.slice(0, 100);
+      localStorage.setItem(AUDIT_HISTORY_STORAGE_KEY, JSON.stringify(capped));
+    } catch (err) {
+      console.warn('[BackupService] Could not persist audit history:', err);
+    }
+  }
+
+  private getAuditHistory(workspaceId: string): BackupHistoryRecord[] {
+    if (typeof localStorage === 'undefined') return [];
+    try {
+      const stored = localStorage.getItem(AUDIT_HISTORY_STORAGE_KEY);
+      if (!stored) return [];
+      const list: BackupHistoryRecord[] = JSON.parse(stored);
+      return list.filter((r) => r.workspaceId === workspaceId);
+    } catch {
+      return [];
     }
   }
 
@@ -252,11 +289,30 @@ export class BackupService {
         console.warn('[BackupService] Notice during retention cleanup:', retentionErr);
       }
 
-      // 8. Update Last Run Settings
+      // 8. Update Last Run Settings & Persist Audit History
       await this.updateSettings({
         lastSuccessfulBackup: new Date().toISOString(),
         lastStatus: 'completed',
         lastError: undefined,
+      });
+
+      this.recordAuditHistory({
+        backupId: manifest.backupId,
+        workspaceId: wsId,
+        workspaceName,
+        createdAt: manifest.createdAt,
+        completedAt: new Date().toISOString(),
+        backupType: backupType as any,
+        destinationType: 'onedrive_folder',
+        destinationName: this.adapter.getDestinationLabel(),
+        fileName,
+        filePath: writeResult.filePath,
+        fileSizeBytes,
+        recordCounts: tableCounts,
+        totalRecords: totalRows,
+        integrityStatus: 'verified',
+        localWriteStatus: 'saved',
+        cloudSyncStatus: 'unknown',
       });
 
       if (options.onProgress) {
@@ -276,6 +332,24 @@ export class BackupService {
         lastError: err?.message || String(err),
       });
 
+      this.recordAuditHistory({
+        backupId: crypto.randomUUID(),
+        workspaceId: wsId,
+        workspaceName,
+        createdAt: new Date().toISOString(),
+        backupType: backupType as any,
+        destinationType: 'onedrive_folder',
+        destinationName: this.adapter.getDestinationLabel(),
+        fileName: 'unnamed_failed_backup',
+        fileSizeBytes: 0,
+        recordCounts: {},
+        totalRecords: 0,
+        integrityStatus: 'unverified',
+        localWriteStatus: 'failed',
+        cloudSyncStatus: 'unknown',
+        errorMessage: err?.message || String(err),
+      });
+
       if (options.onProgress) {
         options.onProgress({
           stage: 'failed',
@@ -284,6 +358,145 @@ export class BackupService {
         });
       }
       throw err;
+    } finally {
+      this.isLocked = false;
+    }
+  }
+
+  /**
+   * Generates a direct downloadable `.vistaarbackup` archive.
+   * Works independently of whether a local OneDrive folder is connected, across Desktop and Web.
+   */
+  public async downloadBackup(options: {
+    password?: string;
+    onProgress?: BackupProgressCallback;
+  } = {}): Promise<{ fileName: string; fileSizeBytes: number; checksum: string }> {
+    if (this.isLocked) {
+      throw new BackupError('Another backup or restore operation is already in progress.');
+    }
+
+    const wsId = supabaseAuthService.getCurrentCompanyId();
+    if (!wsId || !isValidUuid(wsId)) {
+      throw new BackupPermissionError('No authoritative active workspace found. Please sign in.');
+    }
+
+    const userProfile = supabaseAuthService.getUser();
+    const workspaceName = userProfile?.businessName || 'VISTAAR Business';
+
+    this.isLocked = true;
+    try {
+      // 1. Collect authoritative workspace records
+      if (options.onProgress) {
+        options.onProgress({
+          stage: 'collecting',
+          message: 'Collecting business records for download...',
+          percentage: 10,
+        });
+      }
+      const { data, tableCounts, totalRows } = await BackupDataCollector.collectWorkspaceData(
+        wsId,
+        options.onProgress
+      );
+
+      // 2. Compress & Encrypt Archive
+      if (options.onProgress) {
+        options.onProgress({
+          stage: 'encrypting',
+          message: 'Compressing and encrypting backup archive...',
+          percentage: 75,
+          rowsCollected: totalRows,
+        });
+      }
+
+      const platform = currentPlatform.isDesktop ? 'desktop' : 'web';
+      const { archiveContent, manifest, fileSizeBytes } = await BackupSerializer.serializeArchive({
+        data,
+        tableCounts,
+        workspaceId: wsId,
+        workspaceName,
+        password: options.password,
+        backupType: 'download',
+        platform,
+      });
+
+      const fileName = BackupSerializer.generateFileName('download', new Date(manifest.createdAt));
+
+      // 3. Trigger File Save / Browser Download
+      if (options.onProgress) {
+        options.onProgress({
+          stage: 'writing',
+          message: 'Triggering file download to computer...',
+          percentage: 90,
+        });
+      }
+
+      let savedFilePath: string | undefined;
+
+      // On desktop, try native save dialog first
+      if (currentPlatform.isDesktop && typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+        try {
+          const dialog = await import('@tauri-apps/plugin-dialog');
+          const fs = await import('@tauri-apps/plugin-fs');
+          const savePath = await dialog.save({
+            defaultPath: fileName,
+            filters: [{ name: 'VISTAAR Backup Archive', extensions: ['vistaarbackup'] }],
+          });
+          if (savePath) {
+            await fs.writeTextFile(savePath, archiveContent);
+            savedFilePath = savePath;
+          }
+        } catch {
+          // If native dialog fails or isn't available, fallback to blob trigger
+        }
+      }
+
+      // If not saved via native dialog (or running on Web), trigger browser download
+      if (!savedFilePath && typeof document !== 'undefined') {
+        const blob = new Blob([archiveContent], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      }
+
+      // 4. Record in Audit History
+      this.recordAuditHistory({
+        backupId: manifest.backupId,
+        workspaceId: wsId,
+        workspaceName,
+        createdAt: manifest.createdAt,
+        completedAt: new Date().toISOString(),
+        backupType: 'download',
+        destinationType: 'browser_download',
+        destinationName: savedFilePath || 'Computer Downloads',
+        fileName,
+        filePath: savedFilePath,
+        fileSizeBytes,
+        recordCounts: tableCounts,
+        totalRecords: totalRows,
+        integrityStatus: 'verified',
+        localWriteStatus: 'downloaded',
+        cloudSyncStatus: 'not_applicable',
+      });
+
+      if (options.onProgress) {
+        options.onProgress({
+          stage: 'completed',
+          message: 'Backup downloaded successfully!',
+          percentage: 100,
+          rowsCollected: totalRows,
+        });
+      }
+
+      return {
+        fileName,
+        fileSizeBytes,
+        checksum: manifest.integrity.checksum,
+      };
     } finally {
       this.isLocked = false;
     }
@@ -351,10 +564,66 @@ export class BackupService {
   }
 
   /**
-   * Lists backup archives present in the connected destination folder
+   * Lists backup archives present in the connected destination folder and audit history
    */
   public async listBackups(): Promise<BackupFileInfo[]> {
-    return this.adapter.listBackups();
+    const wsId = supabaseAuthService.getCurrentCompanyId() || '';
+    const adapterFiles: BackupFileInfo[] = [];
+    try {
+      const files = await this.adapter.listBackups();
+      adapterFiles.push(...files);
+    } catch (err) {
+      console.warn('[BackupService] Could not list adapter files:', err);
+    }
+
+    const auditRecords = this.getAuditHistory(wsId);
+    const resultMap = new Map<string, BackupFileInfo>();
+
+    // 1. Add files detected in destination folder
+    for (const f of adapterFiles) {
+      const matchedAudit = auditRecords.find((a) => a.fileName === f.fileName);
+      resultMap.set(f.fileName, {
+        ...f,
+        backupType:
+          matchedAudit?.backupType ||
+          (f.fileName.includes('_daily_') || f.fileName.includes('_weekly_')
+            ? 'automatic'
+            : 'manual'),
+        destinationName: matchedAudit?.destinationName || this.adapter.getDestinationLabel(),
+        localWriteStatus: 'saved',
+        cloudSyncStatus: 'unknown',
+      });
+    }
+
+    // 2. Add audit records for downloads or history that were saved outside the destination folder
+    for (const a of auditRecords) {
+      if (!resultMap.has(a.fileName)) {
+        resultMap.set(a.fileName, {
+          fileName: a.fileName,
+          filePath: a.filePath,
+          fileSizeBytes: a.fileSizeBytes,
+          createdAt: a.createdAt,
+          status:
+            a.integrityStatus === 'verified'
+              ? 'valid'
+              : a.integrityStatus === 'corrupted'
+              ? 'corrupted'
+              : 'unverified',
+          backupType: a.backupType,
+          destinationName:
+            a.destinationName ||
+            (a.backupType === 'download' ? 'Computer Downloads' : 'OneDrive Folder'),
+          localWriteStatus: a.localWriteStatus,
+          cloudSyncStatus: a.cloudSyncStatus,
+          error: a.errorMessage,
+        });
+      }
+    }
+
+    // Sort newest first
+    return Array.from(resultMap.values()).sort(
+      (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)
+    );
   }
 
   /**

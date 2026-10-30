@@ -15,6 +15,7 @@ interface BackupDestinationCardProps {
   label: string;
   isConnected: boolean;
   capabilities: BackupCapabilities | null;
+  lastVerifiedAt?: string;
   onSelectFolder: () => void;
   onDisconnect: () => void;
   onVerify: () => void;
@@ -26,6 +27,7 @@ export const BackupDestinationCard: React.FC<BackupDestinationCardProps> = ({
   label,
   isConnected,
   capabilities,
+  lastVerifiedAt,
   onSelectFolder,
   onDisconnect,
   onVerify,
@@ -50,7 +52,7 @@ export const BackupDestinationCard: React.FC<BackupDestinationCardProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                Local OneDrive Sync Destination
+                Backup Destination: OneDrive Folder
               </h3>
               <span
                 className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
@@ -59,7 +61,7 @@ export const BackupDestinationCard: React.FC<BackupDestinationCardProps> = ({
                     : 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/40'
                 }`}
               >
-                {isConnected ? 'Connected' : 'Not Connected'}
+                {isConnected ? 'Folder Connected' : 'Not Connected'}
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -77,19 +79,44 @@ export const BackupDestinationCard: React.FC<BackupDestinationCardProps> = ({
           ) : (
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold border border-slate-200 dark:border-slate-700">
               <Globe className="w-3.5 h-3.5 text-indigo-500" />
-              Chromium Folder Picker
+              File System Access API
             </span>
           )}
         </div>
       </div>
 
-      {/* Destination Details */}
-      <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-800">
-        <div className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
-          Configured Folder Path / Directory
+      {/* Destination & Permission Details Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-800 col-span-1 md:col-span-2">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
+            Folder Name &amp; Path
+          </div>
+          <div className="font-mono text-xs font-semibold text-slate-800 dark:text-slate-200 break-all">
+            {label}
+          </div>
         </div>
-        <div className="font-mono text-sm font-semibold text-slate-800 dark:text-slate-200 break-all">
-          {label}
+
+        <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-800 flex flex-col justify-between">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
+              Permission &amp; Verification
+            </div>
+            <div className="text-xs font-semibold flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+              {isConnected ? (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Read &amp; Write Permitted
+                </>
+              ) : (
+                <span className="text-slate-500">Awaiting Connection</span>
+              )}
+            </div>
+          </div>
+          {isConnected && (
+            <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+              {lastVerifiedAt ? `Last verified: ${lastVerifiedAt}` : 'Active session'}
+            </div>
+          )}
         </div>
       </div>
 
@@ -132,7 +159,7 @@ export const BackupDestinationCard: React.FC<BackupDestinationCardProps> = ({
                 className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-700 cursor-pointer"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
-                Open Folder in File Explorer
+                Open Backup Folder
               </button>
             )}
 

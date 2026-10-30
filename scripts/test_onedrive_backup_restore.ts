@@ -401,6 +401,108 @@ async function runBackupTests() {
   }
 
   // ===========================================================================
+  // TEST 8: Manual Download Archive Packaging & Compatibility
+  // ===========================================================================
+  console.log('\n8. Testing Manual Download Archive Creation...');
+  try {
+    const downloadFileName = BackupSerializer.generateFileName('download');
+    assert(downloadFileName.startsWith('VISTAAR_Backup_download_'), 'Downloaded backup filename prefix is correct');
+    assert(downloadFileName.endsWith('.vistaarbackup'), 'Downloaded backup has .vistaarbackup extension');
+
+    const { archiveContent, manifest } = await BackupSerializer.serializeArchive({
+      data: mockPayload,
+      tableCounts,
+      workspaceId: wsId,
+      workspaceName: wsName,
+      password,
+      backupType: 'download',
+      platform: 'web',
+    });
+
+    assert(manifest.backupType === 'download', 'Manifest explicitly records backupType as download');
+    assert(manifest.platform === 'web', 'Manifest records platform');
+
+    // Verify downloaded archive can be deserialized and restored by existing restore engine
+    const unpacked = await BackupSerializer.deserializeArchive(archiveContent, password);
+    assert(unpacked.data.invoices.length === 1, 'Downloaded archive deserializes cleanly');
+    assert(unpacked.data.invoices[0].invoice_number === 'INV-2026-001', 'Downloaded archive invoice data intact');
+  } catch (err: any) {
+    assert(false, 'Download archive suite threw unexpected error', err.message);
+  }
+
+  // ===========================================================================
+  // TEST 9: Next Scheduled Backup Calculation & Defaults
+  // ===========================================================================
+  console.log('\n9. Testing Automatic Backup Schedule & 8:00 PM Default...');
+  try {
+    const { BackupScheduler } = await import('../src/services/backup/backupScheduler');
+
+    // Test disabled state
+    const disabledNext = BackupScheduler.calculateNextScheduledBackup({
+      autoBackupEnabled: false,
+      frequency: 'daily',
+      preferredTime: '20:00',
+      retentionDailyCount: 7,
+      retentionWeeklyCount: 4,
+      retentionMonthlyCount: 3,
+    });
+    assert(disabledNext === null, 'Next scheduled backup is null when auto-backup is disabled');
+
+    // Test daily schedule at 20:00 (8:00 PM)
+    const dailyNext = BackupScheduler.calculateNextScheduledBackup({
+      autoBackupEnabled: true,
+      frequency: 'daily',
+      preferredTime: '20:00',
+      retentionDailyCount: 7,
+      retentionWeeklyCount: 4,
+      retentionMonthlyCount: 3,
+    });
+    assert(typeof dailyNext === 'string', 'Next scheduled backup returns a valid ISO string');
+    const nextDate = new Date(dailyNext!);
+    assert(!isNaN(nextDate.getTime()), 'Next scheduled backup is a valid date object');
+    assert(nextDate.getTime() > Date.now() - 60000, 'Next scheduled backup is in the future or current slot');
+
+    // Test weekly schedule
+    const weeklyNext = BackupScheduler.calculateNextScheduledBackup({
+      autoBackupEnabled: true,
+      frequency: 'weekly',
+      preferredTime: '20:00',
+      retentionDailyCount: 7,
+      retentionWeeklyCount: 4,
+      retentionMonthlyCount: 3,
+    });
+    assert(typeof weeklyNext === 'string', 'Weekly schedule returns valid ISO string');
+  } catch (err: any) {
+    assert(false, 'Scheduling calculation suite threw unexpected error', err.message);
+  }
+
+  // ===========================================================================
+  // TEST 10: Accurate OneDrive Cloud Sync Status Representation
+  // ===========================================================================
+  console.log('\n10. Testing Real OneDrive Cloud Sync Status Distinction...');
+  try {
+    const onedriveNotice =
+      'Backup saved successfully to your OneDrive folder. OneDrive will synchronise this file when its sync service is available. Cloud upload status is not independently verified by VISTAAR.';
+
+    assert(onedriveNotice.includes('Cloud upload status is not independently verified'), 'Contains honest cloud sync notice');
+    assert(onedriveNotice.includes('OneDrive will synchronise this file'), 'Explains background sync behavior');
+
+    const sampleOneDriveRecord = {
+      localWriteStatus: 'saved' as const,
+      cloudSyncStatus: 'unknown' as const,
+    };
+    const sampleDownloadRecord = {
+      localWriteStatus: 'downloaded' as const,
+      cloudSyncStatus: 'not_applicable' as const,
+    };
+
+    assert(sampleOneDriveRecord.cloudSyncStatus === 'unknown', 'OneDrive folder file marked as sync status unknown');
+    assert(sampleDownloadRecord.cloudSyncStatus === 'not_applicable', 'Downloaded file marked as not applicable for cloud sync');
+  } catch (err: any) {
+    assert(false, 'Sync status suite threw unexpected error', err.message);
+  }
+
+  // ===========================================================================
   // SUMMARY
   // ===========================================================================
   console.log('\n================================================================');

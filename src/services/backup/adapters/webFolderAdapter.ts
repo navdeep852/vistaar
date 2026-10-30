@@ -238,13 +238,23 @@ export class WebFolderAdapter implements BackupDestinationAdapter {
       await writable.close();
 
       const file = await fileHandle.getFile();
-      const checksum = await BackupIntegrityService.calculateSha256(data);
+      if (file.size === 0) {
+        throw new BackupError('Saved backup file is empty (0 bytes).');
+      }
+
+      // Read back file to verify readability and integrity
+      const readBackText = await file.text();
+      const readChecksum = await BackupIntegrityService.calculateSha256(readBackText);
+      const computedChecksum = await BackupIntegrityService.calculateSha256(data);
+      if (!BackupIntegrityService.verifyChecksum(computedChecksum, readChecksum)) {
+        throw new BackupError('Read-back verification checksum mismatch on written backup file.');
+      }
 
       return {
         success: true,
         fileName,
         fileSizeBytes: file.size,
-        checksum,
+        checksum: computedChecksum,
       };
     } catch (err: any) {
       return {

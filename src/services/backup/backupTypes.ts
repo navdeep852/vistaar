@@ -3,7 +3,13 @@
  * Complete, versioned, portable schema for VISTAAR Desktop and Web
  */
 
-export type BackupType = 'manual' | 'daily' | 'weekly' | 'safety_pre_restore';
+export type BackupType =
+  | 'manual'
+  | 'daily'
+  | 'weekly'
+  | 'safety_pre_restore'
+  | 'download'
+  | 'automatic';
 export type BackupStatus = 'pending' | 'running' | 'encrypting' | 'writing' | 'completed' | 'verified' | 'failed';
 export type BackupPlatform = 'desktop' | 'web';
 
@@ -106,12 +112,39 @@ export interface StoredBackupFile {
   payload: string; // Base64 encoded encrypted payload (AES-256-GCM)
 }
 
+export type LocalWriteStatus = 'saved' | 'failed' | 'downloaded';
+export type CloudSyncStatus = 'unknown' | 'synced' | 'syncing' | 'not_applicable';
+
+export interface BackupHistoryRecord {
+  backupId: string;
+  workspaceId: string;
+  workspaceName?: string;
+  createdAt: string;
+  completedAt?: string;
+  backupType: 'manual' | 'automatic' | 'download';
+  destinationType: 'onedrive_folder' | 'browser_download' | 'local_folder';
+  destinationName: string;
+  fileName: string;
+  filePath?: string;
+  fileSizeBytes: number;
+  recordCounts: Record<string, number>;
+  totalRecords: number;
+  integrityStatus: 'verified' | 'corrupted' | 'unverified';
+  localWriteStatus: LocalWriteStatus;
+  cloudSyncStatus: CloudSyncStatus;
+  errorMessage?: string;
+}
+
 export interface BackupFileInfo {
   fileName: string;
   filePath?: string;
   fileSizeBytes: number;
   createdAt: string;
   status: 'valid' | 'corrupted' | 'unverified';
+  backupType?: 'manual' | 'automatic' | 'download';
+  destinationName?: string;
+  localWriteStatus?: LocalWriteStatus;
+  cloudSyncStatus?: CloudSyncStatus;
   manifest?: BackupManifest;
   error?: string;
 }
@@ -205,6 +238,7 @@ export interface BackupSettings {
   lastAttemptedBackup?: string;
   lastStatus?: 'completed' | 'failed';
   lastError?: string;
+  nextScheduledBackup?: string;
 }
 
 export type BackupStage =

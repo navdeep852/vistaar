@@ -35,6 +35,37 @@ export class BackupScheduler {
   }
 
   /**
+   * Computes the next scheduled backup timestamp based on frequency and preferred time.
+   */
+  public static calculateNextScheduledBackup(settings: BackupSettings): string | null {
+    if (!settings.autoBackupEnabled || settings.frequency === 'manual') {
+      return null;
+    }
+
+    const now = new Date();
+    const [hours, minutes] = (settings.preferredTime || '20:00')
+      .split(':')
+      .map((v) => parseInt(v, 10) || 0);
+
+    const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0, 0);
+
+    if (settings.frequency === 'daily') {
+      if (target.getTime() <= now.getTime()) {
+        // Today's slot has passed; scheduled for tomorrow at preferredTime
+        target.setDate(target.getDate() + 1);
+      }
+      return target.toISOString();
+    } else if (settings.frequency === 'weekly') {
+      if (target.getTime() <= now.getTime()) {
+        target.setDate(target.getDate() + 7);
+      }
+      return target.toISOString();
+    }
+
+    return null;
+  }
+
+  /**
    * Checks whether a scheduled backup is due and executes it
    */
   public async checkAndTrigger(settings: BackupSettings): Promise<boolean> {
@@ -46,23 +77,31 @@ export class BackupScheduler {
     }
 
     const now = new Date();
+    const [hours, minutes] = (settings.preferredTime || '20:00')
+      .split(':')
+      .map((v) => parseInt(v, 10) || 0);
+
+    const targetToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0, 0);
     const lastRun = settings.lastSuccessfulBackup ? new Date(settings.lastSuccessfulBackup) : null;
 
     let isDue = false;
 
     if (!lastRun) {
+      // First time automatic backup is enabled: trigger if current time >= preferredTime or catch-up
       isDue = true;
     } else {
       const diffMs = now.getTime() - lastRun.getTime();
       const diffHours = diffMs / (1000 * 60 * 60);
 
       if (settings.frequency === 'daily') {
-        // Daily: trigger if >= 24 hours have elapsed
-        if (diffHours >= 23.5) {
+        // Due if current time is past today's target AND last backup ran before today's target
+        if (now.getTime() >= targetToday.getTime() && lastRun.getTime() < targetToday.getTime()) {
+          isDue = true;
+        } else if (diffHours >= 24) {
+          // Missed daily catch-up
           isDue = true;
         }
       } else if (settings.frequency === 'weekly') {
-        // Weekly: trigger if >= 7 days have elapsed
         if (diffHours >= 24 * 7 - 0.5) {
           isDue = true;
         }
@@ -86,4 +125,5 @@ export class BackupScheduler {
     return false;
   }
 }
+
 

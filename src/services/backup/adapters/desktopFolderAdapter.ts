@@ -182,14 +182,31 @@ export class DesktopFolderAdapter implements BackupDestinationAdapter {
       // Rename temp file to final destination
       await fs.rename(tempPath, finalPath);
 
-      const checksum = await BackupIntegrityService.calculateSha256(data);
+      // Verify final file existence, non-zero size, and readability
+      const finalExists = await fs.exists(finalPath);
+      if (!finalExists) {
+        throw new BackupError(`Saved backup file does not exist at '${finalPath}'.`);
+      }
+
+      const finalStat = await fs.stat(finalPath);
+      if (finalStat.size === 0) {
+        throw new BackupError('Saved backup file is empty (0 bytes).');
+      }
+
+      // Read back file to verify readability and integrity
+      const readBack = await fs.readTextFile(finalPath);
+      const readChecksum = await BackupIntegrityService.calculateSha256(readBack);
+      const computedChecksum = await BackupIntegrityService.calculateSha256(data);
+      if (!BackupIntegrityService.verifyChecksum(computedChecksum, readChecksum)) {
+        throw new BackupError('Read-back verification checksum mismatch on written backup file.');
+      }
 
       return {
         success: true,
         fileName,
         filePath: finalPath,
-        fileSizeBytes: fileStat.size,
-        checksum,
+        fileSizeBytes: finalStat.size,
+        checksum: computedChecksum,
       };
     } catch (err: any) {
       // Clean up incomplete temp file
