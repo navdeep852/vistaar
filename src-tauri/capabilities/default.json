@@ -13,6 +13,9 @@
     "fs:allow-appdata-write-recursive",
     "fs:allow-appconfig-read-recursive",
     "fs:allow-appconfig-write-recursive",
+    "fs:allow-home-read-recursive",
+    "fs:allow-home-write-recursive",
+    "fs:allow-home-meta-recursive",
     "opener:default",
     "clipboard-manager:default",
     "notification:default"
