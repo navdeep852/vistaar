@@ -48,6 +48,7 @@ import { GstRateInput, GST_RATE_SLABS } from '../components/GstRateInput';
 import { ScrollableTable } from '../components/ScrollableTable';
 import { useBranch } from '../context/BranchContext';
 import { ProductStockReceiptModal } from '../components/ProductStockReceiptModal';
+import { SearchableProductSelect } from '../components/SearchableProductSelect';
 
 interface ProductsViewProps {
   initialOpenCreate?: boolean;
@@ -2039,22 +2040,22 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
               Select Product *
             </label>
-            <select
+            <SearchableProductSelect
               required
-              value={recProductId}
-              onChange={(e) => {
-                setRecProductId(e.target.value);
-                const p = products.find((prod: Product) => prod.id === e.target.value);
-                if (p) setRecBuyPrice(String(p.currentBuyPrice || p.buyPrice));
+              products={products}
+              selectedProductId={recProductId}
+              onSelectProduct={(p) => {
+                if (p) {
+                  setRecProductId(p.id);
+                  setRecBuyPrice(String(p.currentBuyPrice || p.buyPrice));
+                } else {
+                  setRecProductId('');
+                  setRecBuyPrice('');
+                }
               }}
-              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100"
-            >
-              {products.map((p: Product) => (
-                <option key={p.id} value={p.id} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
-                  {p.name} (Part #: {p.partNumber || p.sku}) — Avail: {p.currentStock} {p.unit}
-                </option>
-              ))}
-            </select>
+              placeholder="Select a product..."
+              searchPlaceholder="Search by product name, part number or code..."
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
