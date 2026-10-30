@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Plus,
   Search,
@@ -18,11 +18,20 @@ import {
   Download,
   Trash2,
   RefreshCw,
+  X,
+  RotateCcw,
+  ChevronDown,
 } from 'lucide-react';
 import { store } from '../services/store';
 import { quotationService } from '../services/supabase/quotationService';
 import { safeGetTenantItem } from '../services/supabase/safeStorage';
 import { Quotation, QuotationStatus } from '../types';
+import {
+  QuotationDatePreset,
+  getLocalTodayDateString,
+  resolveQuotationDateFilter,
+  matchesQuotationDateFilter,
+} from '../lib/quotationDateFilter';
 import { Modal } from '../components/Modal';
 import { TemplateGalleryModal } from '../components/TemplateGalleryModal';
 import { DocumentEditorView } from './DocumentEditorView';
@@ -54,6 +63,8 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [datePreset, setDatePreset] = useState<QuotationDatePreset>('ALL');
+  const [selectedDate, setSelectedDate] = useState<string>(() => getLocalTodayDateString());
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -336,13 +347,27 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
     }
   };
 
-  const filteredQuotations = quotations.filter((q) => {
-    const matchesSearch =
-      q.quotationNumber.toLowerCase().includes(search.toLowerCase()) ||
-      q.customerName.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === 'ALL' || q.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const resolvedDateFilter = useMemo(() => {
+    return resolveQuotationDateFilter(datePreset, selectedDate);
+  }, [datePreset, selectedDate]);
+
+  const handleClearAllFilters = () => {
+    setSearch('');
+    setStatusFilter('ALL');
+    setDatePreset('ALL');
+  };
+
+  const filteredQuotations = useMemo(() => {
+    return quotations.filter((q) => {
+      const qNum = (q.quotationNumber || '').toLowerCase();
+      const cName = (q.customerName || '').toLowerCase();
+      const s = search.toLowerCase().trim();
+      const matchesSearch = !s || qNum.includes(s) || cName.includes(s);
+      const matchesStatus = statusFilter === 'ALL' || q.status === statusFilter;
+      const matchesDate = matchesQuotationDateFilter(q, datePreset, selectedDate);
+      return matchesSearch && matchesStatus && matchesDate;
+    });
+  }, [quotations, search, statusFilter, datePreset, selectedDate]);
 
   if (mode === 'editor') {
     return (
@@ -388,43 +413,141 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
       )}
 
       {/* Action Header & Search */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card transition-colors">
-        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-          <div className="relative flex-1 sm:w-64">
-            <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400 dark:text-slate-500" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search quotation # or customer..."
-              className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+      <div className="flex flex-col gap-3 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-card transition-colors">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2.5 flex-1">
+            <div className="relative flex-1 min-w-[180px] sm:max-w-xs">
+              <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400 dark:text-slate-500" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search quotation # or customer..."
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value="ALL">All Statuses</option>
+              <option value="Draft">Draft</option>
+              <option value="Sent">Sent</option>
+              <option value="Accepted">Accepted</option>
+              <option value="Converted">Converted</option>
+              <option value="Expired">Expired</option>
+            </select>
+
+            {/* Date Filter Dropdown */}
+            <div className="relative flex items-center">
+              <Calendar className="w-3.5 h-3.5 absolute left-3 text-slate-400 dark:text-slate-500 pointer-events-none" />
+              <select
+                value={datePreset}
+                onChange={(e) => {
+                  const val = e.target.value as QuotationDatePreset;
+                  setDatePreset(val);
+                  if (val === 'custom' && !selectedDate) {
+                    setSelectedDate(getLocalTodayDateString());
+                  }
+                }}
+                className="pl-8.5 pr-8 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer appearance-none"
+              >
+                <option value="ALL">All Dates</option>
+                <option value="today">Today</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="custom">Select Date...</option>
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
+            </div>
+
+            {/* Custom Date Picker (when 'Select Date' is chosen) */}
+            {datePreset === 'custom' && (
+              <div className="relative flex items-center animate-fade-in">
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className="px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-blue-500 dark:border-blue-500 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                  title="Filter by specific date"
+                />
+              </div>
+            )}
           </div>
 
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 focus:outline-none"
+          <button
+            onClick={() => {
+              setEditingDraftQuotation(null);
+              setMode('gallery');
+            }}
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-600/20 transition-colors shrink-0 cursor-pointer"
           >
-            <option value="ALL">All Statuses</option>
-            <option value="Draft">Draft</option>
-            <option value="Sent">Sent</option>
-            <option value="Accepted">Accepted</option>
-            <option value="Converted">Converted</option>
-            <option value="Expired">Expired</option>
-          </select>
+            <Sparkles className="w-4 h-4 text-amber-300" />
+            <span>+ Add New Quotation</span>
+          </button>
         </div>
 
-        <button
-          onClick={() => {
-            setEditingDraftQuotation(null);
-            setMode('gallery');
-          }}
-          className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-600/20 transition-colors"
-        >
-          <Sparkles className="w-4 h-4 text-amber-300" />
-          <span>+ Add New Quotation</span>
-        </button>
+        {/* Active Filters Summary & Reset */}
+        {(search.trim() !== '' || statusFilter !== 'ALL' || datePreset !== 'ALL') && (
+          <div className="flex flex-wrap items-center gap-2 pt-2.5 border-t border-slate-100 dark:border-slate-800 text-xs animate-fade-in">
+            <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+              Active Filters:
+            </span>
+
+            {datePreset !== 'ALL' && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900/50 font-medium">
+                <Calendar className="w-3 h-3 text-blue-500" />
+                <span>{resolvedDateFilter.badgeText}</span>
+                <button
+                  type="button"
+                  onClick={() => setDatePreset('ALL')}
+                  className="hover:text-blue-900 dark:hover:text-blue-100 cursor-pointer ml-0.5"
+                  title="Remove date filter"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+
+            {statusFilter !== 'ALL' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
+                <span>Status: <strong>{statusFilter}</strong></span>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('ALL')}
+                  className="hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer ml-1"
+                  title="Remove status filter"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+
+            {search.trim() !== '' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
+                <span>Search: "<strong>{search.trim()}</strong>"</span>
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  className="hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer ml-1"
+                  title="Clear search text"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={handleClearAllFilters}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 font-semibold hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg transition-colors cursor-pointer ml-auto"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Clear All Filters</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Quotations List / Table Container */}
@@ -456,7 +579,21 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
               ) : filteredQuotations.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500">
-                    No quotations found. Click <strong>+ Add New Quotation</strong> to choose a template!
+                    {search.trim() !== '' || statusFilter !== 'ALL' || datePreset !== 'ALL' ? (
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <p>No quotations match the selected filters.</p>
+                        <button
+                          type="button"
+                          onClick={handleClearAllFilters}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 font-semibold text-xs cursor-pointer transition-colors"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>Clear Filters</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <span>No quotations found. Click <strong>+ Add New Quotation</strong> to choose a template!</span>
+                    )}
                   </td>
                 </tr>
               ) : (
@@ -575,7 +712,21 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
             </div>
           ) : filteredQuotations.length === 0 ? (
             <div className="p-8 text-center text-slate-400 dark:text-slate-500 text-xs">
-              No quotations found. Tap <strong>+ Add New Quotation</strong> to get started!
+              {search.trim() !== '' || statusFilter !== 'ALL' || datePreset !== 'ALL' ? (
+                <div className="flex flex-col items-center justify-center gap-2">
+                  <p>No quotations match the selected filters.</p>
+                  <button
+                    type="button"
+                    onClick={handleClearAllFilters}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 font-semibold text-xs cursor-pointer transition-colors"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Clear Filters</span>
+                  </button>
+                </div>
+              ) : (
+                <span>No quotations found. Tap <strong>+ Add New Quotation</strong> to get started!</span>
+              )}
             </div>
           ) : (
             filteredQuotations.map((qt) => {
