@@ -12,3 +12,4 @@ Write-Host "Executing: gradlew.bat assembleDebug bundleRelease assembleRelease"
 
 Write-Host "`nVerifying built artifacts..."
 Get-ChildItem -Path "app\build\outputs" -Recurse -File -Include *.apk, *.aab | Select-Object Name, Length, LastWriteTime, FullName | Format-Table -AutoSize
+

@@ -21,3 +21,4 @@ Set-Content -Path "$releaseDir\checksums.txt" -Value $checksumContent -Encoding 
 Write-Host "Updated release installers and checksums.txt"
 Write-Host "SHA256: $hash1"
 Get-ChildItem -Path $releaseDir | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize
+
