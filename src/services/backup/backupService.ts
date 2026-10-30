@@ -175,6 +175,9 @@ export class BackupService {
   /**
    * Generates and writes an authoritative backup archive into the local destination folder.
    */
+  /**
+   * Generates and writes an authoritative backup archive into the local destination folder.
+   */
   public async createBackup(options: {
     password?: string;
     type?: BackupType;
@@ -191,9 +194,31 @@ export class BackupService {
 
     const userProfile = supabaseAuthService.getUser();
     const workspaceName = userProfile?.businessName || 'VISTAAR Business';
-    const backupType = options.type || 'manual';
 
     this.isLocked = true;
+    try {
+      return await this.executeBackupPipeline(options, wsId, workspaceName, userProfile);
+    } finally {
+      this.isLocked = false;
+    }
+  }
+
+  /**
+   * Core backup execution pipeline. Can be invoked directly by createBackup or as a
+   * pre-restore safety snapshot within an already-locked transaction.
+   */
+  private async executeBackupPipeline(
+    options: {
+      password?: string;
+      type?: BackupType;
+      onProgress?: BackupProgressCallback;
+    },
+    wsId: string,
+    workspaceName: string,
+    userProfile: any
+  ): Promise<BackupWriteResult> {
+    const backupType = options.type || 'manual';
+
     try {
       // 1. Verify Destination Access
       if (options.onProgress) {
@@ -358,8 +383,6 @@ export class BackupService {
         });
       }
       throw err;
-    } finally {
-      this.isLocked = false;
     }
   }
 
@@ -544,12 +567,19 @@ export class BackupService {
       // 2. Generate Automatic Pre-Restore Safety Backup
       let safetyFileName: string | undefined;
       try {
-        const safetyResult = await this.createBackup({
-          type: 'safety_pre_restore',
-          password,
-        });
+        const userProfile = supabaseAuthService.getUser();
+        const workspaceName = userProfile?.businessName || 'VISTAAR Business';
+        const safetyResult = await this.executeBackupPipeline(
+          {
+            type: 'safety_pre_restore',
+            password,
+          },
+          wsId,
+          workspaceName,
+          userProfile
+        );
         safetyFileName = safetyResult.fileName;
-      } catch (safetyErr) {
+      } catch (safetyErr: any) {
         console.warn('[BackupService] Safety pre-restore snapshot warning:', safetyErr);
       }
 

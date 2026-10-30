@@ -5,16 +5,10 @@ import {
   Download,
   Upload,
   Clock,
-  ShieldCheck,
-  CheckCircle2,
-  HardDrive,
   Lock,
-  Calendar,
-  AlertTriangle,
   RefreshCw,
-  FolderCheck,
-  FolderX,
-  Info,
+  AlertTriangle,
+  CheckCircle2,
 } from 'lucide-react';
 import { backupService } from '../../services/backup/backupService';
 import {
@@ -183,10 +177,15 @@ export const BackupDashboard: React.FC = () => {
       setConfirmPassword('');
       await refreshBackups();
     } catch (err: any) {
+      setActiveProgress({
+        stage: 'failed',
+        message: err.message || 'Backup failed.',
+        percentage: 100,
+      });
       showToast(err.message || 'Backup failed.', 'error');
     } finally {
       setIsCreatingBackup(false);
-      setTimeout(() => setActiveProgress(null), 4000);
+      setTimeout(() => setActiveProgress(null), 5000);
     }
   };
 
@@ -235,6 +234,7 @@ export const BackupDashboard: React.FC = () => {
           createdAt: manifest.createdAt,
           status: 'valid',
           manifest,
+          rawContent: text,
         };
         setSelectedBackupForRestore(tempInfo);
         setRestoreModalOpen(true);

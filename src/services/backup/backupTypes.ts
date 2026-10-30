@@ -146,6 +146,7 @@ export interface BackupFileInfo {
   localWriteStatus?: LocalWriteStatus;
   cloudSyncStatus?: CloudSyncStatus;
   manifest?: BackupManifest;
+  rawContent?: string;
   error?: string;
 }
 

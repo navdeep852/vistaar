@@ -92,7 +92,7 @@ export class DesktopFolderAdapter implements BackupDestinationAdapter {
         return {
           success: false,
           folderPath: selected,
-          folderName: selected.split(/[\/\\]/).pop() || selected,
+          folderName: selected.split(/[/\\]/).pop() || selected,
           error: verify.error,
         };
       }
@@ -100,7 +100,7 @@ export class DesktopFolderAdapter implements BackupDestinationAdapter {
       return {
         success: true,
         folderPath: selected,
-        folderName: selected.split(/[\/\\]/).pop() || selected,
+        folderName: selected.split(/[/\\]/).pop() || selected,
       };
     } catch (err: any) {
       return { success: false, error: `Folder selection failed: ${err.message || String(err)}` };
@@ -133,7 +133,7 @@ export class DesktopFolderAdapter implements BackupDestinationAdapter {
       return {
         success: true,
         folderPath: this.configuredPath,
-        folderName: this.configuredPath.split(/[\/\\]/).pop() || this.configuredPath,
+        folderName: this.configuredPath.split(/[/\\]/).pop() || this.configuredPath,
       };
     } catch (err: any) {
       return {

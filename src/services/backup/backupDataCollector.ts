@@ -1,84 +1,172 @@
 /**
  * VISTAAR Business OS — Authoritative Data Collector
  * Queries live Supabase PostgreSQL tables using paged batching with full workspace isolation.
+ * Strictly adheres to verified production database schemas (no assumptions of 'id' on singleton tables).
  */
 
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { isValidUuid } from '../../lib/supabaseError';
-import { BackupCollectionError } from './backupErrors';
+import { BackupCollectionError, formatBackupDbError } from './backupErrors';
 import { BackupDataPayload, BackupProgressCallback } from './backupTypes';
 
 const PAGE_SIZE = 1000;
 
-interface TableConfig {
+export interface TableSchemaConfig {
   name: string;
-  isWorkspaceRecord?: boolean;
-  isRequired?: boolean;
-  columnFilter?: string; // default 'workspace_id'
+  primaryKey: 'workspace_id' | 'id';
+  isWorkspaceRecord?: boolean; // workspaces table: queried by id = workspaceId
+  isSingletonRecord?: boolean; // business_settings, inventory_settings: at most 1 row per workspace!
+  isRequired: boolean;
+  columnFilter?: string; // default: 'workspace_id'
+  sortColumn?: string | null; // column for deterministic pagination (null if singleton)
 }
 
 /**
  * Ordered list of all workspace-scoped business tables to collect.
+ * Primary keys, singletons, and requirements are validated against live production schema.
  */
-const TABLES_TO_COLLECT: TableConfig[] = [
-  { name: 'workspaces', isWorkspaceRecord: true, isRequired: true },
-  { name: 'business_settings', isRequired: true },
-  { name: 'inventory_settings', isRequired: false },
-  { name: 'branches', isRequired: true },
-  { name: 'user_branch_access', isRequired: false },
-  { name: 'profiles', isRequired: true },
-  { name: 'categories', isRequired: true },
-  { name: 'suppliers', isRequired: true },
-  { name: 'customers', isRequired: true },
-  { name: 'products', isRequired: true },
-  { name: 'branch_inventory', isRequired: false },
-  { name: 'stock_receipts', isRequired: false },
-  { name: 'stock_movements', isRequired: false },
-  { name: 'stock_transfers', isRequired: false },
-  { name: 'stock_transfer_items', isRequired: false },
-  { name: 'quotations', isRequired: false },
-  { name: 'quotation_items', isRequired: false },
-  { name: 'invoices', isRequired: true },
-  { name: 'invoice_items', isRequired: true },
-  { name: 'payments', isRequired: true },
-  { name: 'payment_transactions', isRequired: false },
-  { name: 'counter_sales', isRequired: false },
-  { name: 'counter_sale_items', isRequired: false },
-  { name: 'udhari_records', isRequired: false },
-  { name: 'udhari_payments', isRequired: false },
-  { name: 'expenses', isRequired: false },
-  { name: 'daybook_transactions', isRequired: false },
-  { name: 'cashbook_entries', isRequired: false },
-  { name: 'financial_accounts', isRequired: false },
-  { name: 'purchase_orders', isRequired: false },
-  { name: 'purchase_order_items', isRequired: false },
-  { name: 'purchase_order_receipts', isRequired: false },
-  { name: 'purchase_order_receipt_items', isRequired: false },
-  { name: 'supplier_catalogue_files', isRequired: false },
-  { name: 'supplier_catalogue_items', isRequired: false },
-  { name: 'supplier_catalogue_mappings', isRequired: false },
-  { name: 'eway_bills', isRequired: false },
-  { name: 'eway_bill_items', isRequired: false },
-  { name: 'vehicles', isRequired: false },
-  { name: 'transporters', isRequired: false },
-  { name: 'salary_structures', isRequired: false },
-  { name: 'salary_payments', isRequired: false },
-  { name: 'salary_payment_items', isRequired: false },
-  { name: 'follow_ups', isRequired: false },
-  { name: 'notifications', isRequired: false },
-  { name: 'feedbacks', isRequired: false },
-  { name: 'offers', isRequired: false },
+export const TABLES_TO_COLLECT: TableSchemaConfig[] = [
+  // 1. Core workspace & settings
+  { name: 'workspaces', primaryKey: 'id', isWorkspaceRecord: true, isRequired: true, columnFilter: 'id', sortColumn: 'id' },
+  { name: 'business_settings', primaryKey: 'workspace_id', isSingletonRecord: true, isRequired: true, columnFilter: 'workspace_id', sortColumn: null },
+  { name: 'inventory_settings', primaryKey: 'workspace_id', isSingletonRecord: true, isRequired: false, columnFilter: 'workspace_id', sortColumn: null },
+
+  // 2. Multi-branch & User Access (Optional if multi-branch migrations not yet deployed)
+  { name: 'branches', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'user_branch_access', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'branch_inventory', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'stock_transfers', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'stock_transfer_items', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+
+  // 3. User & Organization Data
+  { name: 'profiles', primaryKey: 'id', isRequired: true, columnFilter: 'workspace_id', sortColumn: 'id' },
+
+  // 4. Master Data
+  { name: 'categories', primaryKey: 'id', isRequired: true, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'suppliers', primaryKey: 'id', isRequired: true, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'customers', primaryKey: 'id', isRequired: true, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'products', primaryKey: 'id', isRequired: true, columnFilter: 'workspace_id', sortColumn: 'id' },
+
+  // 5. Stock & Receipts
+  { name: 'stock_receipts', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'stock_movements', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+
+  // 6. Quotations
+  { name: 'quotations', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'quotation_items', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+
+  // 7. Invoices & Billing (Core)
+  { name: 'invoices', primaryKey: 'id', isRequired: true, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'invoice_items', primaryKey: 'id', isRequired: true, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'payments', primaryKey: 'id', isRequired: true, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'payment_transactions', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+
+  // 8. POS & Counter Sales
+  { name: 'counter_sales', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'counter_sale_items', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+
+  // 9. Udhari Ledger
+  { name: 'udhari_records', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'udhari_payments', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+
+  // 10. Financials & Journals
+  { name: 'expenses', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'financial_accounts', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'daybook_transactions', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'cashbook_entries', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+
+  // 11. Purchase Orders & Supplier Catalogues
+  { name: 'purchase_orders', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'purchase_order_items', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'purchase_order_receipts', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'purchase_order_receipt_items', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'supplier_catalogue_files', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'supplier_catalogue_items', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'supplier_catalogue_mappings', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+
+  // 12. Logistics & E-Way Bills
+  { name: 'eway_bills', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'eway_bill_items', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'vehicles', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'transporters', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+
+  // 13. Payroll & Staff
+  { name: 'salary_structures', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'salary_payments', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'salary_payment_items', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+
+  // 14. CRM & Operations
+  { name: 'follow_ups', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'notifications', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'feedbacks', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'offers', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
+  { name: 'id_mappings', primaryKey: 'id', isRequired: false, columnFilter: 'workspace_id', sortColumn: 'id' },
 ];
 
 export class BackupDataCollector {
   /**
-   * Fetches an entire table from Supabase using deterministic pagination.
+   * Pre-flight Schema Validation: Verifies core table accessibility, primary key columns,
+   * and workspace ownership before initiating data collection.
+   */
+  public static async validateSchema(workspaceId: string): Promise<{ valid: boolean; errors: string[] }> {
+    if (!isSupabaseConfigured()) {
+      return { valid: false, errors: ['Supabase client is not configured or missing environment credentials.'] };
+    }
+    if (!isValidUuid(workspaceId)) {
+      return { valid: false, errors: [`Invalid workspace ID format: '${workspaceId}' (must be a valid UUID).`] };
+    }
+
+    const errors: string[] = [];
+
+    // 1. Verify business_settings: Must be queryable by workspace_id without assuming id column
+    try {
+      const { error: bsErr } = await supabase
+        .from('business_settings')
+        .select('workspace_id, legal_name, email, phone')
+        .eq('workspace_id', workspaceId)
+        .limit(1);
+
+      if (bsErr) {
+        errors.push(formatBackupDbError('business_settings', 'schema_validation', bsErr));
+      }
+    } catch (err: any) {
+      errors.push(`Failed pre-flight validation on 'business_settings': ${err?.message || err}`);
+    }
+
+    // 2. Verify core transactional tables exist and support workspace filtering
+    const coreTables = ['customers', 'products', 'invoices', 'invoice_items', 'payments'];
+    for (const table of coreTables) {
+      try {
+        const { error } = await supabase
+          .from(table)
+          .select('id, workspace_id')
+          .eq('workspace_id', workspaceId)
+          .limit(0);
+
+        if (error) {
+          errors.push(formatBackupDbError(table, 'schema_validation', error));
+        }
+      } catch (err: any) {
+        errors.push(`Failed pre-flight validation on '${table}': ${err?.message || err}`);
+      }
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors,
+    };
+  }
+
+  /**
+   * Fetches an entire table from Supabase using schema-aware paged batching.
+   * Eliminates erroneous ORDER BY 'id' queries on tables without an 'id' column.
    */
   private static async fetchTablePaged(
     tableName: string,
     workspaceId: string,
-    config: TableConfig
+    config: TableSchemaConfig
   ): Promise<any[]> {
+    // Case 1: Workspace root record (queried by workspaces.id = workspaceId)
     if (config.isWorkspaceRecord) {
       const { data, error } = await supabase
         .from('workspaces')
@@ -87,42 +175,78 @@ export class BackupDataCollector {
         .maybeSingle();
 
       if (error) {
-        throw new BackupCollectionError(`Failed to fetch workspace metadata: ${error.message}`);
+        throw new BackupCollectionError(
+          formatBackupDbError('workspaces', 'select', error)
+        );
       }
       return data ? [data] : [];
     }
 
+    // Case 2: Singleton records where workspace_id is primary key (business_settings, inventory_settings)
+    // There is at most 1 row per workspace; DO NOT sort by 'id' (id column does not exist!).
+    if (config.isSingletonRecord || config.primaryKey === 'workspace_id') {
+      const { data, error } = await supabase
+        .from(tableName)
+        .select('*')
+        .eq('workspace_id', workspaceId)
+        .maybeSingle();
+
+      if (error) {
+        // Handle optional table missing from schema cache
+        if (error.code === 'PGRST205' || error.code === '42P01') {
+          if (!config.isRequired) {
+            console.warn(`[BackupDataCollector] Optional singleton table '${tableName}' not present in schema cache.`);
+            return [];
+          }
+        }
+
+        if (config.isRequired) {
+          throw new BackupCollectionError(
+            formatBackupDbError(tableName, 'select', error)
+          );
+        } else {
+          console.warn(`[BackupDataCollector] Optional singleton table '${tableName}' query notice:`, error.message);
+          return [];
+        }
+      }
+
+      return data ? [data] : [];
+    }
+
+    // Case 3: Paged collection for multi-row workspace-scoped tables
     const allRows: any[] = [];
     let offset = 0;
     let hasMore = true;
+    const filterCol = config.columnFilter || 'workspace_id';
 
     while (hasMore) {
-      const filterCol = config.columnFilter || 'workspace_id';
       let query = supabase
         .from(tableName)
         .select('*')
         .eq(filterCol, workspaceId)
         .range(offset, offset + PAGE_SIZE - 1);
 
-      // Stable sorting if possible
-      try {
+      // Only apply order if table explicitly has an 'id' or specified sort column
+      if (config.sortColumn) {
+        query = query.order(config.sortColumn, { ascending: true });
+      } else if (config.primaryKey === 'id') {
         query = query.order('id', { ascending: true });
-      } catch {
-        // Some tables may lack an 'id' column
       }
 
       const { data, error } = await query;
 
       if (error) {
-        // Handle missing table gracefully if table is not strictly required
+        // Handle optional table missing from schema cache
         if (error.code === 'PGRST205' || error.code === '42P01') {
-          console.warn(`[BackupDataCollector] Optional table '${tableName}' does not exist in database.`);
-          return [];
+          if (!config.isRequired) {
+            console.warn(`[BackupDataCollector] Optional table '${tableName}' not present in schema cache.`);
+            return [];
+          }
         }
 
         if (config.isRequired) {
           throw new BackupCollectionError(
-            `Failed to collect required table '${tableName}': ${error.message} (Code: ${error.code})`
+            formatBackupDbError(tableName, 'select', error)
           );
         } else {
           console.warn(`[BackupDataCollector] Optional table '${tableName}' query error:`, error.message);
@@ -174,6 +298,14 @@ export class BackupDataCollector {
       throw new BackupCollectionError(`Invalid authoritative workspace ID '${workspaceId}'.`);
     }
 
+    // Pre-flight schema validation
+    const validation = await this.validateSchema(workspaceId);
+    if (!validation.valid) {
+      throw new BackupCollectionError(
+        `Pre-flight schema validation failed:\n${validation.errors.join('\n')}`
+      );
+    }
+
     const payload: BackupDataPayload = {};
     const tableCounts: Record<string, number> = {};
     let totalRows = 0;
@@ -213,4 +345,3 @@ export class BackupDataCollector {
     return { data: payload, tableCounts, totalRows };
   }
 }
-

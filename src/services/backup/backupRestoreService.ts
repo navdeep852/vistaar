@@ -6,7 +6,7 @@
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { isValidUuid } from '../../lib/supabaseError';
 import { BackupSerializer } from './backupSerializer';
-import { BackupRestoreError, BackupValidationError } from './backupErrors';
+import { BackupRestoreError, formatBackupDbError } from './backupErrors';
 import {
   BackupDataPayload,
   BackupManifest,
@@ -90,11 +90,16 @@ export class BackupRestoreService {
     });
 
     let inserted = 0;
+    const onConflictColumn =
+      tableName === 'business_settings' || tableName === 'inventory_settings'
+        ? 'workspace_id'
+        : 'id';
+
     for (let i = 0; i < sanitizedRows.length; i += BATCH_SIZE) {
       const chunk = sanitizedRows.slice(i, i + BATCH_SIZE);
       const { error } = await supabase
         .from(tableName)
-        .upsert(chunk, { onConflict: tableName === 'business_settings' ? 'workspace_id' : 'id' });
+        .upsert(chunk, { onConflict: onConflictColumn });
 
       if (error) {
         // If optional table doesn't exist, log and continue
@@ -103,7 +108,7 @@ export class BackupRestoreService {
           return 0;
         }
         throw new BackupRestoreError(
-          `Failed to restore table '${tableName}' at rows ${i}-${i + chunk.length}: ${error.message} (Code: ${error.code})`
+          formatBackupDbError(tableName, `restore upsert (rows ${i}-${i + chunk.length})`, error)
         );
       }
       inserted += chunk.length;
@@ -164,9 +169,9 @@ export class BackupRestoreService {
       'udhari_records',
       'udhari_payments',
       'expenses',
+      'financial_accounts',
       'daybook_transactions',
       'cashbook_entries',
-      'financial_accounts',
       'eway_bills',
       'eway_bill_items',
       'vehicles',
@@ -178,6 +183,7 @@ export class BackupRestoreService {
       'notifications',
       'feedbacks',
       'offers',
+      'id_mappings',
     ];
 
     for (const tableName of RESTORE_ORDER) {

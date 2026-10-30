@@ -59,7 +59,7 @@ export const RestoreBackupModal: React.FC<RestoreBackupModalProps> = ({
     setIsVerifyingPassword(true);
     setErrorMessage(null);
     try {
-      const content = await backupService.readBackupFile(fileName);
+      const content = selectedBackup?.rawContent || (await backupService.readBackupFile(fileName));
       setRawContent(content);
 
       // Inspect without password first to populate preview
