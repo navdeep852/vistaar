@@ -385,9 +385,29 @@ function MainAppContent() {
     return null;
   };
 
-  if (authStatus === 'unauthenticated' || supabaseAuthService.isRecoverySession()) {
-    const isNativePlatform = typeof window !== 'undefined' && (window as any)?.Capacitor?.isNativePlatform();
+  const isNativePlatform = Boolean(
+    currentPlatform.isDesktop ||
+    currentPlatform.isNativeMobile ||
+    (typeof window !== 'undefined' && (window as any)?.Capacitor?.isNativePlatform())
+  );
 
+  if (authStatus === 'unauthenticated' || supabaseAuthService.isRecoverySession()) {
+    // Desktop and native mobile applications always route directly to the clean LoginView.
+    // They must never display the public marketing homepage, pricing, or download promotions.
+    if (isNativePlatform) {
+      return (
+        <React.Suspense fallback={<LoadingFallback />}>
+          <LoginView
+            onSuccess={() => {
+              supabaseAuthService.initializeAuth();
+              navigateTo('/app');
+            }}
+          />
+        </React.Suspense>
+      );
+    }
+
+    // Web browser application routing:
     // If an unauthenticated user attempts to access /app or /app/..., direct to login
     if (currentPublicPath === '/app' || currentPublicPath.startsWith('/app/')) {
       return (
@@ -411,15 +431,7 @@ function MainAppContent() {
       );
     }
 
-    // Default route: Native mobile app opens to Login; web browser opens to PublicHomeView
-    if (isNativePlatform) {
-      return (
-        <React.Suspense fallback={<LoadingFallback />}>
-          <LoginView onSuccess={() => supabaseAuthService.initializeAuth()} />
-        </React.Suspense>
-      );
-    }
-
+    // Web browser default route opens to marketing homepage
     return (
       <React.Suspense fallback={<LoadingFallback />}>
         <PublicHomeView />
@@ -451,14 +463,20 @@ function MainAppContent() {
     );
   }
 
-  // Marketing homepage passthrough for authenticated users explicitly viewing marketing home
-  const isNativePlatform = typeof window !== 'undefined' && (window as any)?.Capacitor?.isNativePlatform();
+  // Marketing homepage passthrough for authenticated web users explicitly viewing marketing home
+  // Desktop and native mobile apps never render the marketing homepage when authenticated
   if (!isNativePlatform && (currentPublicPath === '/' || currentPublicPath === '')) {
     return (
       <React.Suspense fallback={<LoadingFallback />}>
         <PublicHomeView />
       </React.Suspense>
     );
+  }
+
+  // For native desktop/mobile apps, redirect any stray marketing routes to the app workspace
+  if (isNativePlatform && (currentPublicPath === '/download' || currentPublicPath === '/pricing')) {
+    navigateTo('/app');
+    return null;
   }
 
   // Marketing view passthrough for authenticated users explicitly viewing public landing pages

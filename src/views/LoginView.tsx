@@ -18,6 +18,7 @@ import {
 import { supabaseAuthService as auth } from '../services/supabaseAuth';
 import { showToast } from '../components/Toast';
 import { navigateTo } from '../lib/publicRouter';
+import { currentPlatform } from '../platform/platformDetection';
 const logoFullNameLight = '/Vistaar_Logo_With_Name_Light.png';
 const logoFullNameDark = '/Vistaar_Logo_With_Name.png';
 import { ThemeToggle } from '../components/ThemeToggle';
@@ -418,25 +419,33 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
     setAuthMode('signin');
   };
 
+  const isNativeApp = Boolean(
+    currentPlatform.isDesktop ||
+    currentPlatform.isNativeMobile ||
+    (typeof window !== 'undefined' && (window as any)?.Capacitor?.isNativePlatform())
+  );
+
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8 text-slate-900 dark:text-white relative overflow-hidden transition-colors duration-200">
-      {/* Top navigation controls */}
-      <div className="absolute top-4 left-4 z-20">
-        <a
-          href="/"
-          onClick={(e) => {
-            e.preventDefault();
-            if (typeof window !== 'undefined') {
-              window.history.pushState({}, '', '/');
-              window.dispatchEvent(new CustomEvent('vistaar:route_change', { detail: { path: '/' } }));
-            }
-          }}
-          className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 py-1.5 px-3 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 shadow-sm backdrop-blur transition-colors cursor-pointer"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Back to Home</span>
-        </a>
-      </div>
+      {/* Top navigation controls: Hide 'Back to Home' on desktop / native applications */}
+      {!isNativeApp && (
+        <div className="absolute top-4 left-4 z-20">
+          <a
+            href="/"
+            onClick={(e) => {
+              e.preventDefault();
+              if (typeof window !== 'undefined') {
+                window.history.pushState({}, '', '/');
+                window.dispatchEvent(new CustomEvent('vistaar:route_change', { detail: { path: '/' } }));
+              }
+            }}
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 py-1.5 px-3 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 shadow-sm backdrop-blur transition-colors cursor-pointer"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Back to Home</span>
+          </a>
+        </div>
+      )}
 
       <div className="absolute top-4 right-4 z-20">
         <ThemeToggle variant="segmented" />
@@ -449,28 +458,45 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
 
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center z-10">
         <div className="mb-3">
-          <a
-            href="/"
-            onClick={(e) => {
-              e.preventDefault();
-              navigateTo('/');
-            }}
-            className="inline-block cursor-pointer focus:outline-none"
-            title="Return to VISTAAR Website"
-          >
-            {/* Light Mode Logo (Dark Text) */}
-            <img
-              src={logoFullNameDark}
-              alt="VISTAAR"
-              className="h-12 sm:h-14 mx-auto object-contain drop-shadow-md hover:scale-105 transition-transform duration-300 dark:hidden"
-            />
-            {/* Dark Mode Logo (Light Text) */}
-            <img
-              src={logoFullNameLight}
-              alt="VISTAAR"
-              className="h-12 sm:h-14 mx-auto object-contain drop-shadow-md hover:scale-105 transition-transform duration-300 hidden dark:block"
-            />
-          </a>
+          {isNativeApp ? (
+            <div className="inline-block select-none focus:outline-none">
+              {/* Light Mode Logo (Dark Text) */}
+              <img
+                src={logoFullNameDark}
+                alt="VISTAAR"
+                className="h-12 sm:h-14 mx-auto object-contain drop-shadow-md dark:hidden"
+              />
+              {/* Dark Mode Logo (Light Text) */}
+              <img
+                src={logoFullNameLight}
+                alt="VISTAAR"
+                className="h-12 sm:h-14 mx-auto object-contain drop-shadow-md hidden dark:block"
+              />
+            </div>
+          ) : (
+            <a
+              href="/"
+              onClick={(e) => {
+                e.preventDefault();
+                navigateTo('/');
+              }}
+              className="inline-block cursor-pointer focus:outline-none"
+              title="Return to VISTAAR Website"
+            >
+              {/* Light Mode Logo (Dark Text) */}
+              <img
+                src={logoFullNameDark}
+                alt="VISTAAR"
+                className="h-12 sm:h-14 mx-auto object-contain drop-shadow-md hover:scale-105 transition-transform duration-300 dark:hidden"
+              />
+              {/* Dark Mode Logo (Light Text) */}
+              <img
+                src={logoFullNameLight}
+                alt="VISTAAR"
+                className="h-12 sm:h-14 mx-auto object-contain drop-shadow-md hover:scale-105 transition-transform duration-300 hidden dark:block"
+              />
+            </a>
+          )}
         </div>
 
         <p className="mt-1.5 text-base sm:text-lg font-bold text-blue-600 dark:text-blue-400 tracking-wide">

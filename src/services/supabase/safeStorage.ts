@@ -26,7 +26,7 @@ export function getActiveCompanyId(): string {
         return activeId;
       }
     }
-  } catch (e) {
+  } catch (e: any) {
     console.warn('[safeStorage] Could not resolve active VISTAAR workspace from resolver:', e);
   }
 
@@ -45,7 +45,7 @@ export function getActiveCompanyId(): string {
       const wsDirect = localStorage.getItem('vistaar_workspace_id');
       if (wsDirect && isValidUuid(wsDirect)) return wsDirect;
     }
-  } catch (e) {
+  } catch (e: any) {
     console.warn('[safeStorage] Could not resolve cached VISTAAR workspace:', e);
   }
 
@@ -83,7 +83,7 @@ function readRaw<T = any>(k: string): T[] | null {
     try {
       const stored = localStorage.getItem(k);
       if (stored) return JSON.parse(stored);
-    } catch (e) {
+    } catch (e: any) {
       console.warn(`Failed to read tenant storage key ${k}:`, e);
     }
   }
@@ -91,7 +91,7 @@ function readRaw<T = any>(k: string): T[] | null {
   if (store[k]) {
     try {
       return JSON.parse(store[k]);
-    } catch (e) {
+    } catch (e: any) {
       console.warn(`Failed to parse memory tenant key ${k}:`, e);
     }
   }
@@ -103,7 +103,7 @@ function readItem<T = any>(k: string): T | null {
     try {
       const stored = localStorage.getItem(k);
       if (stored) return JSON.parse(stored);
-    } catch (e) {
+    } catch (e: any) {
       console.warn(`Failed to read tenant storage key ${k}:`, e);
     }
   }
@@ -111,7 +111,7 @@ function readItem<T = any>(k: string): T | null {
   if (store[k]) {
     try {
       return JSON.parse(store[k]);
-    } catch (e) {
+    } catch (e: any) {
       console.warn(`Failed to parse memory tenant key ${k}:`, e);
     }
   }
@@ -193,13 +193,23 @@ export function safeSaveTenantStorage<T = any>(key: string, items: T[], branchId
   if (typeof localStorage !== 'undefined') {
     try {
       localStorage.setItem(tenantKey, jsonStr);
-      // Also update legacy key when writing consolidated/global items for backward compatibility
-      if (!branchId || branchId === 'ALL') {
+      // Mirror to legacy key only if payload is reasonably small (< 50KB) to protect localStorage quota
+      if ((!branchId || branchId === 'ALL') && jsonStr.length < 50000) {
         const legacyKey = `${key}_${currentWorkspaceId}`;
         localStorage.setItem(legacyKey, jsonStr);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.warn(`Failed to save tenant storage key ${tenantKey}:`, e);
+      if (e && (e.name === 'QuotaExceededError' || String(e.message).toLowerCase().includes('quota'))) {
+        try {
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && !k.startsWith('vistaar_user_session') && !k.includes('auth-token') && k.startsWith('workspace:')) {
+              localStorage.removeItem(k);
+            }
+          }
+        } catch {}
+      }
     }
   }
 
@@ -260,7 +270,7 @@ export function safeSaveTenantItem<T>(key: string, item: T, branchId?: string): 
         const legacyKey = `${key}_${currentWorkspaceId}`;
         localStorage.setItem(legacyKey, jsonStr);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.warn(`Failed to save tenant storage key ${tenantKey}:`, e);
     }
   }
@@ -292,7 +302,7 @@ export function clearTenantStorage(branchId?: string): void {
         if (k && k.startsWith(prefix)) keysToRemove.push(k);
       }
       keysToRemove.forEach((k) => localStorage.removeItem(k));
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Failed clearing tenant storage for prefix:', prefix, e);
     }
   }

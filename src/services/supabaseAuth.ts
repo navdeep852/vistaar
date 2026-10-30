@@ -9,6 +9,12 @@ import { isValidUuid } from '../lib/supabaseError';
 import { registerCurrentUserResolver, hasPermission } from '../lib/permissions';
 import { auditLogService } from './supabase/auditLogService';
 import { registerActiveWorkspaceResolver } from './supabase/safeStorage';
+import {
+  MinimalStoredSession,
+  saveDesktopSession,
+  loadDesktopSession,
+  clearDesktopSession,
+} from './desktopSessionService';
 
 export { validateEmployeeId, normalizeEmployeeId };
 
@@ -25,29 +31,131 @@ const getLocalStorage = (): Storage | null => {
   return null;
 };
 
+export type { MinimalStoredSession };
+
+/**
+ * Sanitizes the active user profile into a strictly minimal session representation (< 1KB).
+ * Removes oversized base64 data URLs, heavy metadata, and transient UI fields to guarantee
+ * that session storage never exhausts browser or platform storage quotas.
+ */
+export function sanitizeSessionProfile(profile: UserProfile | null): MinimalStoredSession | null {
+  if (!profile || !profile.id) return null;
+
+  let safeAvatar = profile.avatarUrl || '';
+  if (safeAvatar.startsWith('data:') && safeAvatar.length > 500) {
+    safeAvatar = '';
+  }
+
+  return {
+    id: String(profile.id).trim(),
+    companyId: String(profile.companyId || '').trim(),
+    employeeId: profile.employeeId ? String(profile.employeeId).trim() : undefined,
+    name: String(profile.name || '').trim(),
+    email: String(profile.email || '').trim(),
+    phone: profile.phone ? String(profile.phone).trim() : undefined,
+    department: profile.department ? String(profile.department).trim() : undefined,
+    designation: profile.designation ? String(profile.designation).trim() : undefined,
+    role: profile.role,
+    status: profile.status ? String(profile.status).trim() : 'Active',
+    businessName: profile.businessName ? String(profile.businessName).trim() : undefined,
+    mustChangePassword: Boolean(profile.mustChangePassword),
+    avatarUrl: safeAvatar || undefined,
+    savedAt: Date.now(),
+  };
+}
+
+/**
+ * Set of protected keys that must never be deleted during automated quota recovery.
+ */
+const CRITICAL_AUTH_KEYS = new Set([
+  SESSION_STORAGE_KEY,
+  'vistaar_current_company_id',
+  'vistaar_workspace_id',
+  'vistaar_screen_locked',
+  'vistaar_desktop_sidebar_collapsed',
+]);
+
+/**
+ * Evicts non-critical cached database queries and bloated legacy keys from localStorage
+ * when browser storage quota is near capacity or exceeded.
+ */
+function attemptQuotaRecovery(ls: Storage, requiredKey: string): void {
+  try {
+    const keysToEvict: string[] = [];
+    for (let i = 0; i < ls.length; i++) {
+      const k = ls.key(i);
+      if (!k) continue;
+      if (CRITICAL_AUTH_KEYS.has(k) || k.includes('auth-token') || k === requiredKey) {
+        continue;
+      }
+      if (
+        k.startsWith('workspace:') ||
+        k.startsWith('vistaar_local_') ||
+        k.includes('cache') ||
+        k.includes('_temp_')
+      ) {
+        keysToEvict.push(k);
+      }
+    }
+
+    for (const k of keysToEvict) {
+      try {
+        ls.removeItem(k);
+      } catch {}
+    }
+  } catch (err) {
+    console.warn('[Storage] Notice: Quota recovery error:', err);
+  }
+}
+
 // In-memory fallback storage for server/node testing environments where localStorage is absent
 const inMemoryStorage: Record<string, string> = {};
 
 const safeStorageGet = (key: string): string | null => {
   const ls = getLocalStorage();
   if (ls) {
-    return ls.getItem(key);
+    try {
+      return ls.getItem(key);
+    } catch {}
   }
   return inMemoryStorage[key] || null;
 };
 
 const safeStorageSet = (key: string, value: string): void => {
+  inMemoryStorage[key] = value;
   const ls = getLocalStorage();
   if (ls) {
-    ls.setItem(key, value);
+    try {
+      ls.setItem(key, value);
+    } catch (err: any) {
+      const isQuota =
+        err?.name === 'QuotaExceededError' ||
+        err?.code === 22 ||
+        err?.code === 1014 ||
+        String(err?.message || '').toLowerCase().includes('quota');
+
+      if (isQuota) {
+        console.warn(`[safeStorageSet] Quota exceeded while saving '${key}'. Attempting eviction...`);
+        attemptQuotaRecovery(ls, key);
+        try {
+          ls.setItem(key, value);
+          return;
+        } catch (retryErr) {
+          console.warn(`[safeStorageSet] Quota exceeded; keeping in-memory fallback for key '${key}'.`);
+        }
+      } else {
+        console.warn(`[safeStorageSet] Warning writing key '${key}' to storage:`, err);
+      }
+    }
   }
-  inMemoryStorage[key] = value;
 };
 
 const safeStorageRemove = (key: string): void => {
   const ls = getLocalStorage();
   if (ls) {
-    ls.removeItem(key);
+    try {
+      ls.removeItem(key);
+    } catch {}
   }
   delete inMemoryStorage[key];
 };
@@ -200,7 +308,7 @@ export class SupabaseAuthService {
       this.authResolutionState = 'loading';
       this.resolutionError = null;
 
-      const { data: { session }, error: sessionErr } = await supabase.auth.getSession();
+      let { data: { session }, error: sessionErr } = await supabase.auth.getSession();
       if (sessionErr) {
         console.warn('[AUTH_INIT] Session lookup error:', sessionErr);
       }
@@ -209,6 +317,28 @@ export class SupabaseAuthService {
       if (!authUser) {
         const { data: userData } = await supabase.auth.getUser();
         authUser = userData?.user;
+      }
+
+      // If Supabase session is absent in memory/localStorage, attempt desktop persistent recovery
+      if (!authUser) {
+        const desktopSession = await loadDesktopSession();
+        if (desktopSession && desktopSession.id && desktopSession.companyId && isValidUuid(desktopSession.companyId)) {
+          console.log('[AUTH_INIT] Restored session from persistent desktop storage:', desktopSession.email);
+          this.currentProfile = desktopSession as UserProfile;
+          this.authoritativeWorkspaceId = desktopSession.companyId;
+          this.saveSessionToStorage(this.currentProfile);
+
+          // Check if session refreshed after desktop profile restoration
+          const { data: refreshedData } = await supabase.auth.getSession();
+          if (refreshedData?.session?.user) {
+            authUser = refreshedData.session.user;
+          } else {
+            this.authResolutionState = 'ready';
+            this.resolutionError = null;
+            this.notify();
+            return;
+          }
+        }
       }
 
       if (!authUser) {
@@ -231,8 +361,21 @@ export class SupabaseAuthService {
       }
     } catch (err: any) {
       console.error('[AUTH_INIT_ERROR] Failed to initialize authenticated workspace:', err);
-      this.authResolutionState = 'error';
-      this.resolutionError = err?.message || '[WORKSPACE RESOLUTION FAILED] Failed to initialize authenticated workspace.';
+      const isNetError =
+        err?.message?.includes('Failed to fetch') ||
+        err?.message?.includes('NetworkError') ||
+        err?.message?.includes('fetch failed') ||
+        err?.message?.includes('Unable to reach Supabase Auth server');
+
+      if (isNetError && this.currentProfile?.id && this.currentProfile?.companyId && isValidUuid(this.currentProfile.companyId)) {
+        console.warn('[AUTH_INIT] Operating in offline mode with verified cached session:', this.currentProfile.companyId);
+        this.authoritativeWorkspaceId = this.currentProfile.companyId;
+        this.authResolutionState = 'ready';
+        this.resolutionError = null;
+      } else {
+        this.authResolutionState = 'error';
+        this.resolutionError = err?.message || '[WORKSPACE RESOLUTION FAILED] Failed to initialize authenticated workspace.';
+      }
     } finally {
       this.notify();
     }
@@ -311,7 +454,14 @@ export class SupabaseAuthService {
             console.warn(`[SESSION_RECONCILIATION] Cleaned corrupted cached companyId matching user.id (${parsed.id})`);
             parsed.companyId = '';
           }
-          return parsed;
+          // Migration: if cached session has extra large payload or base64 avatar, sanitize and resave
+          if (stored.length > 2048 || (parsed.avatarUrl && parsed.avatarUrl.length > 500)) {
+            const sanitized = sanitizeSessionProfile(parsed);
+            if (sanitized) {
+              safeStorageSet(SESSION_STORAGE_KEY, JSON.stringify(sanitized));
+            }
+          }
+          return parsed as UserProfile;
         }
       }
     } catch (e) {
@@ -322,10 +472,15 @@ export class SupabaseAuthService {
   }
 
   private saveSessionToStorage(profile: UserProfile | null) {
-    if (profile && profile.id) {
-      safeStorageSet(SESSION_STORAGE_KEY, JSON.stringify(profile));
+    const minimal = sanitizeSessionProfile(profile);
+    if (minimal) {
+      safeStorageSet(SESSION_STORAGE_KEY, JSON.stringify(minimal));
+      saveDesktopSession(minimal).catch((err) => {
+        console.warn('[AUTH] Notice: Desktop session mirroring failed:', err);
+      });
     } else {
       safeStorageRemove(SESSION_STORAGE_KEY);
+      clearDesktopSession().catch(() => {});
     }
   }
 
@@ -655,6 +810,19 @@ export class SupabaseAuthService {
       return dbWsId;
     } catch (e: any) {
       console.error('[WORKSPACE RESOLUTION EXCEPTION]', e);
+      const isNetError =
+        e?.message?.includes('Failed to fetch') ||
+        e?.message?.includes('NetworkError') ||
+        e?.message?.includes('fetch failed');
+
+      if (isNetError && this.currentProfile?.id && this.currentProfile?.companyId && isValidUuid(this.currentProfile.companyId)) {
+        console.warn('[WORKSPACE RESOLUTION] Network failure; falling back to cached profile for workspace:', this.currentProfile.companyId);
+        this.authoritativeWorkspaceId = this.currentProfile.companyId;
+        this.authResolutionState = 'ready';
+        this.resolutionError = null;
+        return this.currentProfile.companyId;
+      }
+
       this.authResolutionState = 'error';
       this.resolutionError = e?.message || '[WORKSPACE RESOLUTION FAILED] Unknown resolution error.';
       this.authoritativeWorkspaceId = null;

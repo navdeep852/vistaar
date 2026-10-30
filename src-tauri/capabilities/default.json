@@ -9,6 +9,10 @@
     "core:default",
     "dialog:default",
     "fs:default",
+    "fs:allow-appdata-read-recursive",
+    "fs:allow-appdata-write-recursive",
+    "fs:allow-appconfig-read-recursive",
+    "fs:allow-appconfig-write-recursive",
     "opener:default",
     "clipboard-manager:default",
     "notification:default"
