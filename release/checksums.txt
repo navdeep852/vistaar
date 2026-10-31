@@ -1,5 +1,5 @@
 ﻿# VISTAAR Desktop Release Checksums
-# Generated: 2026-10-30 22:52:41
+# Generated: 2026-10-31 08:37:03
 
 3d4d24722a00592f9323947e7cc0916f2d1f8801b8ef54b02c612e7b72350ebe  VISTAAR-Setup.exe
 3d4d24722a00592f9323947e7cc0916f2d1f8801b8ef54b02c612e7b72350ebe  VISTAAR_1.0.0_x64-setup.exe

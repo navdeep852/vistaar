@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { supabaseAuthService } from '../supabaseAuth';
 import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
+import { safeGetTenantStorage, safeSaveTenantStorage } from './safeStorage';
 import { PaymentMethod } from '../../types';
 import { store } from '../store';
 import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
@@ -155,6 +156,18 @@ export class CustomerPaymentService {
         (invoiceNumber && p.invoiceNumber === invoiceNumber)
       );
       if (existingStorePayment) {
+        try {
+          const LOCAL_DAYBOOK_KEY = 'vistaar_local_daybook_db';
+          const localDaybook = safeGetTenantStorage<any>(LOCAL_DAYBOOK_KEY, []);
+          const sIdx = localDaybook.findIndex(
+            (t: any) => t.referenceType === 'INVOICE' && (t.referenceId === (resolvedInvoiceId || targetInvoice?.id) || t.referenceNumber === invoiceNumber)
+          );
+          if (sIdx >= 0 && (Number(localDaybook[sIdx].amount) === 0 || localDaybook[sIdx].amount === null)) {
+            localDaybook[sIdx].amount = existingStorePayment.amount;
+            safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, localDaybook);
+          }
+        } catch {}
+
         return {
           success: true,
           paymentId: existingStorePayment.id,
@@ -516,53 +529,7 @@ export class CustomerPaymentService {
                 const pStatusTag = updatedInvBal <= 0.005 ? 'PAID' : (updatedInvPaid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
                 const paymentRefId = paymentId || dbPaymentId;
 
-                // 6a. Record authoritative Daybook transaction for this specific payment on paymentDate
-                const paymentDaybookPayload: any = {
-                  workspace_id: wsId,
-                  transaction_code: paymentCode,
-                  transaction_date: paymentDate,
-                  transaction_type: 'CUSTOMER_PAYMENT',
-                  direction: 'IN',
-                  amount: amount, // Inflow = actual money received in this payment transaction
-                  total_amount: updatedInvTotal || Number(dbInvRow.grand_total) || 0, // Authoritative Invoice Grand Total
-                  remaining_amount: updatedInvBal, // Remaining balance after this payment
-                  payment_status: pStatusTag,
-                  payment_mode: paymentMethod,
-                  party_type: 'customer',
-                  party_id: dbInvRow.customer_id || resolvedCustomerId || null,
-                  party_name: customerName,
-                  reference_type: 'PAYMENT',
-                  reference_id: paymentRefId,
-                  reference_number: dbInvRow.invoice_number,
-                  description: `Invoice #${dbInvRow.invoice_number}`,
-                  notes: payload.reference ? `Ref: ${payload.reference}` : payload.notes,
-                  status: 'COMPLETED',
-                  updated_at: new Date().toISOString(),
-                };
-
-                const { data: existingDaybookPay } = await supabase
-                  .from('daybook_transactions')
-                  .select('id')
-                  .eq('workspace_id', wsId)
-                  .eq('reference_type', 'PAYMENT')
-                  .eq('reference_id', paymentRefId)
-                  .maybeSingle();
-
-                if (existingDaybookPay?.id) {
-                  await supabase
-                    .from('daybook_transactions')
-                    .update(paymentDaybookPayload)
-                    .eq('id', existingDaybookPay.id);
-                } else {
-                  if (isValidUuid(paymentRefId)) {
-                    paymentDaybookPayload.id = paymentRefId;
-                  }
-                  await supabase
-                    .from('daybook_transactions')
-                    .insert([paymentDaybookPayload]);
-                }
-
-                // 6b. Keep existing Daybook SALE entry synchronized with latest balance
+                // 6a. Check if Daybook SALE entry exists and determine if this is upfront or first payment
                 const { data: existingDaybookSale } = await supabase
                   .from('daybook_transactions')
                   .select('id, amount, transaction_date')
@@ -571,16 +538,74 @@ export class CustomerPaymentService {
                   .or(`reference_id.eq.${dbInvRow.id},reference_number.eq.${dbInvRow.invoice_number}`)
                   .maybeSingle();
 
+                const isExistingSaleZero = existingDaybookSale && (existingDaybookSale.amount === null || existingDaybookSale.amount === 0);
+                const isUpfrontOrFirst = Boolean(payload.isUpfrontInvoicePayment) || (isExistingSaleZero && updatedInvPaid <= (amount + 0.01));
+
+                // Record authoritative Daybook transaction for this specific payment ONLY IF subsequent payment
+                // Upfront / first payments and counter sales are represented directly on the primary SALE entry.
+                if (!isUpfrontOrFirst && !payload.counterSaleId) {
+                  const paymentDaybookPayload: any = {
+                    workspace_id: wsId,
+                    transaction_code: paymentCode,
+                    transaction_date: paymentDate,
+                    transaction_type: 'CUSTOMER_PAYMENT',
+                    direction: 'IN',
+                    amount: amount, // Inflow = actual money received in this payment transaction
+                    total_amount: updatedInvTotal || Number(dbInvRow.grand_total) || 0, // Authoritative Invoice Grand Total
+                    remaining_amount: updatedInvBal, // Remaining balance after this payment
+                    payment_status: pStatusTag,
+                    payment_mode: paymentMethod,
+                    party_type: 'customer',
+                    party_id: dbInvRow.customer_id || resolvedCustomerId || null,
+                    party_name: customerName,
+                    reference_type: 'PAYMENT',
+                    reference_id: paymentRefId,
+                    reference_number: dbInvRow.invoice_number,
+                    description: `Invoice #${dbInvRow.invoice_number}`,
+                    notes: payload.reference ? `Ref: ${payload.reference}` : payload.notes,
+                    status: 'COMPLETED',
+                    updated_at: new Date().toISOString(),
+                  };
+
+                  const { data: existingDaybookPay } = await supabase
+                    .from('daybook_transactions')
+                    .select('id')
+                    .eq('workspace_id', wsId)
+                    .eq('reference_type', 'PAYMENT')
+                    .eq('reference_id', paymentRefId)
+                    .maybeSingle();
+
+                  if (existingDaybookPay?.id) {
+                    await supabase
+                      .from('daybook_transactions')
+                      .update(paymentDaybookPayload)
+                      .eq('id', existingDaybookPay.id);
+                  } else {
+                    if (isValidUuid(paymentRefId)) {
+                      paymentDaybookPayload.id = paymentRefId;
+                    }
+                    await supabase
+                      .from('daybook_transactions')
+                      .insert([paymentDaybookPayload]);
+                  }
+                }
+
+                // 6b. Keep existing Daybook SALE entry synchronized with latest balance & status
+                // PRESERVES initial inflow amount (never overwrites to 0)
                 if (existingDaybookSale?.id) {
+                  const saleUpdatePayload: any = {
+                    total_amount: updatedInvTotal,
+                    remaining_amount: updatedInvBal,
+                    payment_status: pStatusTag,
+                    updated_at: new Date().toISOString(),
+                  };
+                  // If this was an upfront or first invoice payment and the sale entry currently has 0, set its initial inflow
+                  if (isUpfrontOrFirst && isExistingSaleZero) {
+                    saleUpdatePayload.amount = amount;
+                  }
                   await supabase
                     .from('daybook_transactions')
-                    .update({
-                      amount: 0, // CRITICAL: Payment entry carries the inflow; invoice entry represents commercial volume
-                      total_amount: updatedInvTotal,
-                      remaining_amount: updatedInvBal,
-                      payment_status: pStatusTag,
-                      updated_at: new Date().toISOString(),
-                    })
+                    .update(saleUpdatePayload)
                     .eq('id', existingDaybookSale.id);
                 }
               } catch (dbErr) {

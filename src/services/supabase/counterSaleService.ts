@@ -797,6 +797,7 @@ export class CounterSaleService {
               referenceNo: sale.paymentReference,
               notes: sale.paymentNotes || `Counter Sale payment #${invoiceNumber}`,
               date: sale.saleDate,
+              isUpfrontInvoicePayment: true,
             });
           } catch (payErr) {
             console.warn('[counterSaleService] Payment record notice:', payErr);
@@ -986,6 +987,7 @@ export class CounterSaleService {
           referenceNo: sale.paymentReference,
           notes: sale.paymentNotes || `Counter Sale payment #${invoiceNumber}`,
           date: canonicalSaleDate,
+          isUpfrontInvoicePayment: true,
         });
       } catch {}
     }

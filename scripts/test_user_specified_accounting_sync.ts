@@ -53,7 +53,7 @@ if (typeof (globalThis as any).CustomEvent === 'undefined') {
 // 2. Imports
 import { store } from '../src/services/store';
 import { customerPaymentService } from '../src/services/supabase/customerPaymentService';
-import { safeGetTenantStorage } from '../src/services/supabase/safeStorage';
+import { safeGetTenantStorage, safeSaveTenantItem, registerActiveWorkspaceResolver } from '../src/services/supabase/safeStorage';
 import {
   calculateInvoiceFinancials,
   calculateUdhariFinancials,
@@ -64,8 +64,15 @@ import {
 import { supabaseAuthService } from '../src/services/supabaseAuth';
 
 // Mock authoritative workspace for test execution
-(supabaseAuthService as any).getCurrentCompanyId = () => '11111111-1111-1111-1111-111111111111';
-(supabaseAuthService as any).resolveAuthoritativeWorkspace = async () => '11111111-1111-1111-1111-111111111111';
+const testSpecWsId = '11111111-2222-4333-8444-555555555555';
+(globalThis as any).localStorage.setItem('vistaar_current_company_id', testSpecWsId);
+(globalThis as any).localStorage.setItem('vistaar_workspace_id', testSpecWsId);
+(globalThis as any).localStorage.setItem('vistaar_user_session', JSON.stringify({ companyId: testSpecWsId }));
+safeSaveTenantItem('active_company_id', testSpecWsId);
+registerActiveWorkspaceResolver(() => testSpecWsId);
+(supabaseAuthService as any).getCurrentCompanyId = () => testSpecWsId;
+(supabaseAuthService as any).resolveAuthoritativeWorkspace = async () => testSpecWsId;
+(supabaseAuthService as any).getAuthoritativeWorkspaceId = async () => testSpecWsId;
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -90,6 +97,7 @@ async function runSpecificAccountingTest() {
   const expectedRemaining = 11750;
 
   console.log('--- STEP 1: Create Invoice with Grand Total = ₹15,750 ---');
+  console.log('  Debug getActiveCompanyId():', (await import('../src/services/supabase/safeStorage')).getActiveCompanyId());
   const inv = store.addInvoice({
     id: invId,
     invoiceNumber: invNum,
@@ -173,6 +181,7 @@ async function runSpecificAccountingTest() {
 
   console.log('\n--- STEP 5: Verify Daybook (Daily Journal) ---');
   const localDaybook = safeGetTenantStorage<any[]>('vistaar_local_daybook_db', []);
+  console.log('  localDaybook entries:', localDaybook.map(t => ({ id: t.id, refType: t.referenceType, refId: t.referenceId, refNo: t.referenceNumber })));
   const daybookSale = localDaybook.find(
     (t) => t.referenceType === 'INVOICE' && (t.referenceId === inv.id || t.referenceNumber === inv.invoiceNumber)
   );
@@ -188,21 +197,9 @@ async function runSpecificAccountingTest() {
 
   console.log('\n--- STEP 6: Verify Cashbook (Cash Ledger) ---');
   const { cashbookService } = await import('../src/services/supabase/cashbookService');
-  // Record Cashbook entry for the payment in test environment
-  await cashbookService.recordCashbookEntry({
-    sourceType: 'INVOICE_PAYMENT',
-    sourceId: `${inv.id}-pay-1`,
-    referenceNumber: `${inv.invoiceNumber}-P1`,
-    direction: 'IN',
-    amount: paymentAmount,
-    paymentMethod: 'Cash',
-    partyName: customerName,
-    description: `Partial payment received for ${inv.invoiceNumber}`,
-    transactionDate: new Date().toISOString().split('T')[0],
-  });
 
   const rawLocal = safeGetTenantStorage<any[]>('vistaar_local_cashbook_db', []);
-  const cbEntry = rawLocal.find((t) => t.sourceId === `${inv.id}-pay-1`);
+  const cbEntry = rawLocal.find((t) => t.referenceNumber === inv.invoiceNumber || t.description?.includes(inv.invoiceNumber));
   assert(!!cbEntry, 'Cashbook entry created for cash inflow');
   assert(cbEntry.amount === 4000, `Cashbook cash inflow is ₹4,000 (Actual: ₹${cbEntry.amount})`);
   assert(cbEntry.direction === 'IN', `Cashbook direction is 'IN' (Actual: ${cbEntry.direction})`);
@@ -261,25 +258,19 @@ async function runSpecificAccountingTest() {
     (t) => t.referenceType === 'INVOICE' && (t.referenceId === inv.id || t.referenceNumber === inv.invoiceNumber)
   );
   assert(clearedDaybookSale.totalAmount === 15750, `Daybook totalAmount is ₹15,750 (Actual: ₹${clearedDaybookSale.totalAmount})`);
-  assert(clearedDaybookSale.amount === 15750, `Daybook total paid is ₹15,750 (Actual: ₹${clearedDaybookSale.amount})`);
   assert(clearedDaybookSale.remainingAmount === 0, `Daybook remainingAmount is ₹0 (Actual: ₹${clearedDaybookSale.remainingAmount})`);
   assert(clearedDaybookSale.paymentStatus === 'PAID', `Daybook status is 'PAID' (Actual: ${clearedDaybookSale.paymentStatus})`);
 
-  // 4. Cashbook Check (Total Inflow for this invoice = ₹4,000 + ₹11,750 = ₹15,750)
-  await cashbookService.recordCashbookEntry({
-    sourceType: 'INVOICE_PAYMENT',
-    sourceId: `${inv.id}-pay-2`,
-    referenceNumber: `${inv.invoiceNumber}-P2`,
-    direction: 'IN',
-    amount: 11750,
-    paymentMethod: 'UPI',
-    partyName: customerName,
-    description: `Final settlement for ${inv.invoiceNumber}`,
-    transactionDate: new Date().toISOString().split('T')[0],
-  });
+  const secondPayDaybook = updatedDaybook.find(
+    (t) => (t.referenceType === 'PAYMENT' || t.transactionType === 'CUSTOMER_PAYMENT') && t.amount === 11750
+  );
+  assert(!!secondPayDaybook, 'Second payment entry of ₹11,750 recorded in Daybook');
+  const totalDaybookCollected = clearedDaybookSale.amount + (secondPayDaybook ? secondPayDaybook.amount : 0);
+  assert(totalDaybookCollected === 15750, `Total collected across Daybook entries is ₹15,750 (₹4,000 + ₹11,750 = ₹${totalDaybookCollected})`);
 
+  // 4. Cashbook Check (Total Inflow for this invoice = ₹4,000 + ₹11,750 = ₹15,750)
   const allCashbookEntries = safeGetTenantStorage<any[]>('vistaar_local_cashbook_db', []).filter(
-    (t) => (t.sourceId && t.sourceId.startsWith(inv.id)) || (t.referenceNumber && t.referenceNumber.startsWith(inv.invoiceNumber))
+    (t) => (t.sourceId && t.sourceId.startsWith(inv.id)) || (t.referenceNumber && t.referenceNumber.startsWith(inv.invoiceNumber)) || (t.description && t.description.includes(inv.invoiceNumber))
   );
   const totalCashInflow = allCashbookEntries.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
   assert(totalCashInflow === 15750, `Cashbook total cash inflow is ₹15,750 (Actual: ₹${totalCashInflow})`);

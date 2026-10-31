@@ -630,8 +630,8 @@ class StoreService {
         localPays.unshift(row);
       }
       safeSaveTenantStorage(LOCAL_PAYMENTS_KEY, localPays);
-    } catch {
-      // ignore
+    } catch (dbSyncErr) {
+      console.warn('[addInvoice] Daybook sync notice:', dbSyncErr);
     }
     this.reconcileStateLedgers(this.state);
     this.saveToStorage();
@@ -1701,10 +1701,7 @@ class StoreService {
       const saleIdx = localDaybook.findIndex(
         (t: any) => t.referenceType === 'INVOICE' && (t.referenceId === newInvoice.id || t.referenceNumber === newInvoice.invoiceNumber)
       );
-      const hasPayments = (this.state.payments || []).some(
-        (p) => p.invoiceId === newInvoice.id || (p.invoiceNumber && p.invoiceNumber === newInvoice.invoiceNumber)
-      );
-      const initialInflow = hasPayments ? 0 : (newInvoice.paidAmount || 0);
+      const initialInflow = Number(newInvoice.paidAmount) || 0;
       const pStatus = (newInvoice as any).paymentStatus || (newInvoice.balanceAmount <= 0 ? 'PAID' : (newInvoice.paidAmount || 0) > 0 ? 'PARTIALLY PAID' : 'UNPAID');
 
       const saleEntry = {
@@ -1736,8 +1733,8 @@ class StoreService {
         localDaybook.unshift(saleEntry);
       }
       safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, localDaybook);
-    } catch {
-      // ignore
+    } catch (dbSyncErr) {
+      console.warn('[addInvoice] Daybook sync notice:', dbSyncErr);
     }
 
     // Synchronize Udhari entry for this invoice if not draft and has balance
@@ -1881,8 +1878,8 @@ class StoreService {
         localInvs.unshift(row);
       }
       safeSaveTenantStorage(LOCAL_INVOICES_KEY, localInvs);
-    } catch {
-      // ignore
+    } catch (dbSyncErr) {
+      console.warn('[addInvoice] Daybook sync notice:', dbSyncErr);
     }
 
     this.saveToStorage();
@@ -2073,8 +2070,8 @@ class StoreService {
         localPays.unshift(flatPay);
       }
       safeSaveTenantStorage(LOCAL_PAYMENTS_KEY, localPays);
-    } catch {
-      // ignore
+    } catch (dbSyncErr) {
+      console.warn('[addInvoice] Daybook sync notice:', dbSyncErr);
     }
 
     // 4. Update Invoice: Recompute from authoritative payments ledger
@@ -2205,52 +2202,69 @@ class StoreService {
         const localDaybook = safeGetTenantStorage<any>(LOCAL_DAYBOOK_KEY, []);
         const pStatus = inv.balanceAmount <= 0.01 ? 'PAID' : (inv.paidAmount > 0 ? 'PARTIALLY PAID' : 'UNPAID');
 
-        // 6a. Record the Payment Inflow transaction on payDate
-        const payEntryNumber = paymentNumber;
-        const paymentRow: any = {
-          id: `db-pay-${paymentId}`,
-          workspaceId: (inv as any).workspaceId || '',
-          transactionCode: payEntryNumber,
-          transactionDate: payDate,
-          transactionType: 'CUSTOMER_PAYMENT',
-          direction: 'IN',
-          amount: amount, // Inflow = actual money received in this specific transaction
-          totalAmount: inv.grandTotal, // Authoritative Invoice Grand Total
-          remainingAmount: inv.balanceAmount, // Outstanding remaining after this payment
-          paymentStatus: pStatus,
-          paymentMode: data.paymentMethod || 'Cash',
-          partyType: 'customer',
-          partyId: inv.customerId,
-          partyName: inv.customerName,
-          referenceType: 'PAYMENT',
-          referenceId: paymentId,
-          referenceNumber: inv.invoiceNumber,
-          description: `Invoice #${inv.invoiceNumber}`,
-          notes: data.notes || (data.reference ? `Ref: ${data.reference}` : undefined),
-          status: 'COMPLETED',
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        const existingPayIdx = localDaybook.findIndex(
-          (t: any) => t.referenceType === 'PAYMENT' && t.referenceId === paymentId
-        );
-        if (existingPayIdx >= 0) {
-          localDaybook[existingPayIdx] = { ...localDaybook[existingPayIdx], ...paymentRow, id: localDaybook[existingPayIdx].id };
-        } else {
-          localDaybook.unshift(paymentRow);
-        }
-
-        // 6b. Keep any existing Daybook SALE entry synchronized with latest balance
+        // Check if an existing Daybook SALE entry exists
         const saleIdx = localDaybook.findIndex(
           (t: any) => t.referenceType === 'INVOICE' && (t.referenceId === inv.id || t.referenceNumber === inv.invoiceNumber)
         );
-        if (saleIdx >= 0) {
-          localDaybook[saleIdx] = {
-            ...localDaybook[saleIdx],
+        const currentSaleAmt = saleIdx >= 0 ? (Number(localDaybook[saleIdx].amount) || 0) : 0;
+        // The first payment against an invoice is represented directly on the INVOICE sale entry
+        const isUpfrontOrFirst = Boolean(data.isUpfrontInvoicePayment) || (currentSaleAmt === 0 && inv.paidAmount <= (amount + 0.01));
+
+        // 6a. Record the Payment Inflow transaction on payDate ONLY IF subsequent payment
+        // Upfront / first payments are accounted for directly on the INVOICE entry
+        if (!isUpfrontOrFirst) {
+          const payEntryNumber = paymentNumber;
+          const paymentRow: any = {
+            id: `db-pay-${paymentId}`,
+            workspaceId: (inv as any).workspaceId || '',
+            transactionCode: payEntryNumber,
+            transactionDate: payDate,
+            transactionType: 'CUSTOMER_PAYMENT',
+            direction: 'IN',
+            amount: amount, // Inflow = actual money received in this specific transaction
+            totalAmount: inv.grandTotal, // Authoritative Invoice Grand Total
+            remainingAmount: inv.balanceAmount, // Outstanding remaining after this payment
+            paymentStatus: pStatus,
+            paymentMode: data.paymentMethod || 'Cash',
+            partyType: 'customer',
+            partyId: inv.customerId,
+            partyName: inv.customerName,
+            referenceType: 'PAYMENT',
+            referenceId: paymentId,
+            referenceNumber: inv.invoiceNumber,
+            description: `Invoice #${inv.invoiceNumber}`,
+            notes: data.notes || (data.reference ? `Ref: ${data.reference}` : undefined),
+            status: 'COMPLETED',
+            createdAt: now,
+            updatedAt: now,
+          };
+
+          const existingPayIdx = localDaybook.findIndex(
+            (t: any) => t.referenceType === 'PAYMENT' && (t.referenceId === paymentId || t.id === `db-pay-${paymentId}`)
+          );
+          if (existingPayIdx >= 0) {
+            localDaybook[existingPayIdx] = { ...localDaybook[existingPayIdx], ...paymentRow, id: localDaybook[existingPayIdx].id };
+          } else {
+            localDaybook.unshift(paymentRow);
+          }
+        }
+
+        // 6b. Keep any existing Daybook SALE entry synchronized with latest balance & status
+        const targetSaleIdx = localDaybook.findIndex(
+          (t: any) => t.referenceType === 'INVOICE' && (t.referenceId === inv.id || t.referenceNumber === inv.invoiceNumber)
+        );
+        if (targetSaleIdx >= 0) {
+          let newSaleAmt = currentSaleAmt;
+          if (isUpfrontOrFirst) {
+            newSaleAmt = currentSaleAmt > 0 ? currentSaleAmt : amount;
+          } else if (currentSaleAmt === 0) {
+            newSaleAmt = inv.paidAmount > amount ? Number((inv.paidAmount - amount).toFixed(2)) : amount;
+          }
+          localDaybook[targetSaleIdx] = {
+            ...localDaybook[targetSaleIdx],
             totalAmount: inv.grandTotal,
             remainingAmount: inv.balanceAmount,
-            amount: 0, // CRITICAL: The payment row carries the inflow; invoice entry represents commercial volume
+            amount: newSaleAmt,
             paymentStatus: pStatus,
             updatedAt: now,
           };
@@ -2262,7 +2276,7 @@ class StoreService {
             transactionDate: inv.date || payDate,
             transactionType: 'SALE',
             direction: 'IN',
-            amount: 0, // CRITICAL: The payment row carries the inflow; invoice entry represents commercial volume
+            amount: data.isUpfrontInvoicePayment ? amount : 0,
             totalAmount: inv.grandTotal,
             remainingAmount: inv.balanceAmount,
             paymentStatus: pStatus,
@@ -3950,6 +3964,7 @@ class StoreService {
           paymentMethod: paymentMethod as any,
           paymentDate: saleDate,
           notes: `Payment for Counter Sale #${newSale.saleNumber}`,
+          isUpfrontInvoicePayment: true,
         });
       } catch (payErr) {
         console.warn('[createCounterSale] Payment sync notice:', payErr);

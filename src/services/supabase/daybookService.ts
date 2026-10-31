@@ -459,67 +459,147 @@ export class DaybookService {
       }
     });
 
+    // Identify upfront payments that are absorbed by the primary document (Invoice or Counter Sale)
+    const upfrontPaymentIds = new Set<string>();
+    const counterSalePaymentIds = new Set<string>();
+
+    // Counter sale payments in paymentsList are absorbed by the COUNTER_SALE entry
+    for (const p of paymentsList) {
+      if (p.counter_sale_id || p.counter_sale_number) {
+        if (p.id) counterSalePaymentIds.add(String(p.id).toLowerCase().trim());
+      }
+    }
+
+    // For each invoice, determine the initial upfront payment
+    for (const [, pList] of paymentsByInvoice.entries()) {
+      if (!pList || pList.length === 0) continue;
+      const firstPay = pList[0];
+      if (firstPay && firstPay.id) {
+        const linkedInv = firstPay.invoice_id ? invoiceMap.get(firstPay.invoice_id) : (firstPay.invoice_number ? invoiceMap.get(firstPay.invoice_number) : null);
+        const invPaid = linkedInv ? Number(linkedInv.paid_amount) || 0 : 0;
+        const firstAmt = Number(firstPay.amount) || 0;
+        if (firstAmt > 0 && (pList.length === 1 || Math.abs(firstAmt - invPaid) < 0.01 || (linkedInv?.date && firstPay.payment_date && firstPay.payment_date <= linkedInv.date))) {
+          upfrontPaymentIds.add(String(firstPay.id).toLowerCase().trim());
+        }
+      }
+    }
+
     const unifiedList: DaybookTransaction[] = [];
 
     // 4. Enrich existing transactions
     for (const tx of existingTxList) {
-      let isInvoiceLinked = tx.referenceType === 'INVOICE' || tx.referenceType === 'PAYMENT' || tx.transactionType === 'SALE' || tx.transactionType === 'CUSTOMER_PAYMENT';
+      if (tx.status === 'VOID' || tx.paymentStatus === 'CANCELLED') {
+        unifiedList.push(tx);
+        continue;
+      }
+
+      // Check Counter Sale
+      if (tx.referenceType === 'COUNTER_SALE') {
+        let linkedCs = tx.referenceId ? counterSaleMap.get(tx.referenceId) : null;
+        if (!linkedCs && tx.referenceNumber) linkedCs = counterSaleMap.get(tx.referenceNumber);
+        if (linkedCs) {
+          const finalTot = Number(linkedCs.final_total) || 0;
+          tx.totalAmount = finalTot > 0 ? finalTot : (tx.totalAmount || tx.amount);
+          const csBal = Number(linkedCs.balance_amount) ?? 0;
+          tx.remainingAmount = csBal;
+          tx.paymentStatus = csBal <= 0.01 ? 'PAID' : (tx.amount > 0 ? 'PARTIALLY PAID' : 'UNPAID');
+        }
+        unifiedList.push(tx);
+        continue;
+      }
+
+      // Check Invoice
       let linkedInv = tx.referenceId ? invoiceMap.get(tx.referenceId) : null;
       if (!linkedInv && tx.referenceNumber) {
         linkedInv = invoiceMap.get(tx.referenceNumber);
       }
 
-      if (linkedInv) {
-        const grandTotal = Number(linkedInv.grand_total) || 0;
-        // Total MUST always be the authoritative document total
-        tx.totalAmount = grandTotal > 0 ? grandTotal : (tx.totalAmount || tx.amount);
+      if (tx.referenceType === 'INVOICE') {
+        if (linkedInv) {
+          const grandTotal = Number(linkedInv.grand_total) || 0;
+          tx.totalAmount = grandTotal > 0 ? grandTotal : (tx.totalAmount || tx.amount);
+          const invPaid = Number(linkedInv.paid_amount) || 0;
+          const invBal = Number(linkedInv.balance_amount) ?? Math.max(0, grandTotal - invPaid);
+          tx.remainingAmount = invBal;
+          tx.paymentStatus = invBal <= 0.01 ? 'PAID' : (invPaid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
 
-        const invPayments = paymentsByInvoice.get(linkedInv.id) || paymentsByInvoice.get(linkedInv.invoice_number) || [];
+          // If entry has amount 0 but invoice was paid, restore the initial inflow
+          if ((tx.amount === 0 || tx.amount === null || tx.amount === undefined) && invPaid > 0) {
+            const invPayments = paymentsByInvoice.get(linkedInv.id) || paymentsByInvoice.get(linkedInv.invoice_number) || [];
+            const firstAmt = invPayments.length > 0 ? Number(invPayments[0].amount) || 0 : invPaid;
+            tx.amount = firstAmt > 0 ? firstAmt : invPaid;
+          }
+        }
+        unifiedList.push(tx);
+        continue;
+      }
 
-        if (tx.referenceType === 'PAYMENT' || tx.transactionType === 'CUSTOMER_PAYMENT') {
-          // Cumulative payment up to this transaction
+      if (tx.referenceType === 'PAYMENT' || tx.transactionType === 'CUSTOMER_PAYMENT') {
+        const payRefId = (tx.referenceId || '').toLowerCase().trim();
+        const payRefNum = (tx.referenceNumber || '').toLowerCase().trim();
+
+        // 1. If payment is linked to a Counter Sale, Counter Sale entry already represents the cash receipt -> DROP
+        if (counterSalePaymentIds.has(payRefId) || counterSaleMap.has(payRefId) || counterSaleMap.has(payRefNum)) {
+          continue;
+        }
+
+        // 2. If payment is the upfront payment for an Invoice, Invoice entry already represents the initial receipt -> DROP
+        if (upfrontPaymentIds.has(payRefId)) {
+          continue;
+        }
+
+        if (linkedInv) {
+          const invPayments = paymentsByInvoice.get(linkedInv.id) || paymentsByInvoice.get(linkedInv.invoice_number) || [];
+          if (invPayments.length > 0 && invPayments[0].id && String(invPayments[0].id).toLowerCase().trim() === payRefId) {
+            continue; // Upfront payment absorbed by invoice
+          }
+        }
+
+        // 3. This is a genuine SUBSEQUENT payment (e.g. Scenario C)
+        if (linkedInv) {
+          const grandTotal = Number(linkedInv.grand_total) || 0;
+          tx.totalAmount = grandTotal > 0 ? grandTotal : (tx.totalAmount || tx.amount);
+          const invPayments = paymentsByInvoice.get(linkedInv.id) || paymentsByInvoice.get(linkedInv.invoice_number) || [];
           let cumulativePaid = 0;
           for (const p of invPayments) {
-            const pAmt = Number(p.amount) || 0;
-            const pDate = p.payment_date || '';
-            cumulativePaid += pAmt;
-            if (p.id === tx.referenceId || (pDate && tx.transactionDate && pDate <= tx.transactionDate && pAmt === tx.amount)) {
+            cumulativePaid += Number(p.amount) || 0;
+            if (p.id === tx.referenceId || (p.payment_date && tx.transactionDate && p.payment_date <= tx.transactionDate && Number(p.amount) === tx.amount)) {
               break;
             }
           }
           if (cumulativePaid === 0) {
             cumulativePaid = Number(tx.amount) || 0;
           }
-
           tx.remainingAmount = Math.max(0, Number((grandTotal - cumulativePaid).toFixed(2)));
           tx.paymentStatus = tx.remainingAmount <= 0.01 ? 'PAID' : 'PARTIALLY PAID';
-        } else if (tx.referenceType === 'INVOICE') {
-          const invPaid = Number(linkedInv.paid_amount) || 0;
-          const invBal = Number(linkedInv.balance_amount) || Math.max(0, grandTotal - invPaid);
-
-          // STRICT ACCOUNTING RULE:
-          // Commercial document (Invoice) represents commercial revenue (totalAmount: grandTotal).
-          // If payments exist as distinct records in payments table or unified list, the payment rows
-          // represent the financial inflows. The invoice row itself must NOT duplicate the inflow!
-          if (invPayments.length > 0 || seenPaymentIdsInTx.size > 0 || invoiceIdsWithPaymentTx.has(linkedInv.invoice_number) || invoiceIdsWithPaymentTx.has(linkedInv.id)) {
-            // Unpaid invoice sale row
-            tx.amount = 0;
-            tx.remainingAmount = invBal;
-            tx.paymentStatus = invBal <= 0.01 ? 'PAID' : (invPaid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
-          } else {
-            // Single historical invoice entry with both sale total and initial inflow
-            tx.remainingAmount = invBal;
-            tx.paymentStatus = invBal <= 0.01 ? 'PAID' : (invPaid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
-          }
         }
+        unifiedList.push(tx);
+        continue;
       }
 
+      // Other transaction types (EXPENSE, etc.)
       unifiedList.push(tx);
     }
 
-    // 5. Synthesize any missing payments from payments table (e.g. Payment 2 made later)
+    // 5. Synthesize any missing SUBSEQUENT payments from payments table (e.g. Payment 2 made later)
     for (const p of paymentsList) {
+      const pId = String(p.id || '').toLowerCase().trim();
       const pAmt = Number(p.amount) || 0;
+
+      // Do not synthesize upfront payments or counter sale receipts
+      if (counterSalePaymentIds.has(pId) || upfrontPaymentIds.has(pId)) {
+        continue;
+      }
+
+      const linkedInv = p.invoice_id ? invoiceMap.get(p.invoice_id) : (p.invoice_number ? invoiceMap.get(p.invoice_number) : null);
+      if (!linkedInv) continue;
+
+      const invPayments = paymentsByInvoice.get(linkedInv.id) || paymentsByInvoice.get(linkedInv.invoice_number) || [];
+      // If this is the first payment of the invoice and was already absorbed by the invoice entry, skip
+      if (invPayments.length > 0 && invPayments[0].id && String(invPayments[0].id).toLowerCase().trim() === pId) {
+        continue;
+      }
+
       const isAlreadyRepresented =
         seenPaymentIdsInTx.has(p.id) ||
         seenTxKeys.has(`PAYMENT:${p.id}`) ||
@@ -527,21 +607,15 @@ export class DaybookService {
         unifiedList.some(
           (t) =>
             (t.referenceType === 'PAYMENT' || t.transactionType === 'CUSTOMER_PAYMENT') &&
-            t.referenceNumber &&
-            (t.referenceNumber === p.invoice_number || t.referenceNumber === p.counter_sale_number) &&
-            (t.referenceId === p.id || Math.abs(t.amount - pAmt) < 0.01)
+            (t.referenceId === p.id || (t.referenceNumber === linkedInv.invoice_number && Math.abs(t.amount - pAmt) < 0.01 && t.transactionDate === (p.payment_date || '').split('T')[0]))
         );
 
       if (isAlreadyRepresented) {
         continue;
       }
 
-      const linkedInv = p.invoice_id ? invoiceMap.get(p.invoice_id) : (p.invoice_number ? invoiceMap.get(p.invoice_number) : null);
-      if (!linkedInv) continue;
-
       const pDate = (p.payment_date || p.created_at || '').split('T')[0];
       const grandTotal = Number(linkedInv.grand_total) || 0;
-      const invPayments = paymentsByInvoice.get(linkedInv.id) || paymentsByInvoice.get(linkedInv.invoice_number) || [];
 
       let cumulativePaid = 0;
       for (const invP of invPayments) {
@@ -549,7 +623,7 @@ export class DaybookService {
         if (invP.id === p.id) break;
       }
       if (cumulativePaid === 0) {
-        cumulativePaid = Number(p.amount) || 0;
+        cumulativePaid = pAmt;
       }
 
       const remaining = Math.max(0, Number((grandTotal - cumulativePaid).toFixed(2)));
@@ -601,8 +675,9 @@ export class DaybookService {
         const remaining = Number(inv.balance_amount) || Math.max(0, grandTotal - paid);
         const pStatus = remaining <= 0.01 ? 'PAID' : (paid > 0 ? 'PARTIALLY PAID' : 'UNPAID');
 
-        // If payments exist as distinct records in payments table, the synthesized invoice row has amount = 0
-        const effectiveInflow = invPayments.length > 0 ? 0 : paid;
+        // Upfront payment is represented on the synthesized invoice entry; subsequent payments are synthesized separately
+        const firstPayAmt = invPayments.length > 0 ? Number(invPayments[0].amount) || 0 : paid;
+        const effectiveInflow = firstPayAmt > 0 ? firstPayAmt : paid;
 
         unifiedList.push({
           id: `db-syn-inv-${inv.id}`,
@@ -816,6 +891,7 @@ export class DaybookService {
 
     const finalFiltered: DaybookTransaction[] = [];
     const seenPaymentEventKeys = new Set<string>();
+    const seenInvoiceSaleRefs = new Set<string>();
     const seenCounterSaleRefs = new Set<string>();
 
     for (const tx of unifiedList) {
@@ -824,26 +900,30 @@ export class DaybookService {
         continue;
       }
 
-      // 1. INVOICE commercial rows:
-      // If payment records exist for this invoice, the invoice row represents the commercial contract (totalAmount)
-      // and unpaid balance (remainingAmount), with inflow amount = 0 so payments carry the cash movement.
-      if (tx.referenceType === 'INVOICE') {
-        const refNumKey = (tx.referenceNumber || '').toLowerCase().trim();
-        const refIdKey = (tx.referenceId || '').toLowerCase().trim();
-        if ((refNumKey && invoiceNumbersWithPayments.has(refNumKey)) || (refIdKey && invoiceIdsWithPayments.has(refIdKey))) {
-          tx.amount = 0;
+      // 1. COUNTER_SALE rows:
+      // Authoritative POS cash sale entry. Inflow is preserved.
+      if (tx.referenceType === 'COUNTER_SALE') {
+        const csKey = (tx.referenceNumber || tx.referenceId || tx.id).toLowerCase().trim();
+        if (seenCounterSaleRefs.has(csKey)) {
+          continue; // Drop duplicate counter sale row
         }
+        seenCounterSaleRefs.add(csKey);
+        if (tx.referenceNumber) seenCounterSaleRefs.add(tx.referenceNumber.toLowerCase().trim());
+        if (tx.referenceId) seenCounterSaleRefs.add(tx.referenceId.toLowerCase().trim());
         finalFiltered.push(tx);
         continue;
       }
 
-      // 2. COUNTER_SALE rows:
-      // A Counter Sale is a direct POS cash receipt. Its inflow is authoritative.
-      if (tx.referenceType === 'COUNTER_SALE') {
-        const csKey = (tx.referenceNumber || tx.referenceId || tx.id).toLowerCase().trim();
-        seenCounterSaleRefs.add(csKey);
-        if (tx.referenceNumber) seenCounterSaleRefs.add(tx.referenceNumber.toLowerCase().trim());
-        if (tx.referenceId) seenCounterSaleRefs.add(tx.referenceId.toLowerCase().trim());
+      // 2. INVOICE commercial sale rows:
+      // Primary document entry carrying initial upfront payment and grand total. Inflow is preserved.
+      if (tx.referenceType === 'INVOICE') {
+        const invKey = (tx.referenceNumber || tx.referenceId || tx.id).toLowerCase().trim();
+        if (seenInvoiceSaleRefs.has(invKey)) {
+          continue; // Drop duplicate invoice row
+        }
+        seenInvoiceSaleRefs.add(invKey);
+        if (tx.referenceNumber) seenInvoiceSaleRefs.add(tx.referenceNumber.toLowerCase().trim());
+        if (tx.referenceId) seenInvoiceSaleRefs.add(tx.referenceId.toLowerCase().trim());
         finalFiltered.push(tx);
         continue;
       }
@@ -853,18 +933,19 @@ export class DaybookService {
         const refNumKey = (tx.referenceNumber || '').toLowerCase().trim();
         const refIdKey = (tx.referenceId || '').toLowerCase().trim();
 
-        // If this payment is linked to a Counter Sale that already recorded the inflow, zero out duplicate payment inflow
-        if ((refNumKey && seenCounterSaleRefs.has(refNumKey)) || (refIdKey && seenCounterSaleRefs.has(refIdKey))) {
-          tx.amount = 0;
-          finalFiltered.push(tx);
+        // If this payment is linked to a Counter Sale that already recorded the inflow, DROP IT
+        if ((refNumKey && seenCounterSaleRefs.has(refNumKey)) || (refIdKey && seenCounterSaleRefs.has(refIdKey)) || counterSalePaymentIds.has(refIdKey)) {
+          continue;
+        }
+
+        // If this payment is the upfront payment for an invoice, it is already absorbed by the invoice row -> DROP IT
+        if (upfrontPaymentIds.has(refIdKey)) {
           continue;
         }
 
         // Check for duplicate representation of the exact same payment event
-        // Stable event key: referenceId (the canonical payment ID) or transactionCode
         const stableEventKey = tx.referenceId ? `PAY_REF:${tx.referenceId.toLowerCase().trim()}` : `PAY_CODE:${tx.transactionCode.toLowerCase().trim()}`;
         if (seenPaymentEventKeys.has(stableEventKey)) {
-          // Exact duplicate payment entry with same ID/code: drop
           continue;
         }
 
@@ -1390,12 +1471,22 @@ export class DaybookService {
             reconciledInvoices++;
           }
 
-          // Ensure local daybook sale entry has totalAmount
+          // Ensure local daybook sale entry has totalAmount and initial inflow
           const dbSaleIdx = localDaybook.findIndex((t) => t.referenceType === 'INVOICE' && (t.referenceId === inv.id || t.referenceNumber === inv.invoiceNumber));
+          const initialInflow = invPays.length > 0 ? Number(invPays[0].amount) || 0 : (inv.paidAmount || 0);
           if (dbSaleIdx >= 0) {
             localDaybook[dbSaleIdx].totalAmount = inv.grandTotal;
+            localDaybook[dbSaleIdx].amount = initialInflow;
             localDaybook[dbSaleIdx].remainingAmount = expectedBal;
             synced++;
+          }
+
+          // Remove any duplicate upfront payment entry in localDaybook
+          if (invPays.length > 0 && invPays[0].id) {
+            const dupPayIdx = localDaybook.findIndex((t) => t.referenceType === 'PAYMENT' && t.referenceId === invPays[0].id);
+            if (dupPayIdx >= 0) {
+              localDaybook.splice(dupPayIdx, 1);
+            }
           }
         }
         safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, localDaybook);
@@ -1479,31 +1570,58 @@ export class DaybookService {
         }
 
         // 3. Reconcile Payments into Daybook transactions with cumulative balance
+        // The first payment (upfront payment) is carried by the primary INVOICE entry.
+        // Subsequent payments (index >= 1) create separate CUSTOMER_PAYMENT Daybook rows.
         let runningCumulativePaid = 0;
-        for (const p of invPays) {
+        for (let i = 0; i < invPays.length; i++) {
+          const p = invPays[i];
           const pAmt = Number(p.amount) || 0;
           runningCumulativePaid += pAmt;
           const remainingAfterThisPay = Math.max(0, Number((grandTotal - runningCumulativePaid).toFixed(2)));
 
-          await this.recordFinancialTransaction({
-            referenceType: 'PAYMENT',
-            referenceId: p.id,
-            referenceNumber: inv.invoice_number || p.payment_number,
-            transactionType: 'CUSTOMER_PAYMENT',
-            direction: 'IN',
-            amount: pAmt,
-            totalAmount: grandTotal,
-            remainingAmount: remainingAfterThisPay,
-            paymentMode: p.method || 'Cash',
-            partyId: inv.customer_id,
-            partyName: inv.customer_name,
-            description: `Invoice #${inv.invoice_number}`,
-            notes: p.notes,
-            transactionDate: p.payment_date || inv.date,
-          });
+          if (i === 0) {
+            // Upfront payment: Ensure existingSale carries this initial inflow
+            if (existingSale) {
+              await supabase
+                .from('daybook_transactions')
+                .update({
+                  amount: pAmt,
+                  total_amount: grandTotal,
+                  remaining_amount: expectedBal,
+                  payment_status: expectedStatus.toUpperCase(),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', existingSale.id);
+            }
+            // Safely delete duplicate upfront payment row from daybook_transactions if it exists
+            await supabase
+              .from('daybook_transactions')
+              .delete()
+              .eq('workspace_id', wsId)
+              .eq('reference_type', 'PAYMENT')
+              .eq('reference_id', p.id);
+          } else {
+            // Subsequent payment (Scenario C)
+            await this.recordFinancialTransaction({
+              referenceType: 'PAYMENT',
+              referenceId: p.id,
+              referenceNumber: inv.invoice_number || p.payment_number,
+              transactionType: 'CUSTOMER_PAYMENT',
+              direction: 'IN',
+              amount: pAmt,
+              totalAmount: grandTotal,
+              remainingAmount: remainingAfterThisPay,
+              paymentMode: p.method || 'Cash',
+              partyId: inv.customer_id,
+              partyName: inv.customer_name,
+              description: `Invoice #${inv.invoice_number}`,
+              notes: p.notes,
+              transactionDate: p.payment_date || inv.date,
+            });
 
-          reconciledPayments++;
-          synced++;
+            reconciledPayments++;
+            synced++;
+          }
         }
       }
 
@@ -1533,6 +1651,15 @@ export class DaybookService {
           description: `Counter Sale #${sale.invoice_number || sale.sale_number}`,
           transactionDate: sale.sale_date,
         });
+
+        // Clean up any duplicate payment rows in daybook_transactions for this counter sale
+        await supabase
+          .from('daybook_transactions')
+          .delete()
+          .eq('workspace_id', wsId)
+          .eq('reference_type', 'PAYMENT')
+          .or(`reference_id.eq.${sale.id},reference_number.eq.${sale.invoice_number || sale.sale_number}`);
+
         synced++;
       }
 
@@ -1571,6 +1698,145 @@ export class DaybookService {
       if (options?.paymentMode && options.paymentMode !== 'ALL' && t.paymentMode !== options.paymentMode) return false;
       return true;
     });
+  }
+
+  /**
+   * Authoritative Cleanup of Duplicate Daybook Records
+   * Safely eliminates redundant upfront payment records without deleting genuine subsequent payments.
+   */
+  public async cleanDaybookDuplicates(): Promise<{ cleanedCount: number; details: string[] }> {
+    let cleanedCount = 0;
+    const details: string[] = [];
+    const wsId = await this.getWorkspaceId();
+
+    // 1. Clean local storage duplicates
+    try {
+      const local = safeGetTenantStorage<any>(LOCAL_DAYBOOK_KEY, []);
+      const invoiceSaleMap = new Map<string, any>();
+      const csSaleMap = new Map<string, any>();
+
+      local.forEach((t: any) => {
+        if (t.referenceType === 'INVOICE') {
+          if (t.referenceNumber) invoiceSaleMap.set(t.referenceNumber.toLowerCase().trim(), t);
+          if (t.referenceId) invoiceSaleMap.set(t.referenceId.toLowerCase().trim(), t);
+        } else if (t.referenceType === 'COUNTER_SALE') {
+          if (t.referenceNumber) csSaleMap.set(t.referenceNumber.toLowerCase().trim(), t);
+          if (t.referenceId) csSaleMap.set(t.referenceId.toLowerCase().trim(), t);
+        }
+      });
+
+      const cleanedLocal = local.filter((t: any) => {
+        if (t.referenceType === 'PAYMENT' || t.transactionType === 'CUSTOMER_PAYMENT') {
+          const numKey = (t.referenceNumber || '').toLowerCase().trim();
+          const idKey = (t.referenceId || '').toLowerCase().trim();
+
+          // If linked to Counter Sale, drop duplicate payment
+          if (csSaleMap.has(numKey) || csSaleMap.has(idKey)) {
+            cleanedCount++;
+            details.push(`Cleaned local counter sale payment duplicate: ${t.transactionCode || t.id}`);
+            return false;
+          }
+
+          // If linked to Invoice and invoice entry has same amount / is upfront payment
+          const matchingInv = invoiceSaleMap.get(numKey) || invoiceSaleMap.get(idKey);
+          if (matchingInv) {
+            const invInflow = Number(matchingInv.amount) || 0;
+            const payAmt = Number(t.amount) || 0;
+            if (invInflow === 0 && payAmt > 0) {
+              matchingInv.amount = payAmt;
+              cleanedCount++;
+              details.push(`Absorbed upfront payment ${t.transactionCode} into invoice ${matchingInv.referenceNumber}`);
+              return false;
+            } else if (invInflow > 0 && Math.abs(invInflow - payAmt) < 0.01) {
+              cleanedCount++;
+              details.push(`Cleaned local upfront invoice payment duplicate: ${t.transactionCode || t.id}`);
+              return false;
+            }
+          }
+        }
+        return true;
+      });
+
+      if (cleanedLocal.length !== local.length) {
+        safeSaveTenantStorage(LOCAL_DAYBOOK_KEY, cleanedLocal);
+      }
+    } catch (e: any) {
+      console.warn('[cleanDaybookDuplicates] Local cleanup notice:', e);
+    }
+
+    // 2. Clean Supabase database duplicates if configured
+    if (isSupabaseConfigured() && isValidUuid(wsId)) {
+      try {
+        const { data: dbTxs } = await supabase
+          .from('daybook_transactions')
+          .select('*')
+          .eq('workspace_id', wsId);
+
+        if (dbTxs && dbTxs.length > 0) {
+          const invEntries = new Map<string, any>();
+          const csEntries = new Map<string, any>();
+          const paymentsToDelete: string[] = [];
+
+          dbTxs.forEach((t: any) => {
+            if (t.reference_type === 'INVOICE') {
+              if (t.reference_number) invEntries.set(t.reference_number.toLowerCase().trim(), t);
+              if (t.reference_id) invEntries.set(t.reference_id.toLowerCase().trim(), t);
+            } else if (t.reference_type === 'COUNTER_SALE') {
+              if (t.reference_number) csEntries.set(t.reference_number.toLowerCase().trim(), t);
+              if (t.reference_id) csEntries.set(t.reference_id.toLowerCase().trim(), t);
+            }
+          });
+
+          for (const t of dbTxs) {
+            if (t.reference_type === 'PAYMENT' || t.transaction_type === 'CUSTOMER_PAYMENT') {
+              const numKey = (t.reference_number || '').toLowerCase().trim();
+              const idKey = (t.reference_id || '').toLowerCase().trim();
+
+              // Counter sale duplicate
+              if (csEntries.has(numKey) || csEntries.has(idKey)) {
+                paymentsToDelete.push(t.id);
+                cleanedCount++;
+                details.push(`Cleaned DB counter sale payment duplicate: ${t.id} (${t.transaction_code})`);
+                continue;
+              }
+
+              // Invoice upfront duplicate
+              const matchingInv = invEntries.get(numKey) || invEntries.get(idKey);
+              if (matchingInv) {
+                const invInflow = Number(matchingInv.amount) || 0;
+                const payAmt = Number(t.amount) || 0;
+                if (invInflow === 0 && payAmt > 0) {
+                  // Restore initial inflow on invoice row
+                  await supabase
+                    .from('daybook_transactions')
+                    .update({ amount: payAmt, updated_at: new Date().toISOString() })
+                    .eq('id', matchingInv.id);
+                  paymentsToDelete.push(t.id);
+                  cleanedCount++;
+                  details.push(`Absorbed DB upfront payment ${t.transaction_code} into invoice ${matchingInv.reference_number}`);
+                } else if (invInflow > 0 && Math.abs(invInflow - payAmt) < 0.01) {
+                  paymentsToDelete.push(t.id);
+                  cleanedCount++;
+                  details.push(`Cleaned DB upfront invoice payment duplicate: ${t.id} (${t.transaction_code})`);
+                }
+              }
+            }
+          }
+
+          if (paymentsToDelete.length > 0) {
+            await supabase
+              .from('daybook_transactions')
+              .delete()
+              .eq('workspace_id', wsId)
+              .in('id', paymentsToDelete);
+          }
+        }
+      } catch (e: any) {
+        console.warn('[cleanDaybookDuplicates] DB cleanup notice:', e);
+      }
+    }
+
+    return { cleanedCount, details };
   }
 }
 
