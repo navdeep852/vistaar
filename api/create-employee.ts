@@ -77,12 +77,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (serviceRoleKey) {
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
-    // Verify caller is active Owner
+    // Verify caller is active Owner and workspace is active
     const { data: callerProfile, error: callerProfErr } = await supabaseAdmin
       .from('profiles')
-      .select('id, role, status, workspace_id')
+      .select('id, role, status, workspace_id, workspaces!inner(id, is_active, suspension_reason)')
       .eq('id', callerUser.id)
       .single();
+
+    const ws = (callerProfile as any)?.workspaces;
+    if (ws && ws.is_active === false) {
+      return res.status(403).json({ success: false, error: `Workspace is suspended: ${ws.suspension_reason || 'Administrative action'}. Action denied.` });
+    }
 
     if (callerProfErr || !callerProfile || callerProfile.role !== 'owner' || callerProfile.status !== 'Active') {
       return res.status(403).json({ success: false, error: 'Only the workspace owner can create VISTAAR login accounts.' });

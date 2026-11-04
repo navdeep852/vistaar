@@ -705,7 +705,7 @@ export class SupabaseAuthService {
       // 2 & 5. Fetch user profile and confirm referenced workspace exists & authorized
       const { data: profile, error: profErr } = await supabase
         .from('profiles')
-        .select('id, workspace_id, employee_id, name, email, phone, department, designation, role, status, avatar_url, must_change_password, workspaces!inner(id, company_name)')
+        .select('id, workspace_id, employee_id, name, email, phone, department, designation, role, status, avatar_url, must_change_password, workspaces!inner(id, company_name, is_active, suspension_reason)')
         .eq('id', userId)
         .single();
 
@@ -747,6 +747,14 @@ export class SupabaseAuthService {
       const workspaceRecord = Array.isArray(profile.workspaces) ? profile.workspaces[0] : profile.workspaces;
       if (!workspaceRecord || !workspaceRecord.id) {
         throw new Error('[AUTH_WORKSPACE_UNAUTHORIZED] Referenced workspace not found or user lacks access rights.');
+      }
+
+      if (workspaceRecord && (workspaceRecord as any).is_active === false) {
+        await supabase.auth.signOut().catch(() => {});
+        this.currentProfile = null;
+        this.saveSessionToStorage(null);
+        this.notify();
+        throw new Error(`[WORKSPACE_STATUS_SUSPENDED] Workspace has been suspended by administration. Reason: ${(workspaceRecord as any).suspension_reason || 'Administrative action'}. Access denied.`);
       }
 
       if (profile.status && profile.status !== 'Active') {
