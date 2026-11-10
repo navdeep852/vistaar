@@ -141,9 +141,9 @@ export const Header: React.FC<HeaderProps> = ({
   const currentTabInfo = tabTitles[activeTab] || { title: 'Overview', desc: 'VISTAAR — Run Better. Grow Wider.' };
 
   return (
-    <header className="hidden lg:flex h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800/80 px-4 sm:px-6 lg:px-8 items-center justify-between sticky top-0 z-20 shadow-xs no-print transition-colors duration-200">
+    <header className="hidden lg:flex h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800/80 px-3 sm:px-4 lg:px-6 2xl:px-8 items-center justify-between sticky top-0 z-20 shadow-xs no-print transition-colors duration-200 overflow-x-hidden">
       {/* 1. Left Hierarchy: [Sidebar Toggle] + [VISTAAR Brand when collapsed] + [Search Bar] */}
-      <div className="flex items-center gap-3 shrink-0">
+      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-shrink">
         {onToggleSidebar && (
           <button
             type="button"
@@ -165,28 +165,28 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         )}
 
-        {/* Global Search Bar — Positioned immediately after sidebar toggle with consistent spacing */}
-        <div className="w-56 sm:w-64 lg:w-72 xl:w-80 min-w-[200px] shrink-0">
+        {/* Global Search Bar — Responsive width with sensible min/max constraints */}
+        <div className="w-48 sm:w-56 md:w-64 lg:w-72 xl:w-80 min-w-[180px] max-w-[320px] 2xl:max-w-[360px] flex-shrink">
           <GlobalSearch setActiveTab={setActiveTab} />
         </div>
       </div>
 
-      {/* 2. Middle: Page Title & Breadcrumb (Responsive, truncates gracefully without causing overflow) */}
-      <div className="hidden xl:flex items-center min-w-0 flex-1 px-4">
+      {/* 2. Middle: Page Title & Breadcrumb (Displays on wide desktop viewports) */}
+      <div className="hidden 2xl:flex items-center min-w-0 flex-1 px-4">
         <div className="min-w-0">
           <h2 className="text-sm lg:text-base font-bold text-slate-900 dark:text-slate-100 leading-tight truncate">
             {currentTabInfo.title}
           </h2>
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden 2xl:block truncate">
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
             {currentTabInfo.desc}
           </p>
         </div>
       </div>
 
       {/* 3. Action Controls */}
-      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+      <div className="flex items-center gap-1.5 sm:gap-2 lg:gap-2.5 shrink-0">
         {/* Branch / Operating Location Switcher */}
-        <BranchSwitcher onManageBranches={() => setActiveTab('settings')} />
+        <BranchSwitcher onManageBranches={() => setActiveTab('settings')} className="shrink-0" />
 
         {/* Dark/Light Theme Control */}
         <ThemeToggle variant="compact" />
@@ -195,7 +195,7 @@ export const Header: React.FC<HeaderProps> = ({
         {activeTab === 'dashboard' && (
           <button
             onClick={() => window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'))}
-            className="p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
             title="Refresh Dashboard"
             aria-label="Refresh Dashboard"
           >
@@ -207,22 +207,23 @@ export const Header: React.FC<HeaderProps> = ({
         {activeTab === 'dashboard' && (
           <button
             onClick={() => setActiveTab('analytics')}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-blue-200/80 dark:border-blue-900/60 bg-blue-50/80 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 font-semibold text-xs sm:text-sm shadow-xs transition-colors"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl border border-blue-200/80 dark:border-blue-900/60 bg-blue-50/80 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 font-semibold text-xs sm:text-sm shadow-xs transition-colors shrink-0"
             title="Open Enterprise Analytics"
           >
-            <BarChart3 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            <span>Analytics</span>
+            <BarChart3 className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+            <span className="hidden xl:inline">Analytics</span>
           </button>
         )}
 
         {/* Quick Create Dropdown */}
-        <div className="relative" ref={quickRef}>
+        <div className="relative shrink-0" ref={quickRef}>
           <button
             onClick={() => setQuickCreateOpen(!quickCreateOpen)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs sm:text-sm shadow-md shadow-blue-600/20 transition-colors"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs sm:text-sm shadow-md shadow-blue-600/20 transition-colors shrink-0"
+            title="Create New Transaction or Record"
           >
-            <Plus className="w-4 h-4" />
-            <span>Create New</span>
+            <Plus className="w-4 h-4 shrink-0" />
+            <span className="hidden sm:inline">Create New</span>
           </button>
 
           {quickCreateOpen && (
@@ -282,10 +283,12 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Notifications Popover */}
-        <div className="relative" ref={notifRef}>
+        <div className="relative shrink-0" ref={notifRef}>
           <button
             onClick={() => setNotifOpen(!notifOpen)}
-            className="p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors relative"
+            className="p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors relative shrink-0"
+            title="Notifications"
+            aria-label="Notifications"
           >
             <Bell className="w-5 h-5" />
             {unreadCount > 0 && (
@@ -340,13 +343,14 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* User Profile Menu */}
-        <div className="relative" ref={userRef}>
+        <div className="relative shrink-0" ref={userRef}>
           <button
             onClick={() => setUserMenuOpen(!userMenuOpen)}
-            className="flex items-center gap-2.5 p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            className="flex items-center gap-2 p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0 max-w-[180px]"
+            title={`Account: ${user?.name || (user?.role === 'employee' ? 'Employee' : 'Owner')}`}
           >
-            <UserAvatar name={user?.name} avatarUrl={user?.avatarUrl} size="sm" />
-            <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 hidden md:block">
+            <UserAvatar name={user?.name} avatarUrl={user?.avatarUrl} size="sm" className="shrink-0" />
+            <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[85px] sm:max-w-[110px] xl:max-w-[140px] shrink-0">
               {user?.name || (user?.role === 'employee' ? 'Employee' : 'Owner')}
             </span>
           </button>

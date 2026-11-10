@@ -74,8 +74,8 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
         title="Assigned Operating Location (Locked to your assigned branch)"
       >
         <CurrentIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
-        <span className="truncate max-w-[130px]">{currentBranch?.branchName || 'Assigned Branch'}</span>
-        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">
+        <span className="truncate max-w-[105px] xl:max-w-[135px]">{currentBranch?.branchName || 'Assigned Branch'}</span>
+        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono hidden xl:inline">
           {currentBranch?.branchCode}
         </span>
         <Lock className="w-3 h-3 text-slate-400 shrink-0 ml-0.5" />
@@ -123,7 +123,7 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/60 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-700 transition-all text-xs font-semibold shadow-2xs cursor-pointer group"
+        className="flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/60 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-700 transition-all text-xs font-semibold shadow-2xs cursor-pointer group"
         title="Switch Operating Branch (Owner Access)"
       >
         <div className="w-6 h-6 rounded-lg bg-blue-100/80 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
@@ -134,7 +134,7 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
           <span className="text-[9px] text-slate-400 dark:text-slate-500 font-medium uppercase tracking-wider leading-none">
             Branch / Location
           </span>
-          <span className="text-xs font-bold text-slate-900 dark:text-slate-100 leading-tight truncate max-w-[150px]">
+          <span className="text-xs font-bold text-slate-900 dark:text-slate-100 leading-tight truncate max-w-[110px] xl:max-w-[150px]">
             {isAllBranchesSelected ? 'All Branches' : currentBranch?.branchName || 'Select Branch'}
           </span>
         </div>

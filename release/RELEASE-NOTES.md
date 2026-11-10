@@ -13,7 +13,8 @@
 ## 1. Release Highlights & Changelog
 
 ### Version 1.0.1 (November 2026) — Maintenance & Parity Release
-- **Header UI Overlap Resolution**: Completely eliminated horizontal collision between the desktop search bar and adjacent sidebar navigation toggle (`PanelLeft`). Anchored search bar with fixed `shrink-0` bounds (`min-w-[200px]`), standard `h-9` height, and responsive middle breadcrumbs.
+- **Desktop Header Search Bar Width & Profile Protection**: Optimized desktop header flex distribution by placing responsive width boundaries on the global search input (`min-w-[180px]`, default `280px–320px`, `max-w-[360px]`). Strictly protected all 8 right-side action controls with `shrink-0` bounds—ensuring that the user profile section (avatar and username) is never pushed off-screen or clipped across all supported desktop window dimensions (1024x768 to 1920x1080+).
+- **Header UI Overlap Resolution**: Completely eliminated horizontal collision between the desktop search bar and adjacent sidebar navigation toggle (`PanelLeft`). Anchored search bar with fixed bounds, standard `h-9` height, and responsive middle breadcrumbs.
 - **Workspace Authorization Schema Parity**: Aligned database workspace resolution queries with authoritative PostgreSQL `deleted_at` soft-delete architecture (eliminating runtime failures regarding nonexistent `is_active` / `suspension_reason` columns).
 - **Universal Cross-Platform Synchronization**: Integrated the project-wide development standard, automated 9-point verification suite (`npm run verify:cross-platform`), and multi-platform build scripts ensuring Web, Desktop, and Mobile stay synchronized.
 - **Accounting & Daybook Deduplication**: Atomic database transaction locking prevents duplicate entries across counter sales and tax invoices.
@@ -73,13 +74,13 @@ You can verify the authenticity and integrity of the installer before running by
 
 ```powershell
 certutil -hashfile VISTAAR-Setup.exe SHA256
-# Expected: ab0a636811811ab206d09106a5f5f81a772c4b306b0153d9027d8af865b844a1
+# Expected: F8404CC1E688915B3458F07ACBE2C8E1DABD3D1C53F3F15CD920B35626242816
 ```
 
 | File Name | Version | Architecture | SHA-256 Checksum |
 | :--- | :--- | :--- | :--- |
-| `VISTAAR-Setup.exe` | 1.0.1 | x86_64 | `ab0a636811811ab206d09106a5f5f81a772c4b306b0153d9027d8af865b844a1` |
-| `VISTAAR_1.0.1_x64-setup.exe` | 1.0.1 | x86_64 | `ab0a636811811ab206d09106a5f5f81a772c4b306b0153d9027d8af865b844a1` |
+| `VISTAAR-Setup.exe` | 1.0.1 | x86_64 | `F8404CC1E688915B3458F07ACBE2C8E1DABD3D1C53F3F15CD920B35626242816` |
+| `VISTAAR_1.0.1_x64-setup.exe` | 1.0.1 | x86_64 | `F8404CC1E688915B3458F07ACBE2C8E1DABD3D1C53F3F15CD920B35626242816` |
 
 ---
 

@@ -22,7 +22,7 @@ export default defineConfig({
     host: true,
     open: false,
     watch: {
-      ignored: ['**/data/**', '**/.data/**', '**/data/store.json'],
+      ignored: ['**/data/**', '**/.data/**', '**/data/store.json', '**/src-tauri/target/**', '**/android/**', '**/ios/**'],
     },
   },
   build: {
