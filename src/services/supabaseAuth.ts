@@ -705,7 +705,7 @@ export class SupabaseAuthService {
       // 2 & 5. Fetch user profile and confirm referenced workspace exists & authorized
       const { data: profile, error: profErr } = await supabase
         .from('profiles')
-        .select('id, workspace_id, employee_id, name, email, phone, department, designation, role, status, avatar_url, must_change_password, workspaces!inner(id, company_name, is_active, suspension_reason)')
+        .select('id, workspace_id, employee_id, name, email, phone, department, designation, role, status, avatar_url, must_change_password, workspaces!inner(id, company_name, deleted_at)')
         .eq('id', userId)
         .single();
 
@@ -725,7 +725,28 @@ export class SupabaseAuthService {
             throw new Error('[AUTH_WORKSPACE_UNAUTHORIZED] Referenced workspace does not exist or access is denied.');
           }
         }
-        throw new Error(`[AUTH_WORKSPACE_RESOLUTION_FAILED] Profile query failed: ${profErr.message}`);
+        this.currentProfile = null;
+        this.saveSessionToStorage(null);
+
+        const isMissingColumn = profErr.message?.includes('does not exist') || profErr.code === '42703';
+        const isDev = Boolean(
+          (typeof import.meta !== 'undefined' && import.meta.env?.DEV) ||
+          (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
+        );
+
+        if (isMissingColumn) {
+          if (isDev) {
+            throw new Error(`[AUTH_SCHEMA_MISMATCH] Database schema mismatch during workspace resolution: ${profErr.message}. Ensure your database schema columns match the client query.`);
+          } else {
+            throw new Error('[AUTH_WORKSPACE_RESOLUTION_FAILED] Service configuration error during workspace authorization. Please contact your system administrator.');
+          }
+        }
+
+        if (isDev) {
+          throw new Error(`[AUTH_WORKSPACE_RESOLUTION_FAILED] Profile query failed: ${profErr.message}`);
+        } else {
+          throw new Error('[AUTH_WORKSPACE_RESOLUTION_FAILED] Unable to complete workspace authorization. Please try again or contact support.');
+        }
       }
 
       if (!profile) {
@@ -749,12 +770,12 @@ export class SupabaseAuthService {
         throw new Error('[AUTH_WORKSPACE_UNAUTHORIZED] Referenced workspace not found or user lacks access rights.');
       }
 
-      if (workspaceRecord && (workspaceRecord as any).is_active === false) {
+      if (workspaceRecord && (workspaceRecord as any).deleted_at) {
         await supabase.auth.signOut().catch(() => {});
         this.currentProfile = null;
         this.saveSessionToStorage(null);
         this.notify();
-        throw new Error(`[WORKSPACE_STATUS_SUSPENDED] Workspace has been suspended by administration. Reason: ${(workspaceRecord as any).suspension_reason || 'Administrative action'}. Access denied.`);
+        throw new Error('[WORKSPACE_STATUS_DEACTIVATED] Workspace has been deactivated or soft-deleted. Access denied.');
       }
 
       if (profile.status && profile.status !== 'Active') {

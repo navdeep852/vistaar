@@ -2154,9 +2154,9 @@ export class BranchService {
         // Query workspaces belonging to this organization
         const { data: wsRows, error: wsErr } = await supabase
           .from('workspaces')
-          .select('id, organization_id, company_name, branch_name, branch_code, is_main_branch, is_active, branch_password_hash, created_at, updated_at')
+          .select('id, organization_id, company_name, branch_name, branch_code, is_main_branch, branch_password_hash, created_at, updated_at, deleted_at')
           .eq('organization_id', orgId)
-          .eq('is_active', true)
+          .is('deleted_at', null)
           .order('is_main_branch', { ascending: false })
           .order('branch_name', { ascending: true });
 
@@ -2168,7 +2168,7 @@ export class BranchService {
             branchCode: w.branch_code || (w.is_main_branch ? 'MAIN' : 'BR'),
             branchName: w.branch_name || w.company_name || 'Branch',
             branchType: 'Store',
-            status: w.is_active ? 'Active' : 'Inactive',
+            status: w.deleted_at ? 'Inactive' : 'Active',
             isMainBranch: Boolean(w.is_main_branch),
             hasPassword: Boolean(w.branch_password_hash),
             createdAt: w.created_at,

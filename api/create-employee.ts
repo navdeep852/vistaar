@@ -77,16 +77,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (serviceRoleKey) {
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
-    // Verify caller is active Owner and workspace is active
+    // Verify caller is active Owner and workspace is active (not soft-deleted)
     const { data: callerProfile, error: callerProfErr } = await supabaseAdmin
       .from('profiles')
-      .select('id, role, status, workspace_id, workspaces!inner(id, is_active, suspension_reason)')
+      .select('id, role, status, workspace_id, workspaces!inner(id, deleted_at)')
       .eq('id', callerUser.id)
       .single();
 
     const ws = (callerProfile as any)?.workspaces;
-    if (ws && ws.is_active === false) {
-      return res.status(403).json({ success: false, error: `Workspace is suspended: ${ws.suspension_reason || 'Administrative action'}. Action denied.` });
+    if (ws && ws.deleted_at) {
+      return res.status(403).json({ success: false, error: 'Workspace has been deactivated or removed. Action denied.' });
     }
 
     if (callerProfErr || !callerProfile || callerProfile.role !== 'owner' || callerProfile.status !== 'Active') {
