@@ -50,12 +50,14 @@ import { useBranch } from '../context/BranchContext';
 
 interface InvoicesViewProps {
   initialOpenCreate?: boolean;
+  initialOpenPayment?: boolean;
   onNavigateTab?: (tab: string) => void;
   activeTab?: string;
 }
 
 export const InvoicesView: React.FC<InvoicesViewProps> = ({
   initialOpenCreate = false,
+  initialOpenPayment = false,
   onNavigateTab,
   activeTab,
 }) => {
@@ -92,6 +94,13 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   const [mode, setMode] = useState<'list' | 'gallery' | 'editor'>(
     initialOpenCreate ? (typeof window !== 'undefined' && window.innerWidth < 768 ? 'editor' : 'gallery') : 'list'
   );
+
+  useEffect(() => {
+    if (initialOpenPayment) {
+      setStatusFilter('UNPAID');
+      showToast('Filtered for unpaid invoices — select Record Payment on an invoice', 'info');
+    }
+  }, [initialOpenPayment]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(() => store.getLastUsedTemplate('invoice') || 'inv-modern-blue');
   const [editingDraftInvoice, setEditingDraftInvoice] = useState<Invoice | null>(null);
 

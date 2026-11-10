@@ -568,6 +568,7 @@ function MainAppContent() {
       setModalToOpen('product');
     } else if (modalType === 'payment') {
       handleSafeSetActiveTab('invoices');
+      setModalToOpen('payment');
     }
   };
 
@@ -597,6 +598,7 @@ function MainAppContent() {
         return (
           <InvoicesView
             initialOpenCreate={modalToOpen === 'invoice'}
+            initialOpenPayment={modalToOpen === 'payment'}
             onNavigateTab={handleSafeSetActiveTab}
             activeTab={activeTab}
           />

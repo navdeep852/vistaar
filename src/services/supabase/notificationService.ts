@@ -24,7 +24,16 @@ export class NotificationService {
         const errStr = handleSupabaseError(error, 'getNotifications');
         return { data: [], error: errStr };
       }
-      return { data: data || [] };
+      const mapped: AppNotification[] = (data || []).map((row: any) => ({
+        id: row.id,
+        type: row.type || 'followup_due',
+        title: row.title || 'Notification',
+        message: row.message || '',
+        read: Boolean(row.read),
+        date: row.created_at || row.date || new Date().toISOString(),
+        linkRoute: row.route_link || row.link_route || row.linkRoute || '',
+      }));
+      return { data: mapped };
     } catch (e: any) {
       const errStr = handleSupabaseError(e, 'getNotifications');
       return { data: [], error: errStr };

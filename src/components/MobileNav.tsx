@@ -77,6 +77,8 @@ import { UserAvatar } from './UserAvatar';
 import { BranchSwitcher } from './BranchSwitcher';
 import { useTheme } from '../context/ThemeContext';
 import { hasCurrentUserPermission } from '../lib/permissions';
+import { shareService } from '../platform/shareService';
+import { currentPlatform } from '../platform/platformDetection';
 
 interface MobileNavProps {
   activeTab: string;
@@ -306,12 +308,15 @@ export const MobileNav: React.FC<MobileNavProps> = ({
         </nav>
 
         <div className="p-4 pb-[max(env(safe-area-inset-bottom),1rem)] border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80 space-y-2 shrink-0">
-          <a
-            href="/"
-            onClick={(e) => {
-              e.preventDefault();
+          <button
+            type="button"
+            onClick={async () => {
               setDrawerOpen(false);
-              navigateTo('/');
+              if (currentPlatform.isDesktop || currentPlatform.isNativeMobile) {
+                await shareService.openExternalUrl('https://vistaar.grovyx.com');
+              } else {
+                navigateTo('/');
+              }
             }}
             className="w-full min-h-[44px] flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer touch-manipulation"
           >
@@ -320,7 +325,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
               <span>VISTAAR Website</span>
             </div>
             <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-          </a>
+          </button>
           <ThemeToggle variant="button" />
           <button
             onClick={() => {

@@ -27,6 +27,10 @@ import { UserAvatar } from './UserAvatar';
 import { GlobalSearch } from './GlobalSearch';
 import { BranchSwitcher } from './BranchSwitcher';
 import { useScreenLock } from '../context/ScreenLockContext';
+import { showToast } from './Toast';
+import { shareService } from '../platform/shareService';
+import { currentPlatform } from '../platform/platformDetection';
+import { hasCurrentUserPermission } from '../lib/permissions';
 
 interface HeaderProps {
   activeTab: string;
@@ -49,10 +53,28 @@ export const Header: React.FC<HeaderProps> = ({
   const [notifOpen, setNotifOpen] = useState(false);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const notifRef = useRef<HTMLDivElement>(null);
   const quickRef = useRef<HTMLDivElement>(null);
   const userRef = useRef<HTMLDivElement>(null);
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
+      window.dispatchEvent(new CustomEvent('vistaar:branch_changed'));
+      await loadNotifs();
+      showToast('Workspace data refreshed successfully', 'success');
+    } catch (err: any) {
+      showToast('Failed to refresh data', 'error');
+    } finally {
+      setTimeout(() => {
+        setIsRefreshing(false);
+      }, 650);
+    }
+  };
 
   // Global Desktop Keyboard Shortcuts (Ctrl+B for sidebar toggle; Ctrl+K handled in GlobalSearch)
   useEffect(() => {
@@ -107,8 +129,9 @@ export const Header: React.FC<HeaderProps> = ({
       await notificationService.markAsRead(n.id);
       loadNotifs();
     }
-    if (n.linkRoute) {
-      const tab = n.linkRoute.replace('/', '');
+    const targetRoute = n.linkRoute || (n as any).route_link || (n as any).link_route;
+    if (targetRoute) {
+      const tab = targetRoute.replace(/^\//, '');
       setActiveTab(tab);
     }
     setNotifOpen(false);
@@ -141,7 +164,7 @@ export const Header: React.FC<HeaderProps> = ({
   const currentTabInfo = tabTitles[activeTab] || { title: 'Overview', desc: 'VISTAAR — Run Better. Grow Wider.' };
 
   return (
-    <header className="hidden lg:flex h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800/80 px-3 sm:px-4 lg:px-6 2xl:px-8 items-center justify-between sticky top-0 z-20 shadow-xs no-print transition-colors duration-200 overflow-x-hidden">
+    <header className="hidden lg:flex h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800/80 px-3 sm:px-4 lg:px-6 2xl:px-8 items-center justify-between sticky top-0 z-20 shadow-xs no-print transition-colors duration-200">
       {/* 1. Left Hierarchy: [Sidebar Toggle] + [VISTAAR Brand when collapsed] + [Search Bar] */}
       <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-shrink">
         {onToggleSidebar && (
@@ -157,12 +180,18 @@ export const Header: React.FC<HeaderProps> = ({
         )}
 
         {isSidebarCollapsed && (
-          <div className="flex items-center gap-2 pr-3 border-r border-slate-200 dark:border-slate-800 shrink-0">
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            className="flex items-center gap-2 pr-3 border-r border-slate-200 dark:border-slate-800 shrink-0 cursor-pointer hover:opacity-85 transition-opacity"
+            title="Expand Sidebar (Ctrl+B)"
+            aria-label="Expand Sidebar"
+          >
             <img src={logoIcon} alt="VISTAAR" className="h-6 w-6 object-contain" />
             <span className="font-extrabold text-sm tracking-wider text-slate-900 dark:text-slate-100 font-sans">
               VISTAAR
             </span>
-          </div>
+          </button>
         )}
 
         {/* Global Search Bar — Responsive width with sensible min/max constraints */}
@@ -191,26 +220,33 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Dark/Light Theme Control */}
         <ThemeToggle variant="compact" />
 
-        {/* Subtle Dashboard Refresh */}
-        {activeTab === 'dashboard' && (
-          <button
-            onClick={() => window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'))}
-            className="p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
-            title="Refresh Dashboard"
-            aria-label="Refresh Dashboard"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
-        )}
+        {/* Workspace Data Refresh */}
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          className={`p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0 cursor-pointer ${
+            isRefreshing ? 'opacity-70 pointer-events-none' : ''
+          }`}
+          title="Refresh Workspace Data"
+          aria-label="Refresh Workspace Data"
+        >
+          <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-blue-600 dark:text-blue-400' : ''}`} />
+        </button>
 
-        {/* Analytics Action Button on Dashboard */}
-        {activeTab === 'dashboard' && (
+        {/* Analytics Action Button (Only displayed for authorized users) */}
+        {hasCurrentUserPermission('analytics.view') && (
           <button
+            type="button"
             onClick={() => setActiveTab('analytics')}
-            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl border border-blue-200/80 dark:border-blue-900/60 bg-blue-50/80 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 font-semibold text-xs sm:text-sm shadow-xs transition-colors shrink-0"
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl border font-semibold text-xs sm:text-sm shadow-xs transition-colors shrink-0 cursor-pointer ${
+              activeTab === 'analytics'
+                ? 'border-blue-500 bg-blue-600 text-white'
+                : 'border-blue-200/80 dark:border-blue-900/60 bg-blue-50/80 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60'
+            }`}
             title="Open Enterprise Analytics"
           >
-            <BarChart3 className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+            <BarChart3 className={`w-4 h-4 ${activeTab === 'analytics' ? 'text-white' : 'text-blue-600 dark:text-blue-400'} shrink-0`} />
             <span className="hidden xl:inline">Analytics</span>
           </button>
         )}
@@ -330,7 +366,9 @@ export const Header: React.FC<HeaderProps> = ({
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-slate-900 dark:text-slate-100">{n.title}</span>
                         <span className="text-[10px] text-slate-400 dark:text-slate-500">
-                          {new Date(n.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {n.date && !isNaN(new Date(n.date).getTime())
+                            ? new Date(n.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                            : 'Recent'}
                         </span>
                       </div>
                       <p className="text-slate-600 dark:text-slate-300 mt-1">{n.message}</p>
@@ -377,22 +415,26 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
 
               <button
+                type="button"
                 onClick={() => {
                   setUserMenuOpen(false);
                   setActiveTab('settings');
                 }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
               >
                 <UserIcon className="w-4 h-4 text-slate-500 dark:text-slate-400" />
                 <span>{user?.role === 'employee' ? 'My Profile & Settings' : 'Profile & Business Settings'}</span>
               </button>
 
-              <a
-                href="/"
-                onClick={(e) => {
-                  e.preventDefault();
+              <button
+                type="button"
+                onClick={async () => {
                   setUserMenuOpen(false);
-                  navigateTo('/');
+                  if (currentPlatform.isDesktop || currentPlatform.isNativeMobile) {
+                    await shareService.openExternalUrl('https://vistaar.grovyx.com');
+                  } else {
+                    navigateTo('/');
+                  }
                 }}
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
               >
@@ -401,9 +443,10 @@ export const Header: React.FC<HeaderProps> = ({
                   <span>VISTAAR Website</span>
                 </div>
                 <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-              </a>
+              </button>
 
               <button
+                type="button"
                 onClick={() => {
                   setUserMenuOpen(false);
                   lockScreen();
@@ -415,8 +458,12 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
 
               <button
-                onClick={() => supabaseAuthService.logout()}
-                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors mt-1"
+                type="button"
+                onClick={async () => {
+                  setUserMenuOpen(false);
+                  await supabaseAuthService.logout();
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors mt-1 cursor-pointer"
               >
                 <LogOut className="w-4 h-4 text-rose-600 dark:text-rose-400" />
                 <span>Sign Out</span>

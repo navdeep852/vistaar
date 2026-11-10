@@ -13,6 +13,8 @@
 ## 1. Release Highlights & Changelog
 
 ### Version 1.0.1 (November 2026) — Maintenance & Parity Release
+- **Header Interaction & Functional Controls Fix**: Resolved all non-responsive header controls across Web, Desktop, and Mobile. Removed vertical container clipping (`overflow-x-hidden`) to allow all dropdowns and popovers (Quick Create, Notifications, User Menu, Branch Switcher, Global Search) to render freely without truncation.
+- **Header Action Restorations**: Restored the Refresh button with active `animate-spin` loading states, cross-view event dispatching (`vistaar:refresh-dashboard` and `vistaar:branch_changed`), notification syncing, and toast feedback. Secured the Analytics shortcut with role permissions (`analytics.view`). Linked "Record Payment" to unpaid invoice filtering. Integrated "VISTAAR Website" with native system browser launching via Tauri and Capacitor. Normalized notification database mapping (`created_at` -> `date`, `route_link` -> `linkRoute`) for proper timestamps and route navigation.
 - **Desktop Header Search Bar Width & Profile Protection**: Optimized desktop header flex distribution by placing responsive width boundaries on the global search input (`min-w-[180px]`, default `280px–320px`, `max-w-[360px]`). Strictly protected all 8 right-side action controls with `shrink-0` bounds—ensuring that the user profile section (avatar and username) is never pushed off-screen or clipped across all supported desktop window dimensions (1024x768 to 1920x1080+).
 - **Header UI Overlap Resolution**: Completely eliminated horizontal collision between the desktop search bar and adjacent sidebar navigation toggle (`PanelLeft`). Anchored search bar with fixed bounds, standard `h-9` height, and responsive middle breadcrumbs.
 - **Workspace Authorization Schema Parity**: Aligned database workspace resolution queries with authoritative PostgreSQL `deleted_at` soft-delete architecture (eliminating runtime failures regarding nonexistent `is_active` / `suspension_reason` columns).
@@ -74,13 +76,13 @@ You can verify the authenticity and integrity of the installer before running by
 
 ```powershell
 certutil -hashfile VISTAAR-Setup.exe SHA256
-# Expected: F8404CC1E688915B3458F07ACBE2C8E1DABD3D1C53F3F15CD920B35626242816
+# Expected: 9DD5B694CECA386535502C80F0FE324450A209ACE2F9E91186FA8CAC3E9489EE
 ```
 
 | File Name | Version | Architecture | SHA-256 Checksum |
 | :--- | :--- | :--- | :--- |
-| `VISTAAR-Setup.exe` | 1.0.1 | x86_64 | `F8404CC1E688915B3458F07ACBE2C8E1DABD3D1C53F3F15CD920B35626242816` |
-| `VISTAAR_1.0.1_x64-setup.exe` | 1.0.1 | x86_64 | `F8404CC1E688915B3458F07ACBE2C8E1DABD3D1C53F3F15CD920B35626242816` |
+| `VISTAAR-Setup.exe` | 1.0.1 | x86_64 | `9DD5B694CECA386535502C80F0FE324450A209ACE2F9E91186FA8CAC3E9489EE` |
+| `VISTAAR_1.0.1_x64-setup.exe` | 1.0.1 | x86_64 | `9DD5B694CECA386535502C80F0FE324450A209ACE2F9E91186FA8CAC3E9489EE` |
 
 ---
 
