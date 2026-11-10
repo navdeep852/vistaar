@@ -6,6 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:web": "tsc -b && vite build",
+    "build:desktop": "tauri build",
+    "build:mobile": "powershell -ExecutionPolicy Bypass -File ./scripts/build_android_apk.ps1",
+    "sync:mobile": "cap copy",
+    "build:all": "npm run build && npm run sync:mobile && npm run build:mobile",
+    "build:cross-platform": "powershell -ExecutionPolicy Bypass -File ./scripts/sync_and_build_cross_platform.ps1",
+    "verify:cross-platform": "node scripts/verify_cross_platform_synchronization.cjs",
     "lint": "oxlint",
     "preview": "vite preview",
     "tauri": "tauri"
