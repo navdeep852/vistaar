@@ -142,8 +142,8 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="hidden lg:flex h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800/80 px-4 sm:px-6 lg:px-8 items-center justify-between sticky top-0 z-20 shadow-xs no-print transition-colors duration-200">
-      {/* 1. Left Hierarchy: [Sidebar Toggle] + [VISTAAR Brand when collapsed / Page Title & Breadcrumb] */}
-      <div className="flex items-center gap-3 min-w-0">
+      {/* 1. Left Hierarchy: [Sidebar Toggle] + [VISTAAR Brand when collapsed] + [Search Bar] */}
+      <div className="flex items-center gap-3 shrink-0">
         {onToggleSidebar && (
           <button
             type="button"
@@ -165,23 +165,26 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         )}
 
+        {/* Global Search Bar — Positioned immediately after sidebar toggle with consistent spacing */}
+        <div className="w-56 sm:w-64 lg:w-72 xl:w-80 min-w-[200px] shrink-0">
+          <GlobalSearch setActiveTab={setActiveTab} />
+        </div>
+      </div>
+
+      {/* 2. Middle: Page Title & Breadcrumb (Responsive, truncates gracefully without causing overflow) */}
+      <div className="hidden xl:flex items-center min-w-0 flex-1 px-4">
         <div className="min-w-0">
-          <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 leading-tight truncate">
+          <h2 className="text-sm lg:text-base font-bold text-slate-900 dark:text-slate-100 leading-tight truncate">
             {currentTabInfo.title}
           </h2>
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden xl:block truncate">
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden 2xl:block truncate">
             {currentTabInfo.desc}
           </p>
         </div>
       </div>
 
-      {/* 2. Middle: Desktop Global Search / Quick Jump */}
-      <div className="hidden md:flex items-center flex-1 max-w-xs lg:max-w-md xl:max-w-lg mx-4">
-        <GlobalSearch setActiveTab={setActiveTab} />
-      </div>
-
-      {/* Action Controls */}
-      <div className="flex items-center gap-2 sm:gap-3">
+      {/* 3. Action Controls */}
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {/* Branch / Operating Location Switcher */}
         <BranchSwitcher onManageBranches={() => setActiveTab('settings')} />
 
