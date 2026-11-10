@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # VISTAAR — Unified Cross-Platform Synchronization & Build Automation Script
 # Orchestrates build, synchronization, and verification for:
 # 1. Web Application (Vite / React)
@@ -100,3 +100,4 @@ Write-Host "| Web Application     | Implemented | dist/                         
 Write-Host "| Desktop Application | Implemented | src-tauri/target/release/ & release/VISTAAR-Setup.exe        |" -ForegroundColor Green
 Write-Host "| Mobile Application  | Implemented | android/app/build/outputs/apk/debug/app-debug.apk (11.7 MB)  |" -ForegroundColor Green
 Write-Host ""
+

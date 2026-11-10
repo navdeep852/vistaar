@@ -1,6 +1,6 @@
 [package]
 name = "vistaar"
-version = "1.0.0"
+version = "1.0.1"
 description = "VISTAAR Business OS — Run Better. Grow Wider."
 authors = ["GROVYX"]
 license = ""

@@ -1,29 +1,32 @@
 # VISTAAR Desktop — Production Release Notes
 
 **Product**: VISTAAR Desktop (Business OS)  
-**Version**: 1.0.0  
+**Latest Version**: 1.0.1  
 **Build Architecture**: Windows x64 (`x86_64-pc-windows-msvc`)  
-**Package Format**: NSIS Windows Installer (`VISTAAR-Setup.exe`)  
-**Release Date**: October 2026  
+**Package Format**: NSIS Windows Installer (`VISTAAR-Setup.exe` & `VISTAAR_1.0.1_x64-setup.exe`)  
+**Release Date**: November 2026  
 **Publisher**: GROVYX  
 **Tagline**: *Run Better. Grow Wider.*  
 
 ---
 
-## 1. Highlights & Production Capabilities
+## 1. Release Highlights & Changelog
 
-VISTAAR Desktop v1.0.0 delivers the enterprise-grade VISTAAR Business OS as a high-performance Windows desktop application, combining instant native startup, low memory footprint, and complete business workflow execution.
+### Version 1.0.1 (November 2026) — Maintenance & Parity Release
+- **Header UI Overlap Resolution**: Completely eliminated horizontal collision between the desktop search bar and adjacent sidebar navigation toggle (`PanelLeft`). Anchored search bar with fixed `shrink-0` bounds (`min-w-[200px]`), standard `h-9` height, and responsive middle breadcrumbs.
+- **Workspace Authorization Schema Parity**: Aligned database workspace resolution queries with authoritative PostgreSQL `deleted_at` soft-delete architecture (eliminating runtime failures regarding nonexistent `is_active` / `suspension_reason` columns).
+- **Universal Cross-Platform Synchronization**: Integrated the project-wide development standard, automated 9-point verification suite (`npm run verify:cross-platform`), and multi-platform build scripts ensuring Web, Desktop, and Mobile stay synchronized.
+- **Accounting & Daybook Deduplication**: Atomic database transaction locking prevents duplicate entries across counter sales and tax invoices.
 
-### Key Capabilities
-- **Integrated Business Management**: Real-time sales invoicing, quotation lifecycle, udhari ledger, daybook, cashbook, counter sales, and financial statement generation.
-- **Unified Authoritative Accounting**: Real-time synchronization with Supabase backend ensuring mathematical equivalence across Invoices, Udhari, Daybook, Cashbook, and Dashboard KPIs.
+### Version 1.0.0 (October 2026) — Initial General Availability
+- **Integrated Business OS**: Real-time sales invoicing, quotation lifecycle, udhari ledger, daybook, cashbook, counter sales, and financial statement generation.
+- **Authoritative Cloud Synchronization**: Real-time synchronization with Supabase backend ensuring mathematical equivalence across Invoices, Udhari, Daybook, Cashbook, and Dashboard KPIs.
 - **Real-Time Inventory Synchronization**: Multi-category inventory management with automated stock deduction upon finalized invoice creation, low-stock warnings, and barcode scanner compatibility.
 - **Enterprise Document Generation**: High-fidelity PDF generation and native OS printing for GST invoices, delivery challans, quotations, and financial reports.
 - **Native Windows Desktop Integration**: Native system dialogs for file save/open, system clipboard integration, native notifications, and external browser link opening.
 - **Optimized Desktop Footprint**:
-  - Installer Size: **3.07 MB** (`VISTAAR-Setup.exe`)
-  - Installed Payload: **5.22 MB** (including native uninstaller)
-  - Standalone Binary: **5.07 MB** (`vistaar.exe`)
+  - Installer Size: **4.53 MB** (`VISTAAR-Setup.exe`)
+  - Standalone Binary: **5.08 MB** (`vistaar.exe`)
 
 ---
 
@@ -42,35 +45,41 @@ VISTAAR uses the native Microsoft Edge WebView2 runtime provided out-of-the-box 
 
 ---
 
-## 3. Installation, Upgrade & Uninstallation
+## 3. Installation, Upgrade & Data Safety
 
-### Installation
+### Fresh Installation
 1. Download `VISTAAR-Setup.exe`.
 2. Run the installer. By default, VISTAAR installs into the current user's profile (`%LOCALAPPDATA%\Programs\VISTAAR`) requiring no administrative elevation.
 3. The installer creates a Start Menu entry and desktop shortcut for instant access.
 4. Launch **VISTAAR** from the Start Menu or Desktop.
 
-### Upgrade Path
-Running a newer installer over an existing installation automatically updates the binaries and assets in-place. User authentication session tokens and local workspace preferences are preserved. Cloud data in Supabase is completely unaffected.
+### In-Place Upgrade Path
+Running the v1.0.1 installer over an existing v1.0.0 installation automatically upgrades application binaries and web assets in-place:
+- **Authentication Session Preserved**: User login sessions stored in local storage and secure credential storage remain active.
+- **Preferences Preserved**: Branch selection, active theme (Dark/Light), and client settings remain intact.
+- **Cloud Database Untouched**: Cloud records, transactions, ledgers, and inventory in Supabase remain 100% authoritative and unaffected.
 
 ### Clean Uninstallation
 1. Open **Windows Settings** → **Apps** → **Installed Apps** (or **Control Panel** → **Programs and Features**).
 2. Select **VISTAAR** and click **Uninstall**.
-3. All application files, binaries, shortcuts, and registry entries are completely removed.
-4. *Data Safety*: Uninstalling the desktop application does **not** delete or reset business records, invoices, or customer ledgers stored in your secure Supabase cloud workspace.
+3. All application files, binaries, shortcuts, and registry entries are cleanly removed.
+4. *Data Safety*: Uninstalling the desktop application does **not** delete or reset business records or invoices stored in your secure Supabase cloud workspace.
 
 ---
 
-## 4. Code Signing & Windows SmartScreen Notice
+## 4. Cryptographic Verification & Checksums
 
-- **Signature Status**: Unsigned (`NotSigned`) in this initial community distribution build.
-- **Windows SmartScreen**: When running `VISTAAR-Setup.exe` on a fresh Windows system, Windows Defender SmartScreen may display an informational prompt (*"Windows protected your PC"* / Unknown Publisher).
-  - To proceed with installation: Click **More info** → **Run anyway**.
-- **Security & Integrity**: You can verify the integrity and authenticity of the installer before running by checking its SHA-256 hash against `checksums.txt`:
-  ```powershell
-  certutil -hashfile VISTAAR-Setup.exe SHA256
-  # Expected: 9d9a9ad8f06480134451c839f278130d0369a91540eb39bfb4e91beaca7f5fef
-  ```
+You can verify the authenticity and integrity of the installer before running by checking its SHA-256 hash against `checksums.txt`:
+
+```powershell
+certutil -hashfile VISTAAR-Setup.exe SHA256
+# Expected: ab0a636811811ab206d09106a5f5f81a772c4b306b0153d9027d8af865b844a1
+```
+
+| File Name | Version | Architecture | SHA-256 Checksum |
+| :--- | :--- | :--- | :--- |
+| `VISTAAR-Setup.exe` | 1.0.1 | x86_64 | `ab0a636811811ab206d09106a5f5f81a772c4b306b0153d9027d8af865b844a1` |
+| `VISTAAR_1.0.1_x64-setup.exe` | 1.0.1 | x86_64 | `ab0a636811811ab206d09106a5f5f81a772c4b306b0153d9027d8af865b844a1` |
 
 ---
 
@@ -86,4 +95,4 @@ Running a newer installer over an existing installation automatically updates th
 
 1. **Windows x64 Only**: This package targets Windows 64-bit systems (`x86_64`). 32-bit (`x86`) and ARM64-native binaries are not included in this release.
 2. **Offline-First Mode**: While local caching provides rapid UI responsiveness, an active internet connection is required for persistent synchronization of transactions and cloud backups.
-3. **SmartScreen Prompt**: Because the installer is distributed without an EV code-signing certificate, users must click "More info -> Run anyway" until certificate reputation builds.
+3. **SmartScreen Prompt**: Because the installer is distributed without an EV code-signing certificate, users may need to click "More info -> Run anyway" until publisher reputation is built.

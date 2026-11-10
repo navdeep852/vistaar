@@ -155,3 +155,4 @@ runCheck('9. Mobile Android Debug APK artifact verified', () => {
 console.log('\n------------------------------------------------------------------------');
 console.log(`  SUMMARY: ${passedTests} of ${totalTests} checks passed successfully.`);
 console.log('========================================================================\n');
+
