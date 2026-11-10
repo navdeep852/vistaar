@@ -186,8 +186,7 @@ export const Header: React.FC<HeaderProps> = ({
         <BranchSwitcher onManageBranches={() => setActiveTab('settings')} />
 
         {/* Dark/Light Theme Control */}
-        <ThemeToggle variant="segmented" className="hidden md:inline-flex" />
-        <ThemeToggle variant="compact" className="md:hidden" />
+        <ThemeToggle variant="compact" />
 
         {/* Subtle Dashboard Refresh */}
         {activeTab === 'dashboard' && (
