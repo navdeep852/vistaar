@@ -252,12 +252,29 @@ export class FinancialAnalyticsEngine {
       const invId = p.invoice_id || p.invoiceId;
       if (invId) invoicesAccountedInPayments.add(String(invId).toLowerCase().trim());
       const invNum = p.invoice_number || p.invoiceNumber;
-      if (invNum) invoicesAccountedInPayments.add(String(invNum).toLowerCase().trim());
+      if (invNum) {
+        const cleanInvNum = String(invNum).toLowerCase().trim();
+        invoicesAccountedInPayments.add(cleanInvNum);
+        counterSalesAccountedInPayments.add(cleanInvNum);
+      }
 
       const csId = p.counter_sale_id || p.counterSaleId;
       if (csId) counterSalesAccountedInPayments.add(String(csId).toLowerCase().trim());
       const csNum = p.counter_sale_number || p.counterSaleNumber;
       if (csNum) counterSalesAccountedInPayments.add(String(csNum).toLowerCase().trim());
+
+      const refNo = p.reference_no || p.referenceNo || p.reference;
+      if (refNo) {
+        const cleanRef = String(refNo).toLowerCase().trim();
+        counterSalesAccountedInPayments.add(cleanRef);
+        invoicesAccountedInPayments.add(cleanRef);
+      }
+
+      const notes = String(p.notes || '').toLowerCase();
+      const csNotesMatches = notes.match(/cs-[a-z0-9_-]+/g);
+      if (csNotesMatches) {
+        csNotesMatches.forEach((m) => counterSalesAccountedInPayments.add(m.trim()));
+      }
 
       const method = p.method || p.payment_method || p.paymentMethod || 'Cash';
       const cashAmt = p.cash_amount ?? p.cashAmount;
@@ -297,9 +314,9 @@ export class FinancialAnalyticsEngine {
 
       // Skip if this counter sale already had its receipt posted to public.payments
       if (
-        (csId && counterSalesAccountedInPayments.has(csId)) ||
-        (saleNum && counterSalesAccountedInPayments.has(saleNum)) ||
-        (invNum && counterSalesAccountedInPayments.has(invNum))
+        (csId && (counterSalesAccountedInPayments.has(csId) || invoicesAccountedInPayments.has(csId))) ||
+        (saleNum && (counterSalesAccountedInPayments.has(saleNum) || invoicesAccountedInPayments.has(saleNum))) ||
+        (invNum && (counterSalesAccountedInPayments.has(invNum) || invoicesAccountedInPayments.has(invNum)))
       ) {
         return;
       }

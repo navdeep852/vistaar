@@ -555,4 +555,57 @@ describe('VISTAAR Financial Analytics Engine — Authoritative Reconciliation', 
     assert.ok(cashDiff <= 0.01, `Cash difference ₹${cashDiff} exceeds ₹0.01 tolerance`);
     assert.ok(upiDiff <= 0.01, `UPI difference ₹${upiDiff} exceeds ₹0.01 tolerance`);
   });
+
+  // ---------------------------------------------------------------------------
+  // Test Case L — Counter-Sale Upfront Receipt Deduplication against Payments Table
+  // ---------------------------------------------------------------------------
+  it('Test Case L — Counter-sale upfront receipt: cannot be counted twice when receipt also exists in payments table', () => {
+    // Scenario: A counter sale for ₹7,500 Cash was completed.
+    // The POS system created a record in counter_sales (amount_received: 7500)
+    // AND automatically created a payment in payments (invoice_number: 'CS-7500', amount: 7500, method: 'Cash')
+    const input: EngineInputData = {
+      workspaceId: WS_ID_A,
+      startDateStr: '2026-10-01',
+      endDateStr: '2026-11-12',
+      invoices: [],
+      counterSales: [
+        {
+          id: 'cs-7500-id',
+          workspace_id: WS_ID_A,
+          sale_number: 'CS-7500',
+          invoice_number: 'CS-7500',
+          sale_date: '2026-10-15',
+          final_total: 7500,
+          amount_received: 7500,
+          balance_amount: 0,
+          payment_method: 'Cash',
+          status: 'COMPLETED',
+        },
+      ],
+      payments: [
+        {
+          id: 'pay-cs-7500',
+          workspace_id: WS_ID_A,
+          payment_number: 'PAY-CS-7500',
+          invoice_number: 'CS-7500', // Reference to counter sale
+          notes: 'Counter Sale payment #CS-7500',
+          amount: 7500,
+          method: 'Cash',
+          payment_date: '2026-10-15',
+          status: 'COMPLETED',
+        },
+      ],
+    };
+
+    const res = FinancialAnalyticsEngine.calculate(input);
+
+    // Sales must be exactly ₹7,500
+    assert.equal(res.kpis.totalSales, 7500.00);
+    assert.equal(res.kpis.counterSales, 7500.00);
+
+    // Collections MUST be exactly ₹7,500 (NOT doubled to ₹15,000!)
+    assert.equal(res.kpis.collections, 7500.00);
+    assert.equal(res.kpis.cashCollections, 7500.00);
+    assert.equal(res.kpis.upiCollections, 0.00);
+  });
 });

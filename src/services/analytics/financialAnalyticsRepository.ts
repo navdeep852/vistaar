@@ -78,9 +78,9 @@ export class FinancialAnalyticsRepository {
     try {
       let invQ = supabase
         .from('invoices')
-        .select('id, workspace_id, branch_id, quotation_id, invoice_number, status, date, grand_total, paid_amount, balance_amount, payment_mode, payment_reference, payment_notes, notes, terms, invoice_items(*)')
+        .select('*, invoice_items(*)')
         .eq('workspace_id', wsId)
-        .in('status', ['Issued', 'Partially Paid', 'Paid', 'issued', 'partially paid', 'paid'])
+        .in('status', ['Issued', 'Partially Paid', 'Paid'])
         .gte('date', dateRange.startDateStr)
         .lte('date', dateRange.endDateStr);
 
@@ -93,12 +93,21 @@ export class FinancialAnalyticsRepository {
         if (error.code === '42703' || error.message?.includes('branch_id')) {
           const retryQ = await supabase
             .from('invoices')
-            .select('id, workspace_id, quotation_id, invoice_number, status, date, grand_total, paid_amount, balance_amount, payment_mode, payment_reference, payment_notes, notes, terms, invoice_items(*)')
+            .select('*, invoice_items(*)')
             .eq('workspace_id', wsId)
-            .in('status', ['Issued', 'Partially Paid', 'Paid', 'issued', 'partially paid', 'paid'])
+            .in('status', ['Issued', 'Partially Paid', 'Paid'])
             .gte('date', dateRange.startDateStr)
             .lte('date', dateRange.endDateStr);
-          if (retryQ.data) invoices = retryQ.data;
+          if (retryQ.data) {
+            invoices = retryQ.data.filter((inv: any) => {
+              if (effectiveBranchId) {
+                const b = inv.branch_id || inv.branchId;
+                const notes = inv.notes || inv.terms || '';
+                return isRecordInBranch(effectiveBranchId, b, notes);
+              }
+              return true;
+            });
+          }
           if (retryQ.error) queryErrors.push(`Invoices retry error: ${retryQ.error.message}`);
         } else {
           queryErrors.push(`Invoices fetch error: ${error.message}`);
@@ -115,7 +124,7 @@ export class FinancialAnalyticsRepository {
     try {
       let csQ = supabase
         .from('counter_sales')
-        .select('id, workspace_id, branch_id, sale_number, invoice_number, sale_date, subtotal, final_total, amount_received, balance_amount, cash_amount, upi_amount, payment_method, status, notes, counter_sale_items(*)')
+        .select('*, counter_sale_items(*)')
         .eq('workspace_id', wsId)
         .eq('status', 'COMPLETED')
         .gte('sale_date', dateRange.startDateStr)
@@ -130,12 +139,21 @@ export class FinancialAnalyticsRepository {
         if (error.code === '42703' || error.message?.includes('branch_id')) {
           const retryQ = await supabase
             .from('counter_sales')
-            .select('id, workspace_id, sale_number, invoice_number, sale_date, subtotal, final_total, amount_received, balance_amount, cash_amount, upi_amount, payment_method, status, notes, counter_sale_items(*)')
+            .select('*, counter_sale_items(*)')
             .eq('workspace_id', wsId)
             .eq('status', 'COMPLETED')
             .gte('sale_date', dateRange.startDateStr)
             .lte('sale_date', dateRange.endDateStr);
-          if (retryQ.data) counterSales = retryQ.data;
+          if (retryQ.data) {
+            counterSales = retryQ.data.filter((cs: any) => {
+              if (effectiveBranchId) {
+                const b = cs.branch_id || cs.branchId;
+                const notes = cs.notes || '';
+                return isRecordInBranch(effectiveBranchId, b, notes);
+              }
+              return true;
+            });
+          }
           if (retryQ.error) queryErrors.push(`Counter sales retry error: ${retryQ.error.message}`);
         } else {
           queryErrors.push(`Counter sales fetch error: ${error.message}`);
@@ -152,7 +170,7 @@ export class FinancialAnalyticsRepository {
     try {
       let payQ = supabase
         .from('payments')
-        .select('id, workspace_id, branch_id, customer_id, invoice_id, counter_sale_id, payment_number, customer_name, invoice_number, amount, payment_date, method, reference_no, notes, status, created_at')
+        .select('*')
         .eq('workspace_id', wsId)
         .gte('payment_date', dateRange.startDateStr)
         .lte('payment_date', dateRange.endDateStr);
@@ -166,11 +184,31 @@ export class FinancialAnalyticsRepository {
         if (error.code === '42703' || error.message?.includes('branch_id')) {
           const retryPay = await supabase
             .from('payments')
-            .select('id, workspace_id, customer_id, invoice_id, counter_sale_id, payment_number, customer_name, invoice_number, amount, payment_date, method, reference_no, notes, status, created_at')
+            .select('*')
             .eq('workspace_id', wsId)
             .gte('payment_date', dateRange.startDateStr)
             .lte('payment_date', dateRange.endDateStr);
-          if (retryPay.data) payments = retryPay.data;
+          if (retryPay.data) {
+            payments = retryPay.data.filter((p: any) => {
+              if (effectiveBranchId) {
+                const b = p.branch_id || p.branchId;
+                const notes = p.notes || '';
+                if (b || notes.includes('[branch')) {
+                  return isRecordInBranch(effectiveBranchId, b, notes);
+                }
+                const linkedInv = invoices.find(
+                  (inv) =>
+                    (p.invoice_id && inv.id === p.invoice_id) ||
+                    (p.invoice_number && inv.invoice_number === p.invoice_number)
+                );
+                if (linkedInv) {
+                  return isRecordInBranch(effectiveBranchId, linkedInv.branch_id || linkedInv.branchId, linkedInv.notes || linkedInv.terms);
+                }
+                return isRecordInBranch(effectiveBranchId, undefined, notes);
+              }
+              return true;
+            });
+          }
           if (retryPay.error) queryErrors.push(`Payments retry error: ${retryPay.error.message}`);
         } else {
           queryErrors.push(`Payments fetch error: ${error.message}`);
@@ -217,7 +255,15 @@ export class FinancialAnalyticsRepository {
       if (uErr) {
         if (uErr.code === '42703' || uErr.message?.includes('branch_id')) {
           const retryU = await supabase.from('udhari_records').select('*, udhari_payments(*)').eq('workspace_id', wsId);
-          if (retryU.data) udhariRecords = retryU.data;
+          if (retryU.data) {
+            udhariRecords = retryU.data.filter((u: any) => {
+              if (effectiveBranchId) {
+                return isRecordInBranch(effectiveBranchId, u.branch_id || u.branchId, u.notes);
+              }
+              return true;
+            });
+          }
+          if (retryU.error) queryErrors.push(`Udhari records retry error: ${retryU.error.message}`);
         } else {
           queryErrors.push(`Udhari records fetch error: ${uErr.message}`);
         }

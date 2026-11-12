@@ -81,15 +81,15 @@ You can verify the authenticity and integrity of the installer before running by
 
 ```powershell
 certutil -hashfile VISTAAR-Setup.exe SHA256
-# Expected: D90086D922D3E1E5B876BEB6769325362A7F3955086FCC3AF7978C94290A1B99
+# Expected: D5A2D90247D6A8B7209F224E88A0FB1719B65E6B164285CE93658A671E5B67A3
 ```
 
 | File Name | Version | Architecture | SHA-256 Checksum |
 | :--- | :--- | :--- | :--- |
-| `VISTAAR-Setup.exe` | 1.0.1 | x86_64 | `d90086d922d3e1e5b876beb6769325362a7f3955086fcc3af7978c94290a1b99` |
-| `VISTAAR_1.0.1_x64-setup.exe` | 1.0.1 | x86_64 | `d90086d922d3e1e5b876beb6769325362a7f3955086fcc3af7978c94290a1b99` |
-| `VISTAAR-Mobile.apk` | 1.0.1 | Android ARM64/x86_64 | `93d081edc69ac12d4149acc1bbee2f4d458df55fe1d0b9b01d2f9c3e0564e0cc` |
-| `VISTAAR_1.0.1_mobile-debug.apk` | 1.0.1 | Android ARM64/x86_64 | `93d081edc69ac12d4149acc1bbee2f4d458df55fe1d0b9b01d2f9c3e0564e0cc` |
+| `VISTAAR-Setup.exe` | 1.0.1 | x86_64 | `d5a2d90247d6a8b7209f224e88a0fb1719b65e6b164285ce93658a671e5b67a3` |
+| `VISTAAR_1.0.1_x64-setup.exe` | 1.0.1 | x86_64 | `d5a2d90247d6a8b7209f224e88a0fb1719b65e6b164285ce93658a671e5b67a3` |
+| `VISTAAR-Mobile.apk` | 1.0.1 | Android ARM64/x86_64 | `d0e149e38d4ac33526adebe8dd5bd80fd25e83bbb32cbbdba418e8c9d8d6214a` |
+| `VISTAAR_1.0.1_mobile-debug.apk` | 1.0.1 | Android ARM64/x86_64 | `d0e149e38d4ac33526adebe8dd5bd80fd25e83bbb32cbbdba418e8c9d8d6214a` |
 
 ---
 
