@@ -234,72 +234,8 @@ class FinancialStatementService {
       productsList = store.getProducts() || [];
     }
 
-    const seenInvIds = new Set<string>();
-    invoices.forEach((inv) => {
-      const id = String(inv.id || '').toLowerCase();
-      const num = String(inv.invoice_number || inv.invoiceNumber || '').toLowerCase();
-      if (id) seenInvIds.add(id);
-      if (num) seenInvIds.add(num);
-    });
-
-    const localInvoices = store.getInvoices().length > 0
-      ? store.getInvoices()
-      : safeGetTenantStorage<Invoice>(LOCAL_INVOICES_KEY, []);
-
-    localInvoices.forEach((li) => {
-      if (li.status === 'Draft' || li.status === 'Cancelled') return;
-      const d = (li.date || li.createdAt || '').split('T')[0];
-      if (d < range.startDateStr || d > range.endDateStr) return;
-      const id = String(li.id || '').toLowerCase();
-      const num = String(li.invoiceNumber || '').toLowerCase();
-      if ((!id || !seenInvIds.has(id)) && (!num || !seenInvIds.has(num))) {
-        if (id) seenInvIds.add(id);
-        if (num) seenInvIds.add(num);
-        invoices.push(li);
-      }
-    });
-
-    const seenCsIds = new Set<string>();
-    counterSales.forEach((cs) => {
-      const id = String(cs.id || '').toLowerCase();
-      if (id) seenCsIds.add(id);
-    });
-
-    const localCs = store.getCounterSales().length > 0
-      ? store.getCounterSales()
-      : safeGetTenantStorage<any>(LOCAL_SALES_KEY, []);
-
-    localCs.forEach((cs) => {
-      if (cs.status === 'CANCELLED') return;
-      const d = (cs.sale_date ?? cs.saleDate ?? cs.created_at ?? '').split('T')[0];
-      if (d < range.startDateStr || d > range.endDateStr) return;
-      const id = String(cs.id || '').toLowerCase();
-      if (!id || !seenCsIds.has(id)) {
-        if (id) seenCsIds.add(id);
-        counterSales.push(cs);
-      }
-    });
-
-    const seenExpIds = new Set<string>();
-    expensesList.forEach((e) => {
-      const id = String(e.id || '').toLowerCase();
-      if (id) seenExpIds.add(id);
-    });
-
-    const localExps = store.getExpenses().length > 0
-      ? store.getExpenses()
-      : safeGetTenantStorage<Expense>(LOCAL_EXPENSES_KEY, []);
-
-    localExps.forEach((exp) => {
-      const d = (exp.date || (exp as any).expense_date || exp.createdAt || '').split('T')[0];
-      if (d < range.startDateStr || d > range.endDateStr) return;
-      const id = String(exp.id || '').toLowerCase();
-      if (!id || !seenExpIds.has(id)) {
-        if (id) seenExpIds.add(id);
-        expensesList.push(exp);
-      }
-    });
-
+    // Supabase is the authoritative source for financial transactions.
+    // Local storage transactions are strictly prohibited from being merged into official financial reporting (Master Prompt Section 7).
     return {
       invoices,
       counterSales,

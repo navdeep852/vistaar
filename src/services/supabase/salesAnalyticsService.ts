@@ -4,6 +4,7 @@ import { handleSupabaseError, isValidUuid } from '../../lib/supabaseError';
 import { safeGetTenantStorage, safeGetTenantItem } from './safeStorage';
 import { ResolvedDateRange, resolveDateRange, normalizeToYyyyMmDd } from '../../lib/dateRange';
 import { isRecordInBranch } from '../../lib/branchUtils';
+import { financialAnalyticsRepository } from '../analytics/financialAnalyticsRepository.ts';
 
 export interface SalesMetrics {
   totalSales: number;
@@ -45,6 +46,7 @@ export class SalesAnalyticsService {
 
   public invalidateCache(): void {
     this.cache.clear();
+    financialAnalyticsRepository.invalidateCache();
     try {
       import('./enterpriseAnalyticsService').then((m) => m.enterpriseAnalyticsService.invalidateCache()).catch(() => {});
     } catch {}
@@ -52,11 +54,15 @@ export class SalesAnalyticsService {
 
   /**
    * Calculate Authoritative Sales Metrics for Dashboard
-   * Aggregates completed Counter Sales + Issued/Paid Invoices within the selected date range.
-   * Strictly excludes Draft, Cancelled, Voided records.
-   * Eliminates any potential double-counting between Invoices & Counter Sales.
+   * Authoritatively delegates to the centralized FinancialAnalyticsRepository.
+   * Eliminates disparate calculation algorithms, localStorage merging, and cross-device drift.
    */
-  public async getSalesMetrics(dateRange?: ResolvedDateRange, forceFresh = false, explicitWsId?: string, branchId?: string): Promise<SalesMetrics> {
+  public async getSalesMetrics(
+    dateRange?: ResolvedDateRange,
+    forceFresh = false,
+    explicitWsId?: string,
+    branchId?: string
+  ): Promise<SalesMetrics> {
     const range = dateRange || resolveDateRange('today');
     const wsId = explicitWsId && isValidUuid(explicitWsId) ? explicitWsId : await this.getWorkspaceId();
     const effectiveBranchId = branchId;
@@ -69,275 +75,24 @@ export class SalesAnalyticsService {
       return cached.metrics;
     }
 
-    let counterSales: any[] = [];
-    let invoices: any[] = [];
-
-    if (isSupabaseConfigured() && isValidUuid(wsId)) {
-      try {
-        // 1. Fetch Authoritative Completed Counter Sales bounded by sale_date
-        let csQ = supabase
-          .from('counter_sales')
-          .select('id, sale_number, invoice_number, sale_date, final_total, status, payment_method, amount_received, balance_amount, created_at, branch_id, notes')
-          .eq('workspace_id', wsId)
-          .eq('status', 'COMPLETED')
-          .gte('sale_date', range.startDateStr)
-          .lte('sale_date', range.endDateStr);
-
-        let { data: csData, error: csErr } = await csQ;
-
-        if (csErr && (csErr.code === '42703' || csErr.message?.includes('branch_id'))) {
-          let fallbackQ = supabase
-            .from('counter_sales')
-            .select('id, sale_number, invoice_number, sale_date, final_total, status, payment_method, amount_received, balance_amount, created_at, notes')
-            .eq('workspace_id', wsId)
-            .eq('status', 'COMPLETED')
-            .gte('sale_date', range.startDateStr)
-            .lte('sale_date', range.endDateStr);
-          const retryRes = await fallbackQ;
-          if (!retryRes.error && retryRes.data) {
-            csData = retryRes.data;
-            csErr = null;
-          }
-        }
-
-        if (!csErr && csData) {
-          counterSales = csData.filter((cs: any) => {
-            if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-              const b = cs.branch_id || cs.branchId;
-              const notes = cs.notes || '';
-              return isRecordInBranch(effectiveBranchId, b, notes);
-            }
-            return true;
-          });
-        }
-
-        // 2. Fetch Authoritative Valid Invoices bounded by date (Excluding Draft and Cancelled)
-        let invQ = supabase
-          .from('invoices')
-          .select('id, invoice_number, date, grand_total, paid_amount, balance_amount, status, created_at, branch_id, notes, terms')
-          .eq('workspace_id', wsId)
-          .in('status', ['Issued', 'Partially Paid', 'Paid', 'issued', 'partially paid', 'paid'])
-          .gte('date', range.startDateStr)
-          .lte('date', range.endDateStr);
-
-        let { data: invData, error: invErr } = await invQ;
-
-        if (invErr && (invErr.code === '42703' || invErr.message?.includes('branch_id'))) {
-          let fallbackInvQ = supabase
-            .from('invoices')
-            .select('id, invoice_number, date, grand_total, paid_amount, balance_amount, status, created_at, notes, terms')
-            .eq('workspace_id', wsId)
-            .in('status', ['Issued', 'Partially Paid', 'Paid', 'issued', 'partially paid', 'paid'])
-            .gte('date', range.startDateStr)
-            .lte('date', range.endDateStr);
-          const retryInv = await fallbackInvQ;
-          if (!retryInv.error && retryInv.data) {
-            invData = retryInv.data;
-            invErr = null;
-          }
-        }
-
-        if (!invErr && invData) {
-          invoices = invData.filter((inv: any) => {
-            if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-              const b = inv.branch_id || inv.branchId;
-              const notes = inv.notes || inv.terms || '';
-              return isRecordInBranch(effectiveBranchId, b, notes);
-            }
-            return true;
-          });
-        }
-      } catch (err) {
-        console.warn('[salesAnalyticsService] Failed to query Supabase, checking local tenant cache:', err);
-      }
-    }
-
-    // Resilient local storage and store merging to ensure newly created or converted invoices appear immediately
-    const seenInvoiceIds = new Set<string>();
-    invoices.forEach((inv) => {
-      const k1 = inv.id ? String(inv.id).toLowerCase() : '';
-      const k2 = inv.invoice_number ? String(inv.invoice_number).toLowerCase() : '';
-      if (k1) seenInvoiceIds.add(k1);
-      if (k2) seenInvoiceIds.add(k2);
+    const authResult = await financialAnalyticsRepository.getAuthoritativeFinancials({
+      dateRange: range,
+      branchId: effectiveBranchId,
+      forceFresh,
+      explicitWsId: wsId,
     });
-
-    const localInv = safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []);
-    for (const li of localInv) {
-      const s = String(li.status || '').toLowerCase();
-      if (s === 'draft' || s === 'cancelled') continue;
-      if (wsId && (li.workspace_id || li.workspaceId) && (li.workspace_id !== wsId && li.workspaceId !== wsId)) continue;
-      if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-        const b = li.branch_id || li.branchId || li.snapshot?.branch_id;
-        const notes = li.notes || li.terms || '';
-        if (!isRecordInBranch(effectiveBranchId, b, notes)) continue;
-      }
-      const d = normalizeToYyyyMmDd(li.date ?? li.created_at ?? (li as any).createdAt);
-      if (d < range.startDateStr || d > range.endDateStr) continue;
-      const k1 = li.id ? String(li.id).toLowerCase() : '';
-      const k2 = (li.invoice_number || li.invoiceNumber) ? String(li.invoice_number || li.invoiceNumber).toLowerCase() : '';
-      if ((!k1 || !seenInvoiceIds.has(k1)) && (!k2 || !seenInvoiceIds.has(k2))) {
-        if (k1) seenInvoiceIds.add(k1);
-        if (k2) seenInvoiceIds.add(k2);
-        invoices.push(li);
-      }
-    }
-
-    try {
-      const { store } = await import('../store');
-      for (const si of store.getInvoices()) {
-        const s = String(si.status || '').toLowerCase();
-        if (s === 'draft' || s === 'cancelled') continue;
-        if (wsId && (si as any).workspaceId && (si as any).workspaceId !== wsId) continue;
-        if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-          const b = si.branchId || (si as any).branch_id || (si as any).snapshot?.branch_id;
-          const notes = si.notes || si.terms || '';
-          if (!isRecordInBranch(effectiveBranchId, b, notes)) continue;
-        }
-        const d = normalizeToYyyyMmDd(si.date || si.createdAt);
-        if (d < range.startDateStr || d > range.endDateStr) continue;
-        const k1 = si.id ? String(si.id).toLowerCase() : '';
-        const k2 = si.invoiceNumber ? String(si.invoiceNumber).toLowerCase() : '';
-        if ((!k1 || !seenInvoiceIds.has(k1)) && (!k2 || !seenInvoiceIds.has(k2))) {
-          if (k1) seenInvoiceIds.add(k1);
-          if (k2) seenInvoiceIds.add(k2);
-          invoices.push({
-            id: si.id,
-            workspace_id: (si as any).workspaceId || wsId,
-            branch_id: si.branchId,
-            invoice_number: si.invoiceNumber,
-            date: si.date,
-            grand_total: si.grandTotal,
-            paid_amount: si.paidAmount,
-            balance_amount: si.balanceAmount,
-            status: si.status,
-            created_at: si.createdAt,
-          });
-        }
-      }
-    } catch {
-      // ignore
-    }
-
-    const seenCsIds = new Set<string>();
-    counterSales.forEach((cs) => {
-      const k = cs.id ? String(cs.id).toLowerCase() : '';
-      if (k) seenCsIds.add(k);
-    });
-
-    const localCS = safeGetTenantStorage<any>(LOCAL_SALES_KEY, []);
-    for (const s of localCS) {
-      if (String(s.status || '').toUpperCase() === 'CANCELLED') continue;
-      if (wsId && (s.workspace_id || s.workspaceId) && (s.workspace_id !== wsId && s.workspaceId !== wsId)) continue;
-      if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-        const b = s.branch_id || s.branchId;
-        const notes = s.notes || '';
-        if (!isRecordInBranch(effectiveBranchId, b, notes)) continue;
-      }
-      const d = normalizeToYyyyMmDd(s.sale_date ?? s.saleDate ?? s.created_at ?? s.createdAt);
-      if (d < range.startDateStr || d > range.endDateStr) continue;
-      const k = s.id ? String(s.id).toLowerCase() : '';
-      if (!k || !seenCsIds.has(k)) {
-        if (k) seenCsIds.add(k);
-        counterSales.push(s);
-      }
-    }
-
-    // Merge in-memory counter sales from store
-    try {
-      const { store } = await import('../store');
-      for (const scs of store.getCounterSales()) {
-        if (String(scs.status || '').toUpperCase() === 'CANCELLED') continue;
-        if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-          const b = scs.branchId || (scs as any).branch_id;
-          const notes = scs.notes || '';
-          if (!isRecordInBranch(effectiveBranchId, b, notes)) continue;
-        }
-        const d = normalizeToYyyyMmDd(scs.saleDate || (scs as any).sale_date || (scs as any).createdAt || (scs as any).created_at);
-        if (d < range.startDateStr || d > range.endDateStr) continue;
-        const k = scs.id ? String(scs.id).toLowerCase() : '';
-        if (!k || !seenCsIds.has(k)) {
-          if (k) seenCsIds.add(k);
-          counterSales.push(scs);
-        }
-      }
-    } catch {
-      // ignore
-    }
-
-    // De-duplication: Track seen invoice/reference numbers to prevent double counting
-    const seenCounterInvoiceNumbers = new Set<string>();
-    counterSales.forEach((cs) => {
-      const num = cs.invoice_number || cs.invoiceNumber || cs.sale_number || cs.saleNumber;
-      if (num) seenCounterInvoiceNumbers.add(String(num).trim().toLowerCase());
-    });
-
-    let totalCounterSalesVal = 0;
-    let totalInvoiceSalesVal = 0;
-    let paidSalesVal = 0;
-    let creditSalesVal = 0;
-    let cashSalesVal = 0;
-    let bankUpiSalesVal = 0;
-    let totalTransactions = 0;
-
-    // Process Counter Sales for the selected period
-    for (const cs of counterSales) {
-      const total = Number(cs.final_total ?? cs.finalTotal ?? 0);
-      const method = (cs.payment_method ?? cs.paymentMethod ?? 'Cash').toLowerCase();
-      const rec = Number(cs.amount_received ?? cs.amountReceived ?? (method.includes('credit') || method.includes('udhari') ? 0 : total));
-      const bal = Number(cs.balance_amount ?? cs.balanceAmount ?? Math.max(0, total - rec));
-
-      totalCounterSalesVal += total;
-      paidSalesVal += rec;
-      creditSalesVal += bal;
-      totalTransactions += 1;
-
-      if (method.includes('cash')) {
-        cashSalesVal += rec;
-      } else if (method.includes('upi') || method.includes('bank') || method.includes('card')) {
-        bankUpiSalesVal += rec;
-      }
-    }
-
-    // Process Invoices for the selected period (Ignore if duplicate of counter sale)
-    for (const inv of invoices) {
-      const invNum = String(inv.invoice_number ?? inv.invoiceNumber ?? '').trim().toLowerCase();
-      if (invNum && seenCounterInvoiceNumbers.has(invNum)) {
-        // Skip duplicate already accounted for via Counter Sale
-        continue;
-      }
-
-      const total = Number(inv.grand_total ?? inv.grandTotal ?? 0);
-      const paid = Number(inv.paid_amount ?? inv.paidAmount ?? 0);
-      const bal = Number(inv.balance_amount ?? inv.balanceAmount ?? Math.max(0, total - paid));
-
-      totalInvoiceSalesVal += total;
-      paidSalesVal += paid;
-      creditSalesVal += bal;
-      totalTransactions += 1;
-
-      if (paid > 0) {
-        const invMethod = String(inv.payment_method ?? inv.paymentMethod ?? 'Cash').toLowerCase();
-        if (invMethod.includes('cash')) {
-          cashSalesVal += paid;
-        } else {
-          bankUpiSalesVal += paid;
-        }
-      }
-    }
-
-    const totalSales = totalCounterSalesVal + totalInvoiceSalesVal;
 
     const metrics: SalesMetrics = {
-      totalSales,
-      todaySales: totalSales, // Period-aware sales
-      thisMonthSales: totalSales,
-      invoiceSales: totalInvoiceSalesVal,
-      counterSales: totalCounterSalesVal,
-      paidSales: paidSalesVal,
-      creditSales: creditSalesVal,
-      cashSales: cashSalesVal,
-      bankUpiSales: bankUpiSalesVal,
-      totalTransactions,
+      totalSales: authResult.kpis.totalSales,
+      todaySales: authResult.kpis.totalSales,
+      thisMonthSales: authResult.kpis.totalSales,
+      invoiceSales: authResult.kpis.invoiceSales,
+      counterSales: authResult.kpis.counterSales,
+      paidSales: authResult.kpis.collections,
+      creditSales: authResult.kpis.outstandingUdhari,
+      cashSales: authResult.kpis.cashCollections,
+      bankUpiSales: authResult.kpis.upiCollections,
+      totalTransactions: authResult.kpis.totalTransactions,
       periodStartDate: range.startDateStr,
       periodEndDate: range.endDateStr,
       periodLabel: range.periodBadge,

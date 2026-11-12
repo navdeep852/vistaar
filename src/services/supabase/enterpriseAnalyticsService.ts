@@ -13,6 +13,8 @@ import { fromDbInvoice } from './types';
 import { hasCurrentUserPermission, AuthorizationError } from '../../lib/permissions';
 import { auditLogService } from './auditLogService';
 import { isRecordInBranch } from '../../lib/branchUtils';
+import { financialAnalyticsRepository } from '../analytics/financialAnalyticsRepository.ts';
+import { FinancialAnalyticsEngine } from '../analytics/financialAnalyticsEngine.ts';
 
 export interface AnalyticsKPIs {
   totalSales: number;
@@ -168,6 +170,7 @@ export class EnterpriseAnalyticsService {
 
   public invalidateCache(): void {
     this.dashboardKpisCache.clear();
+    financialAnalyticsRepository.invalidateCache();
   }
 
   private async getWorkspaceId(): Promise<string> {
@@ -227,36 +230,24 @@ export class EnterpriseAnalyticsService {
       }
     }
 
-    const [salesMetricsRes, udhariMetricsRes, raw] = await Promise.all([
-      salesAnalyticsService.getSalesMetrics(dateRange, forceFresh, wsId, branchId),
-      udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId, branchId),
-      this.fetchRawTransactionsForPeriod(wsId, dateRange, branchId),
-    ]);
-
-    const { totalCollections, cashCollections, upiCollections } = this.computeCollections(
-      raw.payments,
-      raw.counterSales,
-      raw.invoices
-    );
-
-    const periodFinancials = financialStatementService.computePeriodFinancials(dateRange, {
-      invoices: raw.invoices,
-      counterSales: raw.counterSales,
-      expenses: raw.expensesList,
-      products: raw.productsList,
+    const authResult = await financialAnalyticsRepository.getAuthoritativeFinancials({
+      dateRange,
+      branchId,
+      forceFresh,
+      explicitWsId: wsId,
     });
 
     const kpisResult: DashboardKPIs = {
-      totalSales: salesMetricsRes.totalSales,
-      invoiceSales: salesMetricsRes.invoiceSales,
-      counterSales: salesMetricsRes.counterSales,
-      collections: totalCollections,
-      cashCollections,
-      upiCollections,
-      grossProfit: periodFinancials.grossProfit.grossProfit,
-      profitMarginPercent: periodFinancials.grossProfit.grossMarginPercent,
-      outstandingUdhari: udhariMetricsRes.outstanding,
-      overdueUdhari: udhariMetricsRes.overdue,
+      totalSales: authResult.kpis.totalSales,
+      invoiceSales: authResult.kpis.invoiceSales,
+      counterSales: authResult.kpis.counterSales,
+      collections: authResult.kpis.collections,
+      cashCollections: authResult.kpis.cashCollections,
+      upiCollections: authResult.kpis.upiCollections,
+      grossProfit: authResult.kpis.grossProfit,
+      profitMarginPercent: authResult.kpis.profitMarginPercent,
+      outstandingUdhari: authResult.kpis.outstandingUdhari,
+      overdueUdhari: authResult.kpis.overdueUdhari,
     };
 
     this.dashboardKpisCache.set(cacheKey, { kpis: kpisResult, timestamp: now });
@@ -265,6 +256,7 @@ export class EnterpriseAnalyticsService {
 
   /**
    * Helper to compute cash, UPI, and total collections from payments and counter sales.
+   * Authoritatively delegated to FinancialAnalyticsEngine for zero cross-device discrepancy.
    */
   public computeCollections(
     payments: any[],
@@ -275,123 +267,19 @@ export class EnterpriseAnalyticsService {
     cashCollections: number;
     upiCollections: number;
   } {
-    let cashCollectionsVal = 0;
-    let upiCollectionsVal = 0;
-    const seenCsIdsInPayments = new Set<string>();
-    const seenInvIdsInPayments = new Set<string>();
-
-    // 1. Process customer/invoice/udhari payments received in this period
-    payments.forEach((p) => {
-      const totalAmt = Number(p.amount || 0);
-      if (totalAmt <= 0) return;
-
-      const csId = p.counter_sale_id || p.counterSaleId;
-      if (csId) {
-        seenCsIdsInPayments.add(String(csId).toLowerCase().trim());
-      }
-      const csNum = p.counter_sale_number || p.counterSaleNumber;
-      if (csNum) {
-        seenCsIdsInPayments.add(String(csNum).toLowerCase().trim());
-      }
-      const invId = p.invoice_id || p.invoiceId;
-      if (invId) {
-        seenInvIdsInPayments.add(String(invId).toLowerCase().trim());
-      }
-      const invNum = p.invoice_number || p.invoiceNumber;
-      if (invNum) {
-        seenInvIdsInPayments.add(String(invNum).toLowerCase().trim());
-      }
-      const refNo = p.reference_no || p.referenceNo || p.reference_number || p.referenceNumber;
-      if (refNo) {
-        seenCsIdsInPayments.add(String(refNo).toLowerCase().trim());
-        seenInvIdsInPayments.add(String(refNo).toLowerCase().trim());
-      }
-
-      const splitCash = Number(p.cash_amount ?? p.cashAmount ?? 0);
-      const splitUpi = Number(p.upi_amount ?? p.upiAmount ?? 0);
-
-      if (splitCash > 0 || splitUpi > 0) {
-        cashCollectionsVal += splitCash;
-        upiCollectionsVal += splitUpi;
-      } else {
-        const method = String(p.payment_method || p.method || '').toLowerCase();
-        if (method.includes('cash')) {
-          cashCollectionsVal += totalAmt;
-        } else {
-          upiCollectionsVal += totalAmt;
-        }
-      }
+    const calc = FinancialAnalyticsEngine.calculate({
+      workspaceId: '00000000-0000-0000-0000-000000000000',
+      startDateStr: '1970-01-01',
+      endDateStr: '2099-12-31',
+      invoices,
+      counterSales,
+      payments,
     });
-
-    // 2. Process counter sales in this period (skip if already accounted for via linked payment)
-    counterSales.forEach((cs) => {
-      const csId = cs.id ? String(cs.id).toLowerCase().trim() : '';
-      const saleNum = (cs.sale_number || cs.saleNumber) ? String(cs.sale_number || cs.saleNumber).toLowerCase().trim() : '';
-      const invNum = (cs.invoice_number || cs.invoiceNumber) ? String(cs.invoice_number || cs.invoiceNumber).toLowerCase().trim() : '';
-
-      if (
-        (csId && seenCsIdsInPayments.has(csId)) ||
-        (saleNum && seenCsIdsInPayments.has(saleNum)) ||
-        (invNum && seenCsIdsInPayments.has(invNum))
-      ) {
-        return; // Already accounted for in payments
-      }
-
-      const method = String(cs.payment_method ?? cs.paymentMethod ?? '').toLowerCase();
-      if (method.includes('credit') || method.includes('udhari')) {
-        return;
-      }
-
-      const rec = Number(cs.amount_received ?? cs.amountReceived ?? cs.final_total ?? cs.finalTotal ?? 0);
-      if (rec <= 0) return;
-
-      const splitCash = Number(cs.cash_amount ?? cs.cashAmount ?? 0);
-      const splitUpi = Number(cs.upi_amount ?? cs.upiAmount ?? 0);
-
-      if (splitCash > 0 || splitUpi > 0) {
-        cashCollectionsVal += splitCash;
-        upiCollectionsVal += splitUpi;
-      } else {
-        if (method.includes('cash')) {
-          cashCollectionsVal += rec;
-        } else {
-          upiCollectionsVal += rec;
-        }
-      }
-    });
-
-    // 3. Process paid / partially-paid invoices in this period (reconciliation guarantee if payment row was dropped)
-    (invoices || []).forEach((inv) => {
-      const s = String(inv.status || '').toLowerCase();
-      if (s === 'draft' || s === 'cancelled') return;
-      const paid = Number(inv.paid_amount ?? inv.paidAmount ?? 0);
-      if (paid <= 0) return;
-
-      const id = inv.id ? String(inv.id).toLowerCase().trim() : '';
-      const num = (inv.invoice_number || inv.invoiceNumber) ? String(inv.invoice_number || inv.invoiceNumber).toLowerCase().trim() : '';
-      if ((id && seenInvIdsInPayments.has(id)) || (num && seenInvIdsInPayments.has(num))) {
-        return; // Already accounted for in payments
-      }
-
-      if (id) seenInvIdsInPayments.add(id);
-      if (num) seenInvIdsInPayments.add(num);
-
-      const method = String(inv.payment_method || inv.paymentMethod || inv.payment_mode || inv.paymentMode || 'Cash').toLowerCase();
-      if (method.includes('cash')) {
-        cashCollectionsVal += paid;
-      } else {
-        upiCollectionsVal += paid;
-      }
-    });
-
-    const roundedCash = Math.round(cashCollectionsVal);
-    const roundedUpi = Math.round(upiCollectionsVal);
-    const totalCollections = roundedCash + roundedUpi;
 
     return {
-      totalCollections,
-      cashCollections: roundedCash,
-      upiCollections: roundedUpi,
+      totalCollections: calc.kpis.collections,
+      cashCollections: calc.kpis.cashCollections,
+      upiCollections: calc.kpis.upiCollections,
     };
   }
 
@@ -615,102 +503,8 @@ export class EnterpriseAnalyticsService {
       });
     }
 
-    // Always merge remote invoices with in-memory and local tenant storage with deduplication
-    const seenInvIds = new Set<string>();
-    invoices.forEach((inv) => {
-      const k1 = inv.id ? String(inv.id).toLowerCase() : '';
-      const k2 = (inv as any).invoiceNumber || (inv as any).invoice_number ? String((inv as any).invoiceNumber || (inv as any).invoice_number).toLowerCase() : '';
-      if (k1) seenInvIds.add(k1);
-      if (k2) seenInvIds.add(k2);
-    });
-
-    const localInvoices: Invoice[] = [
-      ...store.getInvoices(),
-      ...safeGetTenantStorage<any>(LOCAL_INVOICES_KEY, []).map((r: any) => fromDbInvoice(r)),
-    ];
-
-    localInvoices.forEach((inv) => {
-      const w = (inv as any).workspaceId || (inv as any).workspace_id;
-      if (w && w !== wsId) return;
-      const s = String(inv.status || '').toLowerCase();
-      if (s === 'draft' || s === 'cancelled') return;
-      if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-        const b = inv.branchId || (inv as any).branch_id || (inv as any).snapshot?.branch_id;
-        const notes = (inv as any).notes || (inv as any).terms || '';
-        if (!isRecordInBranch(effectiveBranchId, b, notes)) return;
-      }
-      const d = normalizeToYyyyMmDd(inv.date || inv.createdAt);
-      if (d < dateRange.startDateStr || d > dateRange.endDateStr) return;
-      const k1 = inv.id ? String(inv.id).toLowerCase() : '';
-      const k2 = inv.invoiceNumber ? String(inv.invoiceNumber).toLowerCase() : '';
-      if ((k1 && seenInvIds.has(k1)) || (k2 && seenInvIds.has(k2))) return;
-      if (k1) seenInvIds.add(k1);
-      if (k2) seenInvIds.add(k2);
-      invoices.push(inv);
-    });
-
-    // Always merge in-memory and local counter sales with deduplication
-    const seenCsIds = new Set<string>();
-    counterSales.forEach((cs) => {
-      const k = cs.id ? String(cs.id).toLowerCase() : '';
-      if (k) seenCsIds.add(k);
-    });
-
-    const localCS = [
-      ...store.getCounterSales(),
-      ...safeGetTenantStorage<any>(LOCAL_SALES_KEY, []),
-    ];
-
-    localCS.forEach((cs: any) => {
-      const w = cs.workspaceId || cs.workspace_id;
-      if (w && w !== wsId) return;
-      if (String(cs.status || '').toUpperCase() === 'CANCELLED') return;
-      if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-        const b = cs.branchId || cs.branch_id;
-        const notes = cs.notes || '';
-        if (!isRecordInBranch(effectiveBranchId, b, notes)) return;
-      }
-      const d = normalizeToYyyyMmDd(cs.sale_date ?? cs.saleDate ?? cs.created_at ?? cs.createdAt);
-      if (d < dateRange.startDateStr || d > dateRange.endDateStr) return;
-      const k = cs.id ? String(cs.id).toLowerCase() : '';
-      if (!k || !seenCsIds.has(k)) {
-        if (k) seenCsIds.add(k);
-        counterSales.push(cs);
-      }
-    });
-
-    // Always merge in-memory and local payments with deduplication
-    const seenPayIds = new Set<string>();
-    payments.forEach((p) => {
-      const k1 = p.id ? String(p.id).toLowerCase() : '';
-      const k2 = (p.payment_number || p.paymentNumber) ? String(p.payment_number || p.paymentNumber).toLowerCase() : '';
-      if (k1) seenPayIds.add(k1);
-      if (k2) seenPayIds.add(k2);
-    });
-
-    const localPayments: Payment[] = [
-      ...store.getPayments(),
-      ...safeGetTenantStorage<any>(LOCAL_PAYMENTS_KEY, []),
-    ];
-
-    localPayments.forEach((p: any) => {
-      const w = p.workspaceId || p.workspace_id;
-      if (w && w !== wsId) return;
-      if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-        const b = p.branchId || p.branch_id;
-        const notes = p.notes || '';
-        if (!isRecordInBranch(effectiveBranchId, b, notes)) return;
-      }
-      const d = normalizeToYyyyMmDd(p.date || p.payment_date || p.createdAt);
-      if (d < dateRange.startDateStr || d > dateRange.endDateStr) return;
-      const k1 = p.id ? String(p.id).toLowerCase() : '';
-      const k2 = (p.paymentNumber || p.payment_number) ? String(p.paymentNumber || p.payment_number).toLowerCase() : '';
-      if ((k1 && seenPayIds.has(k1)) || (k2 && seenPayIds.has(k2))) return;
-      if (k1) seenPayIds.add(k1);
-      if (k2) seenPayIds.add(k2);
-      payments.push(p);
-    });
-
+    // Supabase is the sole authoritative source for financial transactions.
+    // Local storage transactions are strictly prohibited from being merged into official reporting (Master Prompt Section 7).
     return {
       invoices,
       counterSales,
@@ -740,10 +534,9 @@ export class EnterpriseAnalyticsService {
       throw new Error('[WORKSPACE RESOLUTION FAILED] Valid workspace ID is required for getAnalyticsOverview.');
     }
 
-    // 1. Fetch Authoritative Dashboard Sales Metrics & Raw Invoices / Counter Sales (Read-Only)
-    const [salesMetricsRes, udhariMetricsRes, quotationsRes, raw] = await Promise.all([
-      salesAnalyticsService.getSalesMetrics(dateRange, forceFresh, wsId, branchId),
-      udhariService.getAuthoritativeUdhariMetricsAsOf(dateRange.endDateStr, wsId, branchId),
+    // 1. Fetch Authoritative Financial Repository Results & Raw Invoices / Counter Sales (Read-Only)
+    const [authFinancials, quotationsRes, raw] = await Promise.all([
+      financialAnalyticsRepository.getAuthoritativeFinancials({ dateRange, branchId, forceFresh, explicitWsId: wsId }),
       quotationService.getQuotations(branchId),
       this.fetchRawTransactionsForPeriod(wsId, dateRange, branchId),
     ]);
@@ -908,9 +701,9 @@ export class EnterpriseAnalyticsService {
     // -------------------------------------------------------------
     // CHART 2: SALES BY CHANNEL (Stacked Bar Points)
     // -------------------------------------------------------------
-    const totalInvoiceSales = salesMetricsRes.invoiceSales;
-    const totalCounterSales = salesMetricsRes.counterSales;
-    const totalCombinedSales = Math.max(0.01, salesMetricsRes.totalSales);
+    const totalInvoiceSales = authFinancials.kpis.invoiceSales;
+    const totalCounterSales = authFinancials.kpis.counterSales;
+    const totalCombinedSales = Math.max(0.01, authFinancials.kpis.totalSales);
 
     const invoicePercentage = Math.round((totalInvoiceSales / totalCombinedSales) * 100);
     const counterPercentage = Math.round((totalCounterSales / totalCombinedSales) * 100);
@@ -977,7 +770,7 @@ export class EnterpriseAnalyticsService {
       }
     }
 
-    const totalAgingAmount = bucket0_30 + bucket31_60 + bucket61_90 + bucket90Plus || udhariMetricsRes.outstanding;
+    const totalAgingAmount = bucket0_30 + bucket31_60 + bucket61_90 + bucket90Plus || authFinancials.kpis.outstandingUdhari;
     const safeTotalAging = Math.max(0.01, totalAgingAmount);
 
     const agingBuckets: AgingBucket[] = [
@@ -1078,7 +871,7 @@ export class EnterpriseAnalyticsService {
     });
 
     const totalCogs = periodFinancials.cogs.totalCogs;
-    const totalRevenue = salesMetricsRes.totalSales;
+    const totalRevenue = authFinancials.kpis.totalSales;
     const totalGrossProfit = periodFinancials.grossProfit.grossProfit;
     const totalExpenseAmount = periodFinancials.operatingExpenses.totalExpenses;
     const totalNetProfit = periodFinancials.netProfit.netProfit;
@@ -1315,22 +1108,16 @@ export class EnterpriseAnalyticsService {
     }));
 
     // -------------------------------------------------------------
-    // SUMMARY KPIS (Strictly Consistent with Dashboard & Ledgers)
+    // SUMMARY KPIS (Authoritative Financial Engine — 100% Consistent with Dashboard)
     // -------------------------------------------------------------
-    const { totalCollections, cashCollections: roundedCash, upiCollections: roundedUpi } = this.computeCollections(
-      payments,
-      counterSales,
-      invoices
-    );
-
     const kpis: AnalyticsKPIs = {
-      totalSales: salesMetricsRes.totalSales,
-      collections: totalCollections,
-      cashCollections: roundedCash,
-      upiCollections: roundedUpi,
-      grossProfit: totalGrossProfit,
-      outstandingUdhari: udhariMetricsRes.outstanding,
-      profitMarginPercent: overallMarginPercent,
+      totalSales: authFinancials.kpis.totalSales,
+      collections: authFinancials.kpis.collections,
+      cashCollections: authFinancials.kpis.cashCollections,
+      upiCollections: authFinancials.kpis.upiCollections,
+      grossProfit: authFinancials.kpis.grossProfit,
+      outstandingUdhari: authFinancials.kpis.outstandingUdhari,
+      profitMarginPercent: authFinancials.kpis.profitMarginPercent,
     };
 
     return {
@@ -1338,20 +1125,20 @@ export class EnterpriseAnalyticsService {
       salesTrend: {
         granularity,
         points: trendPoints,
-        totalSales: salesMetricsRes.totalSales,
+        totalSales: authFinancials.kpis.totalSales,
         peakSales,
         peakLabel,
       },
       channelBreakdown: {
-        totalInvoiceSales,
-        totalCounterSales,
-        invoicePercentage,
-        counterPercentage,
+        totalInvoiceSales: authFinancials.kpis.invoiceSales,
+        totalCounterSales: authFinancials.kpis.counterSales,
+        invoicePercentage: authFinancials.channelBreakdown.invoicePercentage,
+        counterPercentage: authFinancials.channelBreakdown.counterPercentage,
         points: channelPoints,
       },
       receivablesAging: {
-        totalOutstanding: udhariMetricsRes.outstanding,
-        overdueAmount: udhariMetricsRes.overdue,
+        totalOutstanding: authFinancials.kpis.outstandingUdhari,
+        overdueAmount: authFinancials.kpis.overdueUdhari,
         buckets: agingBuckets,
       },
       topProducts: {
@@ -1359,12 +1146,12 @@ export class EnterpriseAnalyticsService {
         byQuantity: topByQuantity,
       },
       profitability: {
-        totalRevenue,
-        totalCogs,
-        totalGrossProfit,
+        totalRevenue: authFinancials.kpis.totalSales,
+        totalCogs: authFinancials.audit.grossProfitAudit.totalCogs,
+        totalGrossProfit: authFinancials.kpis.grossProfit,
         totalExpenses: totalExpenseAmount,
-        totalNetProfit,
-        overallMarginPercent,
+        totalNetProfit: authFinancials.kpis.grossProfit - totalExpenseAmount,
+        overallMarginPercent: authFinancials.kpis.profitMarginPercent,
         points: profitabilityPoints,
       },
       inventoryHealth: {

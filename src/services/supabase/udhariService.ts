@@ -97,23 +97,20 @@ export class UdhariService {
       payments: r.udhari_payments,
     }));
 
-    // Deduplication across remote, in-memory store, and local tenant storage
-    const seenUdhariKeys = new Set<string>();
-    mappedRemote.forEach((u) => {
-      const k1 = u.id ? String(u.id).toLowerCase() : '';
-      const k2 = u.dbId ? String(u.dbId).toLowerCase() : '';
-      const k3 = u.invoiceId ? String(u.invoiceId).toLowerCase() : '';
-      if (k1) seenUdhariKeys.add(k1);
-      if (k2) seenUdhariKeys.add(k2);
-      if (k3) seenUdhariKeys.add(k3);
-    });
+    // If remote records exist or query succeeded, use authoritative database records directly.
+    // Local storage is used strictly as an offline fallback when database connectivity is unavailable.
+    if (mappedRemote.length > 0 || !fetchError) {
+      return { data: mappedRemote, error: fetchError };
+    }
 
+    // Offline read-only fallback when remote query failed
     const localList: any[] = [
       ...store.getUdharis(),
       ...safeGetTenantStorage<any>(LOCAL_UDHARI_KEY, []),
     ];
 
-    const allRecords: any[] = [...mappedRemote];
+    const allRecords: any[] = [];
+    const seenUdhariKeys = new Set<string>();
 
     localList.forEach((u: any) => {
       const w = u.workspaceId || u.workspace_id;
