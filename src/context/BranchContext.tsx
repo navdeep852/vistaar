@@ -258,9 +258,9 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setIsAllExplicitlySelected(false);
       safeSaveTenantItem('active_branch_id', selected.id);
 
-      // 1. Authoritative Workspace Switch (PART 2, 5): Switch active workspace to selected branch tenant
-      const targetWorkspaceId = selected.workspaceId || selected.id;
-      if (targetWorkspaceId && isValidUuid(targetWorkspaceId)) {
+      // 1. Authoritative Workspace Switch (PART 2, 5): Switch active workspace to selected branch tenant if workspace is explicit
+      const targetWorkspaceId = selected.workspaceId && isValidUuid(selected.workspaceId) ? selected.workspaceId : undefined;
+      if (targetWorkspaceId) {
         supabaseAuthService.setAuthoritativeWorkspaceId(targetWorkspaceId);
       }
 
@@ -303,7 +303,7 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const contextValue = useMemo<BranchContextType>(
     () => ({
       workspaceId:
-        (currentBranch && (currentBranch.workspaceId || currentBranch.id)) ||
+        (currentBranch?.workspaceId && isValidUuid(currentBranch.workspaceId) ? currentBranch.workspaceId : null) ||
         supabaseAuthService.getAuthoritativeWorkspaceIdSync() ||
         currentUser?.companyId ||
         'default',

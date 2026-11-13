@@ -6,6 +6,7 @@ import { store, LOCAL_QUOTATIONS_KEY } from '../store';
 import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from './safeStorage';
 import { filterValidLineItems, isEmptyLineItem } from '../../lib/productHelpers';
 import { fromDbQuotation } from './types';
+import { isRecordInBranch } from '../../lib/branchUtils';
 
 export { LOCAL_QUOTATIONS_KEY };
 
@@ -104,34 +105,7 @@ export class QuotationService {
           .order('created_at', { ascending: false })
           .limit(100);
 
-        const mainBranchId = safeGetTenantItem('main_branch_id');
-        const isMain = !options?.branchId || options.branchId === 'ALL' || options.branchId === mainBranchId || String(options.branchId).toLowerCase().includes('main');
-
-        let branchFilterAppliedInDb = false;
-        if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
-          if (isMain) {
-            query = query.or(`branch_id.eq.${options.branchId},branch_id.is.null`);
-          } else {
-            query = query.eq('branch_id', options.branchId);
-          }
-          branchFilterAppliedInDb = true;
-        }
-
         let { data, error } = await query;
-
-        // Resilience against unmigrated schema or statement timeout on complex join/filter
-        if (error && (error.code === 'PGRST204' || error.code === '42703' || error.code === '57014' || error.message?.includes('branch_id') || error.message?.includes('timeout'))) {
-          console.warn('[getQuotations] Database statement notice (code: ' + error.code + '); querying workspace-wide with limit and filtering in memory');
-          branchFilterAppliedInDb = false;
-          const retryRes = await supabase
-            .from('quotations')
-            .select('*, quotation_items(*)')
-            .eq('workspace_id', wsId)
-            .order('created_at', { ascending: false })
-            .limit(100);
-          data = retryRes.data;
-          error = retryRes.error;
-        }
 
         if (error) {
           const errStr = handleSupabaseError(error, 'getQuotations');
@@ -146,11 +120,12 @@ export class QuotationService {
 
         let remoteList = data || [];
 
-        // If branch filter could not be applied at DB level, filter in memory
-        if (!branchFilterAppliedInDb && options?.branchId && options.branchId !== 'ALL') {
+        // Branch filter in memory via canonical branch matching
+        if (options?.branchId && options.branchId !== 'ALL') {
           remoteList = remoteList.filter((rq: any) => {
-            const bId = rq.branch_id || rq.snapshot?.branch_id || rq.snapshot?.branchId;
-            return bId === options.branchId || (!bId && isMain);
+            const bId = rq.branch_id || rq.branchId || rq.snapshot?.branch_id || rq.snapshot?.branchId;
+            const notes = rq.notes || rq.terms || '';
+            return isRecordInBranch(options.branchId, bId, notes);
           });
         }
 

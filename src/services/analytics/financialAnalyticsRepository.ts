@@ -84,10 +84,6 @@ export class FinancialAnalyticsRepository {
         .gte('date', dateRange.startDateStr)
         .lte('date', dateRange.endDateStr);
 
-      if (effectiveBranchId && isValidUuid(effectiveBranchId)) {
-        invQ = invQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
-      }
-
       const { data, error } = await invQ;
       if (error) {
         if (error.code === '42703' || error.message?.includes('branch_id')) {
@@ -101,7 +97,7 @@ export class FinancialAnalyticsRepository {
           if (retryQ.data) {
             invoices = retryQ.data.filter((inv: any) => {
               if (effectiveBranchId) {
-                const b = inv.branch_id || inv.branchId;
+                const b = inv.branch_id || inv.branchId || inv.snapshot?.branch_id || inv.snapshot?.branchId;
                 const notes = inv.notes || inv.terms || '';
                 return isRecordInBranch(effectiveBranchId, b, notes);
               }
@@ -130,10 +126,6 @@ export class FinancialAnalyticsRepository {
         .gte('sale_date', dateRange.startDateStr)
         .lte('sale_date', dateRange.endDateStr);
 
-      if (effectiveBranchId && isValidUuid(effectiveBranchId)) {
-        csQ = csQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
-      }
-
       const { data, error } = await csQ;
       if (error) {
         if (error.code === '42703' || error.message?.includes('branch_id')) {
@@ -147,7 +139,7 @@ export class FinancialAnalyticsRepository {
           if (retryQ.data) {
             counterSales = retryQ.data.filter((cs: any) => {
               if (effectiveBranchId) {
-                const b = cs.branch_id || cs.branchId;
+                const b = cs.branch_id || cs.branchId || cs.snapshot?.branch_id || cs.snapshot?.branchId;
                 const notes = cs.notes || '';
                 return isRecordInBranch(effectiveBranchId, b, notes);
               }
@@ -175,10 +167,6 @@ export class FinancialAnalyticsRepository {
         .gte('payment_date', dateRange.startDateStr)
         .lte('payment_date', dateRange.endDateStr);
 
-      if (effectiveBranchId && isValidUuid(effectiveBranchId)) {
-        payQ = payQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
-      }
-
       const { data, error } = await payQ;
       if (error) {
         if (error.code === '42703' || error.message?.includes('branch_id')) {
@@ -191,7 +179,7 @@ export class FinancialAnalyticsRepository {
           if (retryPay.data) {
             payments = retryPay.data.filter((p: any) => {
               if (effectiveBranchId) {
-                const b = p.branch_id || p.branchId;
+                const b = p.branch_id || p.branchId || p.snapshot?.branch_id || p.snapshot?.branchId;
                 const notes = p.notes || '';
                 if (b || notes.includes('[branch')) {
                   return isRecordInBranch(effectiveBranchId, b, notes);
@@ -202,7 +190,7 @@ export class FinancialAnalyticsRepository {
                     (p.invoice_number && inv.invoice_number === p.invoice_number)
                 );
                 if (linkedInv) {
-                  return isRecordInBranch(effectiveBranchId, linkedInv.branch_id || linkedInv.branchId, linkedInv.notes || linkedInv.terms);
+                  return isRecordInBranch(effectiveBranchId, linkedInv.branch_id || linkedInv.branchId || linkedInv.snapshot?.branch_id || linkedInv.snapshot?.branchId, linkedInv.notes || linkedInv.terms);
                 }
                 return isRecordInBranch(effectiveBranchId, undefined, notes);
               }
@@ -247,10 +235,6 @@ export class FinancialAnalyticsRepository {
         .select('*, udhari_payments(*)')
         .eq('workspace_id', wsId);
 
-      if (effectiveBranchId && isValidUuid(effectiveBranchId)) {
-        uQ = uQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
-      }
-
       const { data: uData, error: uErr } = await uQ;
       if (uErr) {
         if (uErr.code === '42703' || uErr.message?.includes('branch_id')) {
@@ -293,10 +277,6 @@ export class FinancialAnalyticsRepository {
         .gte('expense_date', dateRange.startDateStr)
         .lte('expense_date', dateRange.endDateStr);
 
-      if (effectiveBranchId && isValidUuid(effectiveBranchId)) {
-        expQ = expQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
-      }
-
       const { data: expData, error: expErr } = await expQ;
       if (!expErr && expData) {
         expenses = expData;
@@ -314,29 +294,29 @@ export class FinancialAnalyticsRepository {
     }
 
     // Branch in-memory filtering for any records that returned with branch_id = null or embedded branch
-    if (effectiveBranchId) {
+    if (effectiveBranchId && effectiveBranchId !== 'ALL') {
       invoices = invoices.filter((inv) => {
-        const b = inv.branch_id || inv.branchId;
+        const b = inv.branch_id || inv.branchId || inv.snapshot?.branch_id || inv.snapshot?.branchId;
         const notes = inv.notes || inv.terms || '';
         return isRecordInBranch(effectiveBranchId, b, notes);
       });
       counterSales = counterSales.filter((cs) => {
-        const b = cs.branch_id || cs.branchId;
+        const b = cs.branch_id || cs.branchId || cs.snapshot?.branch_id || cs.snapshot?.branchId;
         const notes = cs.notes || '';
         return isRecordInBranch(effectiveBranchId, b, notes);
       });
       payments = payments.filter((p) => {
-        const b = p.branch_id || p.branchId;
+        const b = p.branch_id || p.branchId || p.snapshot?.branch_id || p.snapshot?.branchId;
         const notes = p.notes || '';
         return isRecordInBranch(effectiveBranchId, b, notes);
       });
       udhariRecords = udhariRecords.filter((u) => {
-        const b = u.branch_id || u.branchId;
+        const b = u.branch_id || u.branchId || u.snapshot?.branch_id || u.snapshot?.branchId;
         const notes = u.notes || '';
         return isRecordInBranch(effectiveBranchId, b, notes);
       });
       expenses = expenses.filter((e) => {
-        const b = e.branch_id || e.branchId;
+        const b = e.branch_id || e.branchId || e.snapshot?.branch_id || e.snapshot?.branchId;
         const notes = e.notes || '';
         return isRecordInBranch(effectiveBranchId, b, notes);
       });

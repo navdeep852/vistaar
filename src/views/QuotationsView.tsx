@@ -106,7 +106,16 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
     const mainBranchId = safeGetTenantItem('main_branch_id');
     const isMain = currentBranch ? (Boolean(currentBranch.isMainBranch) || currentBranch.id === mainBranchId || String(currentBranch.id).toLowerCase().includes('main')) : true;
     if (currentBranch && currentBranch.id !== 'ALL') {
-      setQuotations(all.filter((q) => q.branchId === currentBranch.id || (!q.branchId && isMain)));
+      const filtered = all.filter((q) => {
+        const bId = q.branchId || (q as any).snapshot?.branch_id || (q as any).snapshot?.branchId;
+        return bId === currentBranch.id || (!bId && isMain);
+      });
+      // If owner is on Main Branch and filtered returns empty while workspace has quotations, show all workspace quotations
+      if (filtered.length === 0 && isMain && all.length > 0) {
+        setQuotations(all);
+      } else {
+        setQuotations(filtered);
+      }
     } else {
       setQuotations(all);
     }
@@ -116,7 +125,8 @@ export const QuotationsView: React.FC<QuotationsViewProps> = ({
     setIsLoading(true);
     setFetchError(null);
     try {
-      const res = await quotationService.getQuotations(undefined, { branchId: currentBranch?.id });
+      const filterBranchId = (!currentBranch || currentBranch.id === 'ALL') ? undefined : currentBranch.id;
+      const res = await quotationService.getQuotations(undefined, filterBranchId ? { branchId: filterBranchId } : undefined);
       if (res.error) {
         setFetchError(res.error);
       } else if (res.data) {

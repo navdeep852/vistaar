@@ -76,16 +76,6 @@ export class InvoiceService {
       query = query.eq('workspace_id', wsId);
     }
 
-    if (options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
-      const mainBranchId = safeGetTenantItem('main_branch_id');
-      const isMain = options.branchId === mainBranchId || String(options.branchId).toLowerCase().includes('main');
-      if (isMain) {
-        query = query.or(`branch_id.eq.${options.branchId},branch_id.is.null`);
-      } else {
-        query = query.eq('branch_id', options.branchId);
-      }
-    }
-
     if (options?.status) {
       query = query.eq('status', options.status);
     }
@@ -163,7 +153,7 @@ export class InvoiceService {
     // 1. Branch Isolation Filtering via canonical branch matching
     if (options?.branchId && options.branchId !== 'ALL') {
       merged = merged.filter((inv: any) => {
-        const bId = inv.branchId || inv.branch_id || inv.snapshot?.branch_id;
+        const bId = inv.branchId || inv.branch_id || inv.snapshot?.branch_id || inv.snapshot?.branchId;
         const notes = inv.notes || inv.terms || '';
         return isRecordInBranch(options.branchId, bId, notes);
       });

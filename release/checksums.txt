@@ -1,7 +1,7 @@
-﻿# VISTAAR Release Checksums (Desktop & Mobile)
-# Generated: 2026-11-12 22:36:43
+# VISTAAR Release Checksums (Desktop & Mobile)
+# Generated: 2026-11-13 08:06:04
 
 d5a2d90247d6a8b7209f224e88a0fb1719b65e6b164285ce93658a671e5b67a3  VISTAAR-Setup.exe
 d5a2d90247d6a8b7209f224e88a0fb1719b65e6b164285ce93658a671e5b67a3  VISTAAR_1.0.1_x64-setup.exe
-d0e149e38d4ac33526adebe8dd5bd80fd25e83bbb32cbbdba418e8c9d8d6214a  VISTAAR-Mobile.apk
-d0e149e38d4ac33526adebe8dd5bd80fd25e83bbb32cbbdba418e8c9d8d6214a  VISTAAR_1.0.1_mobile-debug.apk
+33f28f7ad50b7d0c8e9209e6310aa38d3f068aba3966a3cf3cd55528afe53167  VISTAAR-Mobile.apk
+33f28f7ad50b7d0c8e9209e6310aa38d3f068aba3966a3cf3cd55528afe53167  VISTAAR_1.0.1_mobile-debug.apk

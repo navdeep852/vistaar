@@ -87,7 +87,7 @@ export function mapAppSettingsToDb(settings: Partial<BusinessSettings>, workspac
   const bankObj = settings.bankDetails || (settings as any).bank_details || {};
   const upiQr = bankObj.upiQrCodeUrl || bankObj.upi_qr_url || settings.upiQrCodeUrl || (settings as any).upi_qr_url || '';
 
-  const bankDetailsPayload = {
+  const bankDetailsPayload: any = {
     bankName: bankObj.bankName || bankObj.bank_name || '',
     accountHolder: bankObj.accountHolder || bankObj.account_holder || '',
     accountNo: bankObj.accountNo || bankObj.account_no || '',
@@ -96,6 +96,9 @@ export function mapAppSettingsToDb(settings: Partial<BusinessSettings>, workspac
     upiId: bankObj.upiId || bankObj.upi_id || '',
     upiQrCodeUrl: upiQr,
   };
+  if (bankObj._branches) {
+    bankDetailsPayload._branches = bankObj._branches;
+  }
 
   const legalNameValue = (
     settings.legalName ||

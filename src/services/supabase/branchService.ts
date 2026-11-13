@@ -79,6 +79,53 @@ export class BranchService {
   }
 
   /**
+   * Synchronizes authoritative branch configurations to business_settings.bank_details._branches
+   * so all devices (Desktop, Mobile, Web) share identical branch definitions.
+   */
+  public async syncBranchesToRemoteSettings(wsId: string, branches: Branch[]): Promise<void> {
+    if (!isSupabaseConfigured() || !isValidUuid(wsId) || !Array.isArray(branches) || branches.length === 0) return;
+    try {
+      const { data: bsRow } = await supabase
+        .from('business_settings')
+        .select('bank_details')
+        .eq('workspace_id', wsId)
+        .maybeSingle();
+
+      const existingBank = bsRow?.bank_details || {};
+      const updatedBank = {
+        ...existingBank,
+        _branches: branches.map((b) => ({
+          id: b.id,
+          workspaceId: b.workspaceId || wsId,
+          branchCode: b.branchCode,
+          branchName: b.branchName,
+          branchType: b.branchType || 'Store',
+          address: b.address || '',
+          city: b.city || '',
+          state: b.state || '',
+          pincode: b.pincode || '',
+          country: b.country || 'India',
+          phone: b.phone || '',
+          email: b.email || '',
+          gstin: b.gstin || '',
+          stateCode: b.stateCode || '',
+          status: b.status || 'Active',
+          isMainBranch: Boolean(b.isMainBranch),
+          createdAt: b.createdAt || new Date().toISOString(),
+          updatedAt: b.updatedAt || new Date().toISOString(),
+        })),
+      };
+
+      await supabase
+        .from('business_settings')
+        .update({ bank_details: updatedBank })
+        .eq('workspace_id', wsId);
+    } catch (e) {
+      console.warn('Error syncing branches to business_settings:', e);
+    }
+  }
+
+  /**
    * Helper to auto-provision default Main Branch if no branches exist.
    */
   private getOrCreateDefaultMainBranch(existingList: Branch[], wsId: string): Branch[] {
@@ -99,6 +146,9 @@ export class BranchService {
     };
     safeSaveTenantStorage(LOCAL_BRANCHES_KEY, [defaultBranch]);
     safeSaveTenantItem('main_branch_id', defaultBranch.id);
+    if (isValidUuid(wsId)) {
+      this.syncBranchesToRemoteSettings(wsId, [defaultBranch]).catch(() => {});
+    }
 
     // Auto-assign owner to Main Branch
     if (user?.id) {
@@ -192,6 +242,45 @@ export class BranchService {
           const mb = mapped.find((b) => b.isMainBranch) || mapped[0];
           if (mb) safeSaveTenantItem('main_branch_id', mb.id);
           return { data: mapped };
+        }
+
+        // Schema Fallback: Synchronize from business_settings.bank_details._branches
+        const { data: bsRow } = await supabase
+          .from('business_settings')
+          .select('bank_details')
+          .eq('workspace_id', wsId)
+          .maybeSingle();
+
+        const syncBranches = bsRow?.bank_details?._branches;
+        if (Array.isArray(syncBranches) && syncBranches.length > 0) {
+          const passMap = safeGetTenantItem<Record<string, string>>(LOCAL_BRANCH_PASSWORDS_KEY, {});
+          const mapped: Branch[] = syncBranches.map((b: any) => ({
+            id: b.id,
+            workspaceId: b.workspaceId || wsId,
+            branchCode: b.branchCode || (b.isMainBranch ? 'MAIN' : 'BR'),
+            branchName: b.branchName || 'Branch',
+            branchType: b.branchType || 'Store',
+            address: b.address,
+            city: b.city,
+            state: b.state,
+            pincode: b.pincode,
+            country: b.country || 'India',
+            phone: b.phone,
+            email: b.email,
+            gstin: b.gstin,
+            stateCode: b.stateCode,
+            status: b.status || 'Active',
+            isMainBranch: Boolean(b.isMainBranch),
+            hasPassword: Boolean(b.hasPassword || passMap[b.id]),
+            createdAt: b.createdAt || new Date().toISOString(),
+            updatedAt: b.updatedAt || new Date().toISOString(),
+          }));
+
+          safeSaveTenantStorage(LOCAL_BRANCHES_KEY, mapped);
+          const mb = mapped.find((b) => b.isMainBranch) || mapped[0];
+          if (mb) safeSaveTenantItem('main_branch_id', mb.id);
+          const filtered = options?.activeOnly !== false ? mapped.filter((b) => b.status === 'Active') : mapped;
+          return { data: filtered };
         }
       } catch (e: any) {
         // Fall through to local tenant storage
@@ -418,6 +507,9 @@ export class BranchService {
     // ALWAYS persist to local storage
     existingList.push(newBranch);
     safeSaveTenantStorage(LOCAL_BRANCHES_KEY, existingList);
+    if (isValidUuid(wsId)) {
+      this.syncBranchesToRemoteSettings(wsId, existingList).catch(() => {});
+    }
 
     // Auto-assign user access locally
     const user = supabaseAuthService.getUser();
@@ -852,6 +944,9 @@ export class BranchService {
       }
       list[idx] = { ...list[idx], ...updates, updatedAt: new Date().toISOString() };
       safeSaveTenantStorage(LOCAL_BRANCHES_KEY, list);
+      if (isValidUuid(wsId)) {
+        this.syncBranchesToRemoteSettings(wsId, list).catch(() => {});
+      }
       return { success: true, data: list[idx] };
     }
 

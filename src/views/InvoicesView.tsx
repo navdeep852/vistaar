@@ -121,7 +121,17 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   const updateData = useCallback(() => {
     const all = store.getInvoices();
     if (currentBranch && currentBranch.id !== 'ALL') {
-      setInvoices(all.filter((i) => i.branchId === currentBranch.id || (!i.branchId && currentBranch.isMainBranch)));
+      const isMain = Boolean(currentBranch.isMainBranch) || String(currentBranch.id).toLowerCase().includes('main');
+      const filtered = all.filter((i) => {
+        const bId = i.branchId || (i as any).snapshot?.branch_id || (i as any).snapshot?.branchId;
+        return bId === currentBranch.id || (!bId && isMain);
+      });
+      // If owner is on Main Branch and filtered returns empty while workspace has invoices, show all workspace invoices
+      if (filtered.length === 0 && isMain && all.length > 0) {
+        setInvoices(all);
+      } else {
+        setInvoices(filtered);
+      }
     } else {
       setInvoices(all);
     }
@@ -131,8 +141,9 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
     updateData();
 
     import('../services/supabase/invoiceService').then(({ invoiceService }) => {
+      const filterBranchId = (!currentBranch || currentBranch.id === 'ALL') ? undefined : currentBranch.id;
       invoiceService.getInvoices({
-        branchId: currentBranch?.id,
+        branchId: filterBranchId,
         startDate: resolvedDateRange.startDate || undefined,
         endDate: resolvedDateRange.endDate || undefined,
       }).then((res) => {
@@ -208,7 +219,8 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       // Refresh invoices from both store and Supabase respecting branch isolation
       updateData();
       try {
-        const { data } = await invoiceService.getInvoices({ branchId: currentBranch?.id });
+        const filterBranchId = (!currentBranch || currentBranch.id === 'ALL') ? undefined : currentBranch.id;
+        const { data } = await invoiceService.getInvoices({ branchId: filterBranchId });
         if (data && Array.isArray(data) && data.length > 0) {
           store.syncRemoteInvoices(data);
           updateData();
@@ -300,7 +312,8 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
             setEditingDraftInvoice(null);
             setMode('list');
             updateData();
-            invoiceService.getInvoices({ branchId: currentBranch?.id }).then((res) => {
+            const filterBranchId = (!currentBranch || currentBranch.id === 'ALL') ? undefined : currentBranch.id;
+            invoiceService.getInvoices({ branchId: filterBranchId }).then((res) => {
               if (res.data && res.data.length > 0) {
                 store.syncRemoteInvoices(res.data);
                 updateData();

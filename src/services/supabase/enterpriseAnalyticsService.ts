@@ -320,7 +320,7 @@ export class EnterpriseAnalyticsService {
           .from('invoices')
           .select('*, invoice_items(*)')
           .eq('workspace_id', wsId)
-          .in('status', ['Issued', 'Partially Paid', 'Paid', 'issued', 'partially paid', 'paid'])
+          .in('status', ['Issued', 'Partially Paid', 'Paid'])
           .gte('date', dateRange.startDateStr)
           .lte('date', dateRange.endDateStr);
 
@@ -346,13 +346,6 @@ export class EnterpriseAnalyticsService {
           .gte('expense_date', dateRange.startDateStr)
           .lte('expense_date', dateRange.endDateStr);
 
-        if (effectiveBranchId && effectiveBranchId !== 'ALL' && isValidUuid(effectiveBranchId)) {
-          invQ = invQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
-          csQ = csQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
-          payQ = payQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
-          expQ = expQ.or(`branch_id.eq.${effectiveBranchId},branch_id.is.null,branch_id.eq.${wsId}`);
-        }
-
         let [invRes, csRes, payRes, prodRes, expRes] = await Promise.all([
           invQ,
           csQ,
@@ -373,7 +366,7 @@ export class EnterpriseAnalyticsService {
             csRes = {
               data: retryCs.data.filter((cs: any) => {
                 if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-                  const b = cs.branch_id || cs.branchId;
+                  const b = cs.branch_id || cs.branchId || cs.snapshot?.branch_id || cs.snapshot?.branchId;
                   const notes = cs.notes || '';
                   return isRecordInBranch(effectiveBranchId, b, notes);
                 }
@@ -388,7 +381,7 @@ export class EnterpriseAnalyticsService {
             .from('invoices')
             .select('*')
             .eq('workspace_id', wsId)
-            .in('status', ['Issued', 'Partially Paid', 'Paid', 'issued', 'partially paid', 'paid'])
+            .in('status', ['Issued', 'Partially Paid', 'Paid'])
             .gte('date', dateRange.startDateStr)
             .lte('date', dateRange.endDateStr);
           if (!retryInv.error && retryInv.data) {
@@ -416,7 +409,7 @@ export class EnterpriseAnalyticsService {
             payRes = {
               data: retryPay.data.filter((p: any) => {
                 if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-                  const b = p.branch_id || p.branchId;
+                  const b = p.branch_id || p.branchId || p.snapshot?.branch_id || p.snapshot?.branchId;
                   const notes = p.notes || '';
                   return isRecordInBranch(effectiveBranchId, b, notes);
                 }
@@ -429,7 +422,7 @@ export class EnterpriseAnalyticsService {
         if (invRes.data) {
           invoices = invRes.data.filter((inv: any) => {
             if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-              const b = inv.branch_id || inv.branchId || inv.snapshot?.branch_id;
+              const b = inv.branch_id || inv.branchId || inv.snapshot?.branch_id || inv.snapshot?.branchId;
               const notes = inv.notes || inv.terms || '';
               return isRecordInBranch(effectiveBranchId, b, notes);
             }
@@ -439,7 +432,7 @@ export class EnterpriseAnalyticsService {
         if (csRes.data) {
           counterSales = csRes.data.filter((cs: any) => {
             if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-              const b = cs.branch_id || cs.branchId;
+              const b = cs.branch_id || cs.branchId || cs.snapshot?.branch_id || cs.snapshot?.branchId;
               const notes = cs.notes || '';
               return isRecordInBranch(effectiveBranchId, b, notes);
             }
@@ -449,7 +442,7 @@ export class EnterpriseAnalyticsService {
         if (payRes.data) {
           payments = payRes.data.filter((p: any) => {
             if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-              const b = p.branch_id || p.branchId;
+              const b = p.branch_id || p.branchId || p.snapshot?.branch_id || p.snapshot?.branchId;
               const notes = p.notes || '';
               return isRecordInBranch(effectiveBranchId, b, notes);
             }
@@ -466,7 +459,7 @@ export class EnterpriseAnalyticsService {
             .lte('expense_date', dateRange.endDateStr);
           if (retryExp.data) {
             expensesList = retryExp.data.filter((e: any) => {
-              const b = e.branch_id || e.branchId;
+              const b = e.branch_id || e.branchId || e.snapshot?.branch_id || e.snapshot?.branchId;
               if (effectiveBranchId && effectiveBranchId !== 'ALL') {
                 return isRecordInBranch(effectiveBranchId, b, e.notes || '');
               }
@@ -537,7 +530,7 @@ export class EnterpriseAnalyticsService {
     // 1. Fetch Authoritative Financial Repository Results & Raw Invoices / Counter Sales (Read-Only)
     const [authFinancials, quotationsRes, raw] = await Promise.all([
       financialAnalyticsRepository.getAuthoritativeFinancials({ dateRange, branchId, forceFresh, explicitWsId: wsId }),
-      quotationService.getQuotations(branchId),
+      quotationService.getQuotations(undefined, { branchId }),
       this.fetchRawTransactionsForPeriod(wsId, dateRange, branchId),
     ]);
 

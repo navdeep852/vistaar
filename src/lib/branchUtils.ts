@@ -15,6 +15,10 @@ export function getKnownBranches(): BranchRef[] {
     const list = safeGetTenantStorage<BranchRef>('vistaar_local_branches_db', []);
     if (Array.isArray(list) && list.length > 0) return list;
   } catch {}
+  try {
+    const list = safeGetTenantStorage<BranchRef>('vistaar_company_branches_db', []);
+    if (Array.isArray(list) && list.length > 0) return list;
+  } catch {}
   return [];
 }
 

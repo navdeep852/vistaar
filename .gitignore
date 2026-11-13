@@ -57,3 +57,7 @@ fastlane/Preview.html
 fastlane/screenshots
 *.bak
 *.local.bak
+
+# Extracted debug/auth dumps
+extracted_*.json
+vistaar_local_*.json
