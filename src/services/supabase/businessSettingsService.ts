@@ -4,6 +4,7 @@ import { handleSupabaseError } from '../../lib/supabaseError';
 import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
 import { BusinessSettings } from '../../types';
 import { DbBusinessSettings } from './types';
+import { safeGetTenantStorage } from './safeStorage';
 
 /**
  * Maps a database snake_case row from public.business_settings to the frontend
@@ -12,6 +13,7 @@ import { DbBusinessSettings } from './types';
 export function mapDbSettingsToApp(row: DbBusinessSettings): BusinessSettings {
   const bank = typeof row.bank_details === 'object' && row.bank_details !== null ? row.bank_details : {};
   const upiQr = (row as any).upi_qr_url || bank.upiQrCodeUrl || bank.upi_qr_url || '';
+  const bankBranches = Array.isArray((bank as any)._branches) ? (bank as any)._branches : undefined;
 
   return {
     businessName: row.legal_name || '',
@@ -54,6 +56,7 @@ export function mapDbSettingsToApp(row: DbBusinessSettings): BusinessSettings {
       branch: bank.branch || '',
       upiId: bank.upiId || bank.upi_id || '',
       upiQrCodeUrl: upiQr,
+      ...(bankBranches ? { _branches: bankBranches } : {}),
     },
     upiQrCodeUrl: upiQr,
     showUpiQrOnQuotation: (row as any).show_upi_qr_on_quotation ?? true,
@@ -82,22 +85,47 @@ export function mapDbSettingsToApp(row: DbBusinessSettings): BusinessSettings {
 /**
  * Maps frontend BusinessSettings fields to the explicit PostgreSQL snake_case payload
  * for public.business_settings. NEVER spreads arbitrary or camelCase fields.
+ * Safely preserves branch definitions (_branches) even if incoming settings omit them.
  */
-export function mapAppSettingsToDb(settings: Partial<BusinessSettings>, workspaceId: string): DbBusinessSettings {
+export function mapAppSettingsToDb(
+  settings: Partial<BusinessSettings>,
+  workspaceId: string,
+  existingBankDetails?: any
+): DbBusinessSettings {
   const bankObj = settings.bankDetails || (settings as any).bank_details || {};
-  const upiQr = bankObj.upiQrCodeUrl || bankObj.upi_qr_url || settings.upiQrCodeUrl || (settings as any).upi_qr_url || '';
+  const existingBank = typeof existingBankDetails === 'object' && existingBankDetails !== null ? existingBankDetails : {};
+  const upiQr = bankObj.upiQrCodeUrl || bankObj.upi_qr_url || settings.upiQrCodeUrl || (settings as any).upi_qr_url || existingBank.upiQrCodeUrl || existingBank.upi_qr_url || '';
 
   const bankDetailsPayload: any = {
-    bankName: bankObj.bankName || bankObj.bank_name || '',
-    accountHolder: bankObj.accountHolder || bankObj.account_holder || '',
-    accountNo: bankObj.accountNo || bankObj.account_no || '',
-    ifscCode: bankObj.ifscCode || bankObj.ifsc_code || '',
-    branch: bankObj.branch || '',
-    upiId: bankObj.upiId || bankObj.upi_id || '',
+    bankName: bankObj.bankName !== undefined ? bankObj.bankName : (bankObj.bank_name !== undefined ? bankObj.bank_name : (existingBank.bankName || existingBank.bank_name || '')),
+    accountHolder: bankObj.accountHolder !== undefined ? bankObj.accountHolder : (bankObj.account_holder !== undefined ? bankObj.account_holder : (existingBank.accountHolder || existingBank.account_holder || '')),
+    accountNo: bankObj.accountNo !== undefined ? bankObj.accountNo : (bankObj.account_no !== undefined ? bankObj.account_no : (existingBank.accountNo || existingBank.account_no || '')),
+    ifscCode: bankObj.ifscCode !== undefined ? bankObj.ifscCode : (bankObj.ifsc_code !== undefined ? bankObj.ifsc_code : (existingBank.ifscCode || existingBank.ifsc_code || '')),
+    branch: bankObj.branch !== undefined ? bankObj.branch : (existingBank.branch || ''),
+    upiId: bankObj.upiId !== undefined ? bankObj.upiId : (bankObj.upi_id !== undefined ? bankObj.upi_id : (existingBank.upiId || existingBank.upi_id || '')),
     upiQrCodeUrl: upiQr,
   };
-  if (bankObj._branches) {
-    bankDetailsPayload._branches = bankObj._branches;
+
+  // Safe Branch Preservation:
+  // 1. If incoming bankObj has a non-empty _branches array, preserve it
+  // 2. Otherwise, if existingBank in DB has a non-empty _branches array, preserve it
+  // 3. Otherwise, check tenant storage backup 'vistaar_local_branches_db'
+  let preservedBranches: any[] | null = null;
+  if (Array.isArray(bankObj._branches) && bankObj._branches.length > 0) {
+    preservedBranches = bankObj._branches;
+  } else if (Array.isArray(existingBank._branches) && existingBank._branches.length > 0) {
+    preservedBranches = existingBank._branches;
+  } else {
+    try {
+      const localBackup = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+      if (Array.isArray(localBackup) && localBackup.length > 0) {
+        preservedBranches = localBackup;
+      }
+    } catch {}
+  }
+
+  if (Array.isArray(preservedBranches) && preservedBranches.length > 0) {
+    bankDetailsPayload._branches = preservedBranches;
   }
 
   const legalNameValue = (
@@ -135,9 +163,11 @@ export function mapAppSettingsToDb(settings: Partial<BusinessSettings>, workspac
     stamp_url: settings.stampUrl || (settings as any).stamp_url || null,
     stamp_alignment: settings.stampAlignment || (settings as any).stamp_alignment || 'left',
     stamp_scale: settings.stampScale ?? (settings as any).stamp_scale ?? 1.0,
-    bank_details: bankDetailsPayload,
-    upi_qr_url: upiQr || null,
-    show_upi_qr_on_quotation: settings.showUpiQrOnQuotation ?? (settings as any).show_upi_qr_on_quotation ?? true,
+    bank_details: {
+      ...bankDetailsPayload,
+      upiQrCodeUrl: upiQr || '',
+      showUpiQrOnQuotation: settings.showUpiQrOnQuotation ?? (settings as any).show_upi_qr_on_quotation ?? true,
+    },
     show_bank_on_invoice: settings.showBankDetailsOnInvoice ?? (settings as any).show_bank_on_invoice ?? true,
     show_bank_on_quotation: settings.showBankDetailsOnQuotation ?? (settings as any).show_bank_on_quotation ?? true,
     currency: settings.currency || (settings as any).currency || '₹',
@@ -238,13 +268,30 @@ export class SupabaseBusinessSettingsService {
     }
 
     try {
+      // Step 1: Safely retrieve existing bank_details from database to avoid read-modify-write data loss
+      let existingBankDetails: any = null;
+      try {
+        const { data: existingRow } = await supabase
+          .from('business_settings')
+          .select('bank_details')
+          .eq('workspace_id', workspaceId)
+          .maybeSingle();
+
+        if (existingRow?.bank_details && typeof existingRow.bank_details === 'object') {
+          existingBankDetails = existingRow.bank_details;
+        }
+      } catch (fetchErr) {
+        console.warn('[updateSettings] Notice: existing bank_details fetch fallback:', fetchErr);
+      }
+
       const dbPayload = mapAppSettingsToDb(
         {
           ...settings,
           phone: normalizedPhone,
           alternatePhone: normalizedAltPhone,
         },
-        workspaceId
+        workspaceId,
+        existingBankDetails
       );
 
       const { data, error } = await supabase
