@@ -1226,6 +1226,7 @@ export class InvoiceService {
             if (isSupabaseConfigured() && isValidUuid(wsId) && isValidUuid(authoritativeInvoiceId)) {
               const fullPayRow: Record<string, any> = {
                 workspace_id: wsId,
+                payment_number: localPayRecord.paymentNumber,
                 invoice_id: authoritativeInvoiceId,
                 invoice_number: inv.invoiceNumber,
                 customer_id: isValidUuid(payload.customerId) ? payload.customerId : null,
@@ -1249,6 +1250,7 @@ export class InvoiceService {
                 console.warn('[finalizeAuthoritativeInvoice] Payments column mismatch in schema cache (PGRST204); retrying with core columns');
                 const corePayRow = {
                   workspace_id: wsId,
+                  payment_number: localPayRecord.paymentNumber,
                   invoice_id: authoritativeInvoiceId,
                   invoice_number: inv.invoiceNumber,
                   customer_id: isValidUuid(payload.customerId) ? payload.customerId : null,

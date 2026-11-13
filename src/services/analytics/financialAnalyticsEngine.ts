@@ -204,6 +204,10 @@ export class FinancialAnalyticsEngine {
     const recordedPaymentIds = new Set<string>();
     const invoicesAccountedInPayments = new Set<string>();
     const counterSalesAccountedInPayments = new Set<string>();
+    const paymentsRecordedByInvId = new Map<string, number>();
+    const paymentsRecordedByInvNum = new Map<string, number>();
+    const failedOrCancelledInvoices = new Set<string>();
+    let unlinkedPaymentsPaise = 0;
     let eligiblePaymentsCount = 0;
     let deduplicatedPaymentCount = 0;
 
@@ -231,6 +235,11 @@ export class FinancialAnalyticsEngine {
 
     // A. Authoritative Payments table (public.payments)
     payments.forEach((p) => {
+      const pDate = String(p.payment_date || p.paymentDate || p.date || p.created_at || '').split('T')[0];
+      if (pDate && (pDate < startDateStr || pDate > endDateStr)) {
+        return;
+      }
+
       const pId = p.id ? String(p.id).toLowerCase().trim() : '';
       const pNum = (p.payment_number || p.paymentNumber) ? String(p.payment_number || p.paymentNumber).toLowerCase().trim() : '';
       const key = pId || pNum;
@@ -242,20 +251,32 @@ export class FinancialAnalyticsEngine {
       if (key) recordedPaymentIds.add(key);
 
       const status = String(p.status || '').toUpperCase();
+      const invId = p.invoice_id || p.invoiceId;
+      const invNum = p.invoice_number || p.invoiceNumber;
+
       if (status === 'FAILED' || status === 'CANCELLED' || status === 'REFUNDED') {
+        if (invId) failedOrCancelledInvoices.add(String(invId).toLowerCase().trim());
+        if (invNum) failedOrCancelledInvoices.add(String(invNum).toLowerCase().trim());
         return;
       }
 
       const amt = Number(p.amount || 0);
       if (amt <= 0) return;
+      const amtPaise = toPaise(amt);
 
-      const invId = p.invoice_id || p.invoiceId;
-      if (invId) invoicesAccountedInPayments.add(String(invId).toLowerCase().trim());
-      const invNum = p.invoice_number || p.invoiceNumber;
+      if (invId) {
+        const cleanInvId = String(invId).toLowerCase().trim();
+        invoicesAccountedInPayments.add(cleanInvId);
+        paymentsRecordedByInvId.set(cleanInvId, (paymentsRecordedByInvId.get(cleanInvId) || 0) + amtPaise);
+      }
       if (invNum) {
         const cleanInvNum = String(invNum).toLowerCase().trim();
         invoicesAccountedInPayments.add(cleanInvNum);
         counterSalesAccountedInPayments.add(cleanInvNum);
+        paymentsRecordedByInvNum.set(cleanInvNum, (paymentsRecordedByInvNum.get(cleanInvNum) || 0) + amtPaise);
+      }
+      if (!invId && !invNum) {
+        unlinkedPaymentsPaise += amtPaise;
       }
 
       const csId = p.counter_sale_id || p.counterSaleId;
@@ -286,6 +307,11 @@ export class FinancialAnalyticsEngine {
 
     // B. Udhari Recovery Payments (public.udhari_payments)
     udhariPayments.forEach((up) => {
+      const upDate = String(up.payment_date || up.paymentDate || up.date || up.created_at || '').split('T')[0];
+      if (upDate && (upDate < startDateStr || upDate > endDateStr)) {
+        return;
+      }
+
       const upId = up.id ? String(up.id).toLowerCase().trim() : '';
       const upCode = (up.payment_code || up.paymentCode) ? String(up.payment_code || up.paymentCode).toLowerCase().trim() : '';
       const ref = String(up.reference || '').toLowerCase().trim();
@@ -335,6 +361,78 @@ export class FinancialAnalyticsEngine {
       creditPayment(received, method, cashAmt, upiAmt);
       if (csId) counterSalesAccountedInPayments.add(csId);
       if (saleNum) counterSalesAccountedInPayments.add(saleNum);
+    });
+
+    // Map subsequent udhari recoveries per invoice to prevent double-counting as upfront settlements
+    const udhariSubsequentPaiseByInv = new Map<string, number>();
+    udhariRecords.forEach((u) => {
+      const invId = u.invoice_id || u.invoiceId;
+      const invCode = u.udhari_code || u.udhariCode;
+      const refInv = invId || (invCode && invCode.startsWith('UD-INV-') ? invCode.replace('UD-', '') : '');
+      const paymentsList = u.udhari_payments || u.payments || [];
+      let subsequentTotal = 0;
+      paymentsList.forEach((pay: any) => {
+        subsequentTotal += toPaise(Number(pay.amount || 0));
+      });
+      if (refInv) {
+        const key = String(refInv).toLowerCase().trim();
+        udhariSubsequentPaiseByInv.set(key, (udhariSubsequentPaiseByInv.get(key) || 0) + subsequentTotal);
+      }
+    });
+
+    // D. Upfront Invoice Settlements (verified receipts not already recorded in public.payments)
+    let upfrontSettledInvoiceCount = 0;
+    eligibleInvoices.forEach((inv) => {
+      const invId = inv.id ? String(inv.id).toLowerCase().trim() : '';
+      const invNum = (inv.invoice_number || inv.invoiceNumber) ? String(inv.invoice_number || inv.invoiceNumber).toLowerCase().trim() : '';
+
+      // Skip if explicitly marked as failed, cancelled, or refunded
+      if ((invId && failedOrCancelledInvoices.has(invId)) || (invNum && failedOrCancelledInvoices.has(invNum))) {
+        return;
+      }
+
+      const paidPaise = toPaise(Number(inv.paid_amount ?? inv.paidAmount ?? 0));
+      if (paidPaise <= 0) return;
+
+      const fromPayPaise = Math.max(
+        (invId && paymentsRecordedByInvId.get(invId)) || 0,
+        (invNum && paymentsRecordedByInvNum.get(invNum)) || 0
+      );
+
+      // Subsequent payments tracked in Udhari for this invoice
+      const fromUdhariSubsequentPaise = Math.max(
+        (invId && udhariSubsequentPaiseByInv.get(invId)) || 0,
+        (invNum && udhariSubsequentPaiseByInv.get(invNum)) || 0
+      );
+
+      // Remaining paid amount not accounted for by explicitly linked payments or udhari recoveries
+      let unrecordedUpfrontPaise = Math.max(0, paidPaise - fromPayPaise - fromUdhariSubsequentPaise);
+
+      // Fallback: If synthetic/unlinked payments exist in payments table, match them against unlinked invoices
+      if (unrecordedUpfrontPaise > 0 && fromPayPaise === 0 && unlinkedPaymentsPaise > 0) {
+        const covered = Math.min(unrecordedUpfrontPaise, unlinkedPaymentsPaise);
+        unlinkedPaymentsPaise -= covered;
+        unrecordedUpfrontPaise = Math.max(0, unrecordedUpfrontPaise - covered);
+      }
+
+      if (unrecordedUpfrontPaise <= 0) return;
+
+      const method = String(
+        inv.payment_method ??
+        inv.paymentMethod ??
+        inv.payment_mode ??
+        inv.paymentMode ??
+        inv.snapshot?.payment_method ??
+        inv.snapshot?.paymentMethod ??
+        'Cash'
+      );
+
+      const cashAmt = inv.cash_amount ?? inv.cashAmount;
+      const upiAmt = inv.upi_amount ?? inv.upiAmount;
+
+      creditPayment(fromPaise(unrecordedUpfrontPaise), method, cashAmt, upiAmt);
+      upfrontSettledInvoiceCount++;
+      eligiblePaymentsCount++;
     });
 
     const cashCollections = fromPaise(methodTotalsPaise['Cash']);
@@ -457,18 +555,28 @@ export class FinancialAnalyticsEngine {
       // Filter payments made up to endDateStr
       const paymentsList = u.udhari_payments || u.payments || [];
       let totalReceivedAsOfDatePaise = 0;
+      let totalSubsequentPaymentsPaise = 0;
 
       paymentsList.forEach((pay: any) => {
         const pDate = String(pay.payment_date || pay.date || pay.created_at || '').split('T')[0];
+        const amtPaise = toPaise(Number(pay.amount || 0));
+        totalSubsequentPaymentsPaise += amtPaise;
         if (pDate <= endDateStr) {
-          totalReceivedAsOfDatePaise += toPaise(Number(pay.amount || 0));
+          totalReceivedAsOfDatePaise += amtPaise;
         }
       });
 
       // If record was created on or before endDateStr
       const createdDate = String(u.created_at || u.createdAt || '').split('T')[0];
       if (!createdDate || createdDate <= endDateStr) {
-        const asOfBalancePaise = Math.max(0, origPaise - totalReceivedAsOfDatePaise);
+        const totalReceivedFieldPaise = u.total_received !== undefined && u.total_received !== null
+          ? toPaise(Number(u.total_received || 0))
+          : Math.max(0, origPaise - currOutPaise);
+
+        const initialReceivedPaise = Math.max(0, totalReceivedFieldPaise - totalSubsequentPaymentsPaise);
+        const asOfReceivedPaise = initialReceivedPaise + totalReceivedAsOfDatePaise;
+        const asOfBalancePaise = Math.max(0, origPaise - asOfReceivedPaise);
+
         totalOutstandingUdhariPaise += asOfBalancePaise;
 
         const dueDate = String(u.due_date || u.dueDate || '');
