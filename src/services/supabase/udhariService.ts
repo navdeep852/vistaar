@@ -176,8 +176,9 @@ export class UdhariService {
           .select('id')
           .single();
 
-        if (error && (error.code === '42703' || error.message?.includes('invoice_id'))) {
+        if (error && (error.code === '42703' || error.message?.includes('invoice_id') || error.message?.includes('branch_id'))) {
           delete payload.invoice_id;
+          delete payload.branch_id;
           const retry = await supabase.from('udhari_records').insert([payload]).select('id').single();
           data = retry.data;
           error = retry.error;
