@@ -967,3 +967,303 @@ describe('Part E: Comprehensive 12-Scenario Financial Integrity Verification', (
     });
   });
 });
+
+// =============================================================================
+// PART 6 — SALES & COUNTER SALE CONVERSION INTEGRITY SUITE
+// =============================================================================
+describe('Part 6: Sales & Counter Sale Conversion Integrity Verification', () => {
+  const WS_ID = 'ddb10dc7-3671-4def-9626-526afd473c1a';
+
+  // 1. Independent counter sale
+  it('P6-1 — Independent counter sale is recognized exactly once', () => {
+    const input: EngineInputData = {
+      workspaceId: WS_ID,
+      startDateStr: '2026-10-01',
+      endDateStr: '2026-11-12',
+      invoices: [],
+      counterSales: [
+        { id: 'cs-indep', workspace_id: WS_ID, sale_number: 'CS-INDEP', sale_date: '2026-10-29', final_total: 3000, amount_received: 3000, balance_amount: 0, payment_method: 'Cash', status: 'COMPLETED' },
+      ],
+      payments: [],
+    };
+    const res = FinancialAnalyticsEngine.calculate(input);
+    assert.equal(res.kpis.totalSales, 3000.00);
+    assert.equal(res.kpis.counterSales, 3000.00);
+    assert.equal(res.kpis.invoiceSales, 0.00);
+    assert.equal(res.kpis.collections, 3000.00);
+    assert.equal(res.kpis.cashCollections, 3000.00);
+  });
+
+  // 2. Independent invoice
+  it('P6-2 — Independent invoice is recognized exactly once', () => {
+    const input: EngineInputData = {
+      workspaceId: WS_ID,
+      startDateStr: '2026-10-01',
+      endDateStr: '2026-11-12',
+      invoices: [
+        { id: 'inv-indep', workspace_id: WS_ID, invoice_number: 'INV-INDEP', date: '2026-10-29', grand_total: 32432.30, paid_amount: 32432.30, balance_amount: 0, status: 'Paid', payment_method: 'Cash' },
+      ],
+      counterSales: [],
+      payments: [],
+    };
+    const res = FinancialAnalyticsEngine.calculate(input);
+    assert.equal(res.kpis.totalSales, 32432.30);
+    assert.equal(res.kpis.invoiceSales, 32432.30);
+    assert.equal(res.kpis.counterSales, 0.00);
+    assert.equal(res.kpis.collections, 32432.30);
+    assert.equal(res.kpis.cashCollections, 32432.30);
+    assert.equal(res.kpis.outstandingUdhari, 0.00);
+  });
+
+  // 3. Counter sale converted into invoice
+  it('P6-3 — Counter sale converted into invoice is NOT double counted', () => {
+    const input: EngineInputData = {
+      workspaceId: WS_ID,
+      startDateStr: '2026-10-01',
+      endDateStr: '2026-11-12',
+      invoices: [
+        { id: 'inv-conv-6', workspace_id: WS_ID, invoice_number: 'INV-CONV-6', date: '2026-10-25', grand_total: 5000, paid_amount: 5000, balance_amount: 0, status: 'Paid', payment_method: 'Cash', counter_sale_id: 'cs-conv-6', notes: 'Converted from CS-CONV-6' },
+      ],
+      counterSales: [
+        { id: 'cs-conv-6', workspace_id: WS_ID, sale_number: 'CS-CONV-6', invoice_number: 'CS-CONV-6', sale_date: '2026-10-25', final_total: 5000, amount_received: 5000, balance_amount: 0, payment_method: 'Cash', status: 'COMPLETED' },
+      ],
+      payments: [],
+    };
+    const res = FinancialAnalyticsEngine.calculate(input);
+    // Sale MUST NOT be counted twice! Total sales must remain exactly ₹5,000
+    assert.equal(res.kpis.totalSales, 5000.00);
+    assert.equal(res.kpis.invoiceSales, 5000.00);
+    assert.equal(res.kpis.counterSales, 0.00);
+    assert.equal(res.channelBreakdown.deduplicatedConversions, 1);
+    assert.equal(res.kpis.collections, 5000.00);
+  });
+
+  // 4. Counter sale used as invoice payment
+  it('P6-4 — Counter sale used as invoice payment is not counted twice in collections', () => {
+    const input: EngineInputData = {
+      workspaceId: WS_ID,
+      startDateStr: '2026-10-01',
+      endDateStr: '2026-11-12',
+      invoices: [
+        { id: 'inv-pay-4', workspace_id: WS_ID, invoice_number: 'INV-PAY-4', date: '2026-10-20', grand_total: 10000, paid_amount: 4000, balance_amount: 6000, status: 'Partially Paid' },
+      ],
+      counterSales: [
+        { id: 'cs-pay-4', workspace_id: WS_ID, sale_number: 'CS-PAY-4', sale_date: '2026-10-20', final_total: 4000, amount_received: 4000, balance_amount: 0, payment_method: 'Cash', status: 'COMPLETED' },
+      ],
+      payments: [
+        // Payment applies CS-PAY-4 receipt to invoice INV-PAY-4
+        { id: 'pay-cs-link', workspace_id: WS_ID, payment_number: 'PAY-CS-LINK', invoice_id: 'inv-pay-4', invoice_number: 'INV-PAY-4', counter_sale_id: 'cs-pay-4', notes: 'Settled via CS-PAY-4', amount: 4000, method: 'Cash', payment_date: '2026-10-20', status: 'COMPLETED' },
+      ],
+      udhariRecords: [
+        { id: 'u-pay-4', workspace_id: WS_ID, invoice_id: 'inv-pay-4', original_amount: 10000, total_received: 4000, outstanding_amount: 6000, created_at: '2026-10-20T10:00:00Z', due_date: '2026-11-05', udhari_payments: [{ payment_date: '2026-10-20', amount: 4000 }] },
+      ],
+    };
+    const res = FinancialAnalyticsEngine.calculate(input);
+    // Collections MUST be exactly ₹4,000, NOT doubled to ₹8,000!
+    assert.equal(res.kpis.collections, 4000.00);
+    assert.equal(res.kpis.cashCollections, 4000.00);
+    assert.equal(res.kpis.outstandingUdhari, 6000.00);
+  });
+
+  // 5. Counter sale and invoice with identical amounts but unrelated IDs
+  it('P6-5 — Counter sale and invoice with identical amounts but unrelated IDs are recognized independently', () => {
+    // Exactly tests the Parker/Tony scenario where an invoice and counter sale both happen to involve ₹6,141 or similar
+    const input: EngineInputData = {
+      workspaceId: WS_ID,
+      startDateStr: '2026-10-01',
+      endDateStr: '2026-11-12',
+      invoices: [
+        { id: 'inv-tony-id', workspace_id: WS_ID, invoice_number: 'INV-TONY', customer_name: 'Tony', date: '2026-10-29', grand_total: 6141.00, paid_amount: 6141.00, balance_amount: 0, status: 'Paid', payment_method: 'Cash' },
+      ],
+      counterSales: [
+        { id: 'cs-parker-id', workspace_id: WS_ID, sale_number: 'CS-PARKER', customer_name: 'Parker', sale_date: '2026-10-27', final_total: 6141.00, amount_received: 6141.00, balance_amount: 0, payment_method: 'Cash', status: 'COMPLETED' },
+      ],
+      payments: [],
+    };
+    const res = FinancialAnalyticsEngine.calculate(input);
+    // Because IDs are unrelated, BOTH are recognized independently without false deduplication!
+    assert.equal(res.kpis.totalSales, 12282.00);
+    assert.equal(res.kpis.invoiceSales, 6141.00);
+    assert.equal(res.kpis.counterSales, 6141.00);
+    assert.equal(res.kpis.collections, 12282.00);
+    assert.equal(res.kpis.cashCollections, 12282.00);
+    assert.equal(res.channelBreakdown.deduplicatedConversions, 0);
+  });
+
+  // 6. Partial invoice payment
+  it('P6-6 — Partial invoice payment with correct outstanding Udhari balance', () => {
+    const input: EngineInputData = {
+      workspaceId: WS_ID,
+      startDateStr: '2026-10-01',
+      endDateStr: '2026-11-12',
+      invoices: [
+        { id: 'inv-part', workspace_id: WS_ID, invoice_number: 'INV-PART', date: '2026-10-15', grand_total: 20000, paid_amount: 8000, balance_amount: 12000, status: 'Partially Paid', payment_method: 'Cash' },
+      ],
+      counterSales: [],
+      payments: [],
+      udhariRecords: [
+        { id: 'u-part', workspace_id: WS_ID, invoice_id: 'inv-part', original_amount: 20000, total_received: 8000, outstanding_amount: 12000, created_at: '2026-10-15T10:00:00Z', due_date: '2026-11-01' },
+      ],
+    };
+    const res = FinancialAnalyticsEngine.calculate(input);
+    assert.equal(res.kpis.totalSales, 20000.00);
+    assert.equal(res.kpis.collections, 8000.00);
+    assert.equal(res.kpis.outstandingUdhari, 12000.00);
+    assert.equal(res.kpis.totalSales, res.kpis.collections + res.kpis.outstandingUdhari);
+  });
+
+  // 7. Full invoice payment
+  it('P6-7 — Full invoice payment produces zero outstanding Udhari', () => {
+    const input: EngineInputData = {
+      workspaceId: WS_ID,
+      startDateStr: '2026-10-01',
+      endDateStr: '2026-11-12',
+      invoices: [
+        { id: 'inv-full', workspace_id: WS_ID, invoice_number: 'INV-FULL', date: '2026-10-15', grand_total: 15000, paid_amount: 15000, balance_amount: 0, status: 'Paid', payment_method: 'UPI' },
+      ],
+      counterSales: [],
+      payments: [],
+    };
+    const res = FinancialAnalyticsEngine.calculate(input);
+    assert.equal(res.kpis.totalSales, 15000.00);
+    assert.equal(res.kpis.collections, 15000.00);
+    assert.equal(res.kpis.upiCollections, 15000.00);
+    assert.equal(res.kpis.outstandingUdhari, 0.00);
+  });
+
+  // 8. Historical upfront receipt recovery
+  it('P6-8 — Historical upfront receipt recovery when payments row is missing', () => {
+    // Tests recovery of upfront cash settlement e.g. INV-1793156334257 (₹2,92,640.00)
+    const input: EngineInputData = {
+      workspaceId: WS_ID,
+      startDateStr: '2026-10-01',
+      endDateStr: '2026-11-12',
+      invoices: [
+        { id: 'inv-desk', workspace_id: WS_ID, invoice_number: 'INV-1793156334257', date: '2026-10-27', grand_total: 292640, paid_amount: 292640, balance_amount: 0, status: 'Paid', payment_mode: 'Cash' },
+      ],
+      counterSales: [],
+      payments: [], // payments row missing
+    };
+    const res = FinancialAnalyticsEngine.calculate(input);
+    assert.equal(res.kpis.totalSales, 292640.00);
+    assert.equal(res.kpis.collections, 292640.00);
+    assert.equal(res.kpis.cashCollections, 292640.00);
+    assert.equal(res.kpis.outstandingUdhari, 0.00);
+  });
+
+  // 9. Duplicate transaction prevention
+  it('P6-9 — Duplicate payment records are prevented from inflating Collections', () => {
+    const input: EngineInputData = {
+      workspaceId: WS_ID,
+      startDateStr: '2026-10-01',
+      endDateStr: '2026-11-12',
+      invoices: [],
+      counterSales: [],
+      payments: [
+        { id: 'pay-dup-p6', workspace_id: WS_ID, payment_number: 'PAY-DUP-P6', amount: 18000, method: 'Cash', payment_date: '2026-10-20', status: 'COMPLETED' },
+        { id: 'pay-dup-p6', workspace_id: WS_ID, payment_number: 'PAY-DUP-P6', amount: 18000, method: 'Cash', payment_date: '2026-10-20', status: 'COMPLETED' },
+      ],
+    };
+    const res = FinancialAnalyticsEngine.calculate(input);
+    assert.equal(res.kpis.collections, 18000.00);
+    assert.equal(res.audit.payments.deduplicatedCount, 1);
+  });
+
+  // 10. Receipt-date filtering
+  it('P6-10 — Receipt-date filtering strictly bounds Collections to reporting period', () => {
+    const input: EngineInputData = {
+      workspaceId: WS_ID,
+      startDateStr: '2026-10-01',
+      endDateStr: '2026-11-12',
+      invoices: [
+        { id: 'inv-oct', workspace_id: WS_ID, invoice_number: 'INV-OCT', date: '2026-10-10', grand_total: 8000, paid_amount: 8000, balance_amount: 0, status: 'Paid' },
+      ],
+      counterSales: [],
+      payments: [
+        { id: 'pay-sept', workspace_id: WS_ID, payment_number: 'P-SEPT', amount: 5000, method: 'Cash', payment_date: '2026-09-25', status: 'COMPLETED' },
+        { id: 'pay-oct', workspace_id: WS_ID, invoice_id: 'inv-oct', payment_number: 'P-OCT', amount: 8000, method: 'Cash', payment_date: '2026-10-10', status: 'COMPLETED' },
+        { id: 'pay-nov', workspace_id: WS_ID, payment_number: 'P-NOV', amount: 9000, method: 'Cash', payment_date: '2026-11-20', status: 'COMPLETED' },
+      ],
+    };
+    const res = FinancialAnalyticsEngine.calculate(input);
+    assert.equal(res.kpis.collections, 8000.00);
+    assert.equal(res.kpis.cashCollections, 8000.00);
+  });
+
+  // 11. Branch isolation
+  it('P6-11 — Branch isolation cleanly separates branch transactions', () => {
+    const branchNorth = '4330d620-c0f8-4261-905b-7386b7e82520';
+    const inputAll: EngineInputData = {
+      workspaceId: WS_ID,
+      startDateStr: '2026-10-01',
+      endDateStr: '2026-11-12',
+      invoices: [
+        { id: 'inv-north', workspace_id: WS_ID, invoice_number: 'INV-NORTH', date: '2026-10-27', grand_total: 365800, paid_amount: 265800, balance_amount: 100000, status: 'Partially Paid', notes: `[branch: ${branchNorth}]` },
+        { id: 'inv-main', workspace_id: WS_ID, invoice_number: 'INV-MAIN', date: '2026-10-26', grand_total: 731600, paid_amount: 731600, balance_amount: 0, status: 'Paid' },
+      ],
+      counterSales: [
+        { id: 'cs-north', workspace_id: WS_ID, sale_number: 'CS-NORTH', sale_date: '2026-10-27', final_total: 3141, amount_received: 3141, balance_amount: 0, payment_method: 'Cash', status: 'COMPLETED', notes: `[branch: ${branchNorth}]` },
+      ],
+      payments: [],
+      udhariRecords: [
+        { id: 'u-north', workspace_id: WS_ID, invoice_id: 'inv-north', original_amount: 365800, total_received: 265800, outstanding_amount: 100000, created_at: '2026-10-27T10:00:00Z', notes: `[branch: ${branchNorth}]` },
+      ],
+    };
+
+    // Filtered to North Branch
+    const inputNorth: EngineInputData = {
+      ...inputAll,
+      branchId: branchNorth,
+      invoices: [inputAll.invoices[0]],
+      counterSales: [inputAll.counterSales[0]],
+      udhariRecords: [inputAll.udhariRecords![0]],
+    };
+
+    const resNorth = FinancialAnalyticsEngine.calculate(inputNorth);
+    assert.equal(resNorth.kpis.totalSales, 368941.00); // 365,800 + 3,141
+    assert.equal(resNorth.kpis.invoiceSales, 365800.00);
+    assert.equal(resNorth.kpis.counterSales, 3141.00);
+    assert.equal(resNorth.kpis.collections, 268941.00); // 265,800 + 3,141
+    assert.equal(resNorth.kpis.outstandingUdhari, 100000.00);
+    assert.equal(resNorth.kpis.totalSales, resNorth.kpis.collections + resNorth.kpis.outstandingUdhari);
+  });
+
+  // 12. Desktop/Mobile parity
+  it('P6-12 — Desktop and Mobile simulations produce identical KPIs to ₹0.00 tolerance', () => {
+    const dataset: EngineInputData = {
+      workspaceId: WS_ID,
+      startDateStr: '2026-10-01',
+      endDateStr: '2026-11-12',
+      invoices: [
+        { id: 'inv-p6-1', workspace_id: WS_ID, invoice_number: 'INV-1', date: '2026-10-26', grand_total: 365800, paid_amount: 365800, balance_amount: 0, status: 'Paid', payment_method: 'Cash' },
+        { id: 'inv-p6-2', workspace_id: WS_ID, invoice_number: 'INV-2', date: '2026-10-26', grand_total: 731600, paid_amount: 731600, balance_amount: 0, status: 'Paid', payment_method: 'Cash' },
+        { id: 'inv-p6-3', workspace_id: WS_ID, invoice_number: 'INV-3', date: '2026-10-27', grand_total: 292640, paid_amount: 292640, balance_amount: 0, status: 'Paid', payment_method: 'Cash' },
+        { id: 'inv-p6-4', workspace_id: WS_ID, invoice_number: 'INV-4', date: '2026-10-27', grand_total: 365800, paid_amount: 265800, balance_amount: 100000, status: 'Partially Paid', payment_method: 'Cash' },
+        { id: 'inv-p6-5', workspace_id: WS_ID, invoice_number: 'INV-5', date: '2026-10-29', grand_total: 46002.30, paid_amount: 46002.30, balance_amount: 0, status: 'Paid', payment_method: 'Cash' },
+        { id: 'inv-p6-6', workspace_id: WS_ID, invoice_number: 'INV-6', date: '2026-10-29', grand_total: 32432.30, paid_amount: 32432.30, balance_amount: 0, status: 'Paid', payment_method: 'Cash' },
+      ],
+      counterSales: [
+        { id: 'cs-p6-1', workspace_id: WS_ID, sale_number: 'CS-1', sale_date: '2026-10-27', final_total: 3141, amount_received: 3141, balance_amount: 0, payment_method: 'Cash', status: 'COMPLETED' },
+        { id: 'cs-p6-2', workspace_id: WS_ID, sale_number: 'CS-2', sale_date: '2026-10-29', final_total: 3000, amount_received: 3000, balance_amount: 0, payment_method: 'Cash', status: 'COMPLETED' },
+      ],
+      payments: [
+        { id: 'pay-p6-upi', workspace_id: WS_ID, invoice_id: 'inv-p6-2', payment_number: 'PAY-P6-UPI', amount: 200000, method: 'UPI', payment_date: '2026-10-27', status: 'COMPLETED' },
+      ],
+      udhariRecords: [
+        { id: 'u-p6', workspace_id: WS_ID, invoice_id: 'inv-p6-4', original_amount: 365800, total_received: 265800, outstanding_amount: 100000, created_at: '2026-10-27T10:00:00Z' },
+      ],
+    };
+
+    const resDesktop = FinancialAnalyticsEngine.calculate(dataset);
+    const resMobile = FinancialAnalyticsEngine.calculate({ ...dataset });
+
+    assert.equal(resDesktop.kpis.totalSales, resMobile.kpis.totalSales);
+    assert.equal(resDesktop.kpis.invoiceSales, resMobile.kpis.invoiceSales);
+    assert.equal(resDesktop.kpis.counterSales, resMobile.kpis.counterSales);
+    assert.equal(resDesktop.kpis.collections, resMobile.kpis.collections);
+    assert.equal(resDesktop.kpis.cashCollections, resMobile.kpis.cashCollections);
+    assert.equal(resDesktop.kpis.upiCollections, resMobile.kpis.upiCollections);
+    assert.equal(resDesktop.kpis.outstandingUdhari, resMobile.kpis.outstandingUdhari);
+    assert.equal(resDesktop.kpis.totalTransactions, resMobile.kpis.totalTransactions);
+  });
+});

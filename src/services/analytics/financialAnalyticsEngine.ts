@@ -136,6 +136,16 @@ export class FinancialAnalyticsEngine {
       if (matches) {
         matches.forEach((m) => invoiceReferenceKeys.add(m.trim()));
       }
+
+      // Explicit counter sale conversion references on invoice
+      const csRefId = inv.counter_sale_id || inv.counterSaleId || inv.source_counter_sale_id || inv.sourceCounterSaleId || inv.snapshot?.counter_sale_id || inv.snapshot?.counterSaleId;
+      if (csRefId) {
+        invoiceReferenceKeys.add(String(csRefId).toLowerCase().trim());
+      }
+      const csRefNum = inv.counter_sale_number || inv.counterSaleNumber || inv.snapshot?.counter_sale_number || inv.snapshot?.counterSaleNumber;
+      if (csRefNum) {
+        invoiceReferenceKeys.add(String(csRefNum).toLowerCase().trim());
+      }
     });
 
     const eligibleInvoices: any[] = [];
@@ -165,13 +175,15 @@ export class FinancialAnalyticsEngine {
       const csId = cs.id ? String(cs.id).toLowerCase().trim() : '';
       const saleNum = (cs.sale_number || cs.saleNumber) ? String(cs.sale_number || cs.saleNumber).toLowerCase().trim() : '';
       const invNum = (cs.invoice_number || cs.invoiceNumber) ? String(cs.invoice_number || cs.invoiceNumber).toLowerCase().trim() : '';
+      const csInvRef = cs.invoice_id || cs.invoiceId || cs.converted_to_invoice_id || cs.convertedToInvoiceId || cs.snapshot?.invoice_id || cs.snapshot?.invoiceId;
 
       // Conversion Deduplication:
       // If this counter sale was converted to an invoice or an invoice represents this sale, exclude counter sale
       const isDuplicateConversion =
         (saleNum && invoiceReferenceKeys.has(saleNum)) ||
         (invNum && seenInvoiceIds.has(invNum) && saleNum !== invNum) ||
-        (csId && invoiceReferenceKeys.has(csId));
+        (csId && invoiceReferenceKeys.has(csId)) ||
+        (csInvRef && (seenInvoiceIds.has(String(csInvRef).toLowerCase().trim()) || invoiceReferenceKeys.has(String(csInvRef).toLowerCase().trim())));
 
       if (isDuplicateConversion) {
         convertedDuplicatesExcluded++;
