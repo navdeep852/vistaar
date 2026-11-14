@@ -34,3 +34,4 @@ console.log('Counter Sales:', result.audit.counterSales);
 console.log('Payments:     ', result.audit.payments);
 console.log('Udhari:       ', result.audit.udhariAudit);
 console.log('Gross Profit: ', result.audit.grossProfitAudit);
+
