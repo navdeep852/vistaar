@@ -88,7 +88,8 @@ export class ProductService {
       const currentBranchObj = specificBranchId
         ? branches.find((b: any) => b.id === specificBranchId)
         : null;
-      const isMain = currentBranchObj?.isMainBranch;
+      const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
+      const isMain = currentBranchObj?.isMainBranch ?? (savedMainId ? savedMainId === specificBranchId : (branches.length <= 1));
 
       items = items.map((p) => {
         let branchStock = 0;
@@ -98,7 +99,7 @@ export class ProductService {
           );
           if (bEntry) {
             branchStock = Math.max(0, Number(bEntry.currentStock) || 0);
-          } else if (isMain) {
+          } else if (isMain || (!currentBranchObj && branches.length === 0)) {
             // Main branch retains product master stock MINUS any stock allocated to sub-branches
             const otherBranchEntries = allBranchInv.filter(
               (bi: any) => bi.branchId !== specificBranchId && bi.productId === p.id
@@ -258,9 +259,22 @@ export class ProductService {
         localForBranch.forEach((row: any) => bMap.set(row.productId || row.product_id, row));
         remoteBInv.forEach((row: any) => bMap.set(row.product_id || row.productId, row));
 
-        const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+        let branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+        if ((!branches || branches.length === 0) && isSupabaseConfigured() && isValidUuid(wsId)) {
+          try {
+            const { branchService } = await import('./branchService');
+            const bRes = await branchService.getBranches({ activeOnly: false });
+            if (bRes.data && bRes.data.length > 0) {
+              branches = bRes.data;
+            }
+          } catch (bErr) {
+            console.warn('[productService] Could not fetch branches:', bErr);
+          }
+        }
+
         const bObj = branches.find((b: any) => b.id === specificBranchId);
-        const isMain = bObj?.isMainBranch;
+        const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
+        const isMain = bObj?.isMainBranch ?? (savedMainId ? savedMainId === specificBranchId : (branches.length <= 1));
 
         products.forEach((p) => {
           const bRow = bMap.get(p.id);
@@ -273,8 +287,8 @@ export class ProductService {
             if (bRow.selling_price !== null && bRow.selling_price !== undefined) {
               p.sellingPrice = Number(bRow.selling_price ?? bRow.sellingPrice);
             }
-          } else if (isMain) {
-            // Main branch: calculate master stock minus other branch allocations to prevent aggregate bleed
+          } else if (isMain || (!bObj && branches.length === 0)) {
+            // Main branch (or unresolved branch state): calculate master stock minus other branch allocations to prevent aggregate bleed
             const otherEntries = allLocalBInv.filter(
               (bi: any) => bi.branchId !== specificBranchId && bi.productId === p.id
             );
@@ -378,7 +392,8 @@ export class ProductService {
       const allLocalBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
       const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
       const bObj = branches.find((b: any) => b.id === targetBranchId);
-      const isMain = bObj?.isMainBranch;
+      const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
+      const isMain = bObj?.isMainBranch ?? (savedMainId ? savedMainId === targetBranchId : (branches.length <= 1));
 
       return prods.map((p) => {
         const bEntry = allLocalBInv.find(
@@ -387,7 +402,7 @@ export class ProductService {
         let bStock = 0;
         if (bEntry) {
           bStock = Math.max(0, Number(bEntry.currentStock) || 0);
-        } else if (isMain) {
+        } else if (isMain || (!bObj && branches.length === 0)) {
           const otherEntries = allLocalBInv.filter(
             (bi: any) => bi.branchId !== targetBranchId && bi.productId === p.id
           );
@@ -980,12 +995,11 @@ export class ProductService {
 
         // 3. If 0 and branch is Main Branch, fall back to master product stock
         try {
-          const { data: bObj } = await supabase
-            .from('branches')
-            .select('is_main_branch')
-            .eq('id', targetBranchId)
-            .maybeSingle();
-          if (bObj?.is_main_branch) {
+          const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+          const bObj = branches.find((b: any) => b.id === targetBranchId);
+          const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
+          const isMain = bObj?.isMainBranch ?? (savedMainId ? savedMainId === targetBranchId : (branches.length <= 1));
+          if (isMain || (!bObj && branches.length === 0)) {
             const { data: pRow } = await supabase
               .from('products')
               .select('current_stock')
@@ -1015,7 +1029,9 @@ export class ProductService {
       // Check if branch is Main Branch
       const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
       const bObj = branches.find((b: any) => b.id === targetBranchId);
-      if (bObj?.isMainBranch) {
+      const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
+      const isMain = bObj?.isMainBranch ?? (savedMainId ? savedMainId === targetBranchId : (branches.length <= 1));
+      if (isMain || (!bObj && branches.length === 0)) {
         const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
         const p = local.find((prod) => prod.id === productId) || store.getProducts().find((prod) => prod.id === productId);
         return p ? Math.max(0, Number(p.currentStock) || 0) : 0;

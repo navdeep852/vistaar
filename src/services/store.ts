@@ -3032,7 +3032,9 @@ class StoreService {
       }
       const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
       const b = branches.find((branch: any) => branch.id === effectiveBranchId);
-      if (b?.isMainBranch) {
+      const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
+      const isMain = b?.isMainBranch ?? (savedMainId ? savedMainId === effectiveBranchId : (branches.length <= 1));
+      if (isMain || (!b && branches.length === 0)) {
         let prod = (this.state.products || []).find((p) => p.id === productId);
         if (!prod) {
           const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);

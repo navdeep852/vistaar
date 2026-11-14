@@ -70,7 +70,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
   initialCategoryFilter,
   initialSupplierFilter,
 }) => {
-  const { currentBranch } = useBranch();
+  const { currentBranch, isBranchReady } = useBranch();
 
   // Store Collections
   const [products, setProducts] = useState<Product[]>([]);
@@ -224,7 +224,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
       window.removeEventListener('vistaar:branch_inventory_updated', handleRefresh);
       unsubscribeAuth();
     };
-  }, [initialOpenCreate, initialCategoryFilter, currentBranch?.id]);
+  }, [initialOpenCreate, initialCategoryFilter, currentBranch?.id, isBranchReady]);
 
   // Format Helpers
   const formatCurrency = (val: number) => {
