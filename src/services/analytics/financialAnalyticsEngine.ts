@@ -598,6 +598,35 @@ export class FinancialAnalyticsEngine {
       }
     });
 
+    // Invariant Protection: Reconcile with eligible invoice unpaid balances to ensure customer debt is never lost
+    const invoicesRepresentedInUdhari = new Set<string>();
+    udhariRecords.forEach((u) => {
+      const invId = u.invoice_id || u.invoiceId;
+      const invCode = u.udhari_code || u.udhariCode;
+      const refInv = invId || (invCode && String(invCode).startsWith('UD-INV-') ? String(invCode).replace('UD-', '').trim() : '');
+      if (invId) invoicesRepresentedInUdhari.add(String(invId).toLowerCase().trim());
+      if (refInv) invoicesRepresentedInUdhari.add(String(refInv).toLowerCase().trim());
+      const notes = String(u.notes || '').toLowerCase();
+      const match = notes.match(/\[invoice:\s*([^\]]+)\]/i);
+      if (match) invoicesRepresentedInUdhari.add(match[1].trim());
+    });
+
+    eligibleInvoices.forEach((inv) => {
+      const invId = inv.id ? String(inv.id).toLowerCase().trim() : '';
+      const invNum = (inv.invoice_number || inv.invoiceNumber) ? String(inv.invoice_number || inv.invoiceNumber).toLowerCase().trim() : '';
+      if ((invId && invoicesRepresentedInUdhari.has(invId)) || (invNum && invoicesRepresentedInUdhari.has(invNum))) {
+        return; // Already accounted for in udhariRecords
+      }
+      const balPaise = toPaise(Number(inv.balance_amount ?? inv.balanceAmount ?? 0));
+      if (balPaise > 0) {
+        totalOutstandingUdhariPaise += balPaise;
+        const dueDate = String(inv.due_date || inv.dueDate || '');
+        if (dueDate && dueDate < endDateStr) {
+          totalOverdueUdhariPaise += balPaise;
+        }
+      }
+    });
+
     const outstandingUdhari = fromPaise(totalOutstandingUdhariPaise);
     const overdueUdhari = fromPaise(totalOverdueUdhariPaise);
 

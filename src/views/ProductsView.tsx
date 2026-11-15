@@ -1143,7 +1143,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
               {totalAvailableStockUnits.toLocaleString()} Units
             </h3>
             <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold mt-0.5 block">
-              Sum across active receipts
+              Authoritative catalog inventory
             </span>
           </div>
         </div>

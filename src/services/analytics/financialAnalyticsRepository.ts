@@ -295,6 +295,44 @@ export class FinancialAnalyticsRepository {
 
     // Branch in-memory filtering for any records that returned with branch_id = null or embedded branch
     if (effectiveBranchId && effectiveBranchId !== 'ALL') {
+      const rawInvoicesForBranchLookup = [...invoices];
+
+      // Helper to resolve effective branch for payments and udhari records by linking to parent invoice
+      const getRecordBranch = (rec: any): { branchId?: string; notes?: string } => {
+        const invId = rec.invoice_id || rec.invoiceId;
+        const invNum = rec.invoice_number || rec.invoiceNumber;
+        let invRef = invId;
+        if (!invRef && rec.notes) {
+          const match = String(rec.notes).match(/\[invoice:\s*([^\]]+)\]/i);
+          if (match) invRef = match[1].trim();
+        }
+        if (!invRef && rec.udhari_code && String(rec.udhari_code).startsWith('UD-INV-')) {
+          const num = String(rec.udhari_code).replace('UD-', '').trim();
+          const matchInv = rawInvoicesForBranchLookup.find((i) => (i.invoice_number || i.invoiceNumber) === num);
+          if (matchInv) {
+            return {
+              branchId: matchInv.branch_id || matchInv.branchId || matchInv.snapshot?.branch_id || matchInv.snapshot?.branchId,
+              notes: matchInv.notes || matchInv.terms,
+            };
+          }
+        }
+        if (invRef) {
+          const matchInv = rawInvoicesForBranchLookup.find(
+            (i) => i.id === invRef || (i.invoice_number && i.invoice_number === invRef) || (invNum && (i.invoice_number || i.invoiceNumber) === invNum)
+          );
+          if (matchInv) {
+            return {
+              branchId: matchInv.branch_id || matchInv.branchId || matchInv.snapshot?.branch_id || matchInv.snapshot?.branchId,
+              notes: matchInv.notes || matchInv.terms,
+            };
+          }
+        }
+        return {
+          branchId: rec.branch_id || rec.branchId || rec.snapshot?.branch_id || rec.snapshot?.branchId,
+          notes: rec.notes || '',
+        };
+      };
+
       invoices = invoices.filter((inv) => {
         const b = inv.branch_id || inv.branchId || inv.snapshot?.branch_id || inv.snapshot?.branchId;
         const notes = inv.notes || inv.terms || '';
@@ -306,14 +344,12 @@ export class FinancialAnalyticsRepository {
         return isRecordInBranch(effectiveBranchId, b, notes);
       });
       payments = payments.filter((p) => {
-        const b = p.branch_id || p.branchId || p.snapshot?.branch_id || p.snapshot?.branchId;
-        const notes = p.notes || '';
-        return isRecordInBranch(effectiveBranchId, b, notes);
+        const br = getRecordBranch(p);
+        return isRecordInBranch(effectiveBranchId, br.branchId, br.notes);
       });
       udhariRecords = udhariRecords.filter((u) => {
-        const b = u.branch_id || u.branchId || u.snapshot?.branch_id || u.snapshot?.branchId;
-        const notes = u.notes || '';
-        return isRecordInBranch(effectiveBranchId, b, notes);
+        const br = getRecordBranch(u);
+        return isRecordInBranch(effectiveBranchId, br.branchId, br.notes);
       });
       expenses = expenses.filter((e) => {
         const b = e.branch_id || e.branchId || e.snapshot?.branch_id || e.snapshot?.branchId;

@@ -322,7 +322,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       }
     };
     window.addEventListener('vistaar:refresh-dashboard', handleManualRefresh);
-    return () => window.removeEventListener('vistaar:refresh-dashboard', handleManualRefresh);
+    window.addEventListener('focus', handleManualRefresh);
+    return () => {
+      window.removeEventListener('vistaar:refresh-dashboard', handleManualRefresh);
+      window.removeEventListener('focus', handleManualRefresh);
+    };
   }, [isContextReady, loadDashboardData]);
 
   // Debounced store subscription to react to new sales/payments created during session
@@ -332,7 +336,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (!isContextReady) return;
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
-        loadDashboardData(false);
+        loadDashboardData(true);
       }, 300);
     });
 

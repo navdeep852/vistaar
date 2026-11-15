@@ -1284,6 +1284,10 @@ export class InvoiceService {
       try {
         const { salesAnalyticsService } = await import('./salesAnalyticsService');
         salesAnalyticsService.invalidateCache();
+        const { enterpriseAnalyticsService } = await import('./enterpriseAnalyticsService');
+        enterpriseAnalyticsService.invalidateCache();
+        const { financialAnalyticsRepository } = await import('../analytics/financialAnalyticsRepository');
+        financialAnalyticsRepository.invalidateCache();
       } catch {
         // ignore
       }
