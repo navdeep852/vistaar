@@ -502,7 +502,7 @@ export class FinancialAnalyticsEngine {
         const prodName = String(item.product_name || item.name || '').toLowerCase().trim();
 
         // 1. Snapshot price on transaction
-        let unitBuyPrice = Number(item.buy_price ?? item.buyPrice ?? 0);
+        let unitBuyPrice = Number(item.buy_price_snapshot ?? item.buyPriceSnapshot ?? item.buy_price ?? item.buyPrice ?? 0);
 
         // 2. Fallback to product catalog if transaction snapshot was missing
         if (unitBuyPrice <= 0 && prodId && productCostMap.has(prodId)) {
@@ -559,6 +559,35 @@ export class FinancialAnalyticsEngine {
     let totalOverdueUdhariPaise = 0;
     let currentOutstandingPaise = 0;
 
+    // Index all eligible invoices for strict reconciliation and ghost-record protection
+    const invoiceLookupById = new Map<string, any>();
+    const invoiceLookupByNum = new Map<string, any>();
+    eligibleInvoices.forEach((inv) => {
+      const id = inv.id ? String(inv.id).toLowerCase().trim() : '';
+      const num = (inv.invoice_number || inv.invoiceNumber) ? String(inv.invoice_number || inv.invoiceNumber).toLowerCase().trim() : '';
+      if (id) invoiceLookupById.set(id, inv);
+      if (num) invoiceLookupByNum.set(num, inv);
+    });
+
+    const getUdhariInvoiceRef = (u: any): { invId?: string; invNum?: string; dedupeKey: string } => {
+      let invId = u.invoice_id || u.invoiceId ? String(u.invoice_id || u.invoiceId).toLowerCase().trim() : undefined;
+      const notes = String(u.notes || '');
+      if (!invId) {
+        const match = notes.match(/\[invoice:\s*([^\]]+)\]/i);
+        if (match) invId = match[1].toLowerCase().trim();
+      }
+      let invNum: string | undefined = undefined;
+      const code = String(u.udhari_code || u.udhariCode || '');
+      if (code.startsWith('UD-INV-')) {
+        invNum = code.replace(/^UD-/i, '').toLowerCase().trim();
+      }
+      const dedupeKey = invId || (invNum ? `inv-num:${invNum}` : `udhari:${u.id || u.udhari_code || Math.random()}`);
+      return { invId, invNum, dedupeKey };
+    };
+
+    // Map to store authoritative balance per invoice deduplication key
+    const asOfBalanceByDedupeKey = new Map<string, { balancePaise: number; isOverdue: boolean }>();
+
     udhariRecords.forEach((u) => {
       const origPaise = toPaise(Number(u.original_amount || 0));
       const currOutPaise = toPaise(Number(u.outstanding_amount || 0));
@@ -587,14 +616,41 @@ export class FinancialAnalyticsEngine {
 
         const initialReceivedPaise = Math.max(0, totalReceivedFieldPaise - totalSubsequentPaymentsPaise);
         const asOfReceivedPaise = initialReceivedPaise + totalReceivedAsOfDatePaise;
-        const asOfBalancePaise = Math.max(0, origPaise - asOfReceivedPaise);
+        let asOfBalancePaise = Math.max(0, origPaise - asOfReceivedPaise);
 
-        totalOutstandingUdhariPaise += asOfBalancePaise;
+        // Clamping & Reconciling with Verified Payments
+        const { invId, invNum, dedupeKey } = getUdhariInvoiceRef(u);
+        
+        // If payments recorded up to endDateStr already cover the full invoice/udhari amount, clamp to 0
+        const verifiedPaidPaise = Math.max(
+          (invId && paymentsRecordedByInvId.get(invId)) || 0,
+          (invNum && paymentsRecordedByInvNum.get(invNum)) || 0
+        );
+        if (verifiedPaidPaise >= origPaise && origPaise > 0) {
+          asOfBalancePaise = 0;
+        }
 
         const dueDate = String(u.due_date || u.dueDate || '');
-        if (dueDate && dueDate < endDateStr && asOfBalancePaise > 0) {
-          totalOverdueUdhariPaise += asOfBalancePaise;
+        const isOverdue = Boolean(dueDate && dueDate < endDateStr && asOfBalancePaise > 0);
+
+        if (asOfBalanceByDedupeKey.has(dedupeKey)) {
+          // If we already saw a record for this invoice, take the authoritative minimum (or 0 if settled)
+          const prev = asOfBalanceByDedupeKey.get(dedupeKey)!;
+          const chosenBal = Math.min(prev.balancePaise, asOfBalancePaise);
+          asOfBalanceByDedupeKey.set(dedupeKey, {
+            balancePaise: chosenBal,
+            isOverdue: chosenBal > 0 ? (prev.isOverdue || isOverdue) : false,
+          });
+        } else {
+          asOfBalanceByDedupeKey.set(dedupeKey, { balancePaise: asOfBalancePaise, isOverdue });
         }
+      }
+    });
+
+    asOfBalanceByDedupeKey.forEach((entry) => {
+      totalOutstandingUdhariPaise += entry.balancePaise;
+      if (entry.isOverdue && entry.balancePaise > 0) {
+        totalOverdueUdhariPaise += entry.balancePaise;
       }
     });
 

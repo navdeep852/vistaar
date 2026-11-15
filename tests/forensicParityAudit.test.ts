@@ -183,4 +183,73 @@ describe('VISTAAR Forensic Parity Audit Suite (15 Nov 2026 Production Scenario)'
     });
     assert.strictEqual(laptopStock, 0, 'Laptop must be strictly 0');
   });
+
+  test('7. Real Mobile Test Invoice (INV-1794759991916): Paid mobile invoice with ghost udhari row does NOT inflate Outstanding Udhari to ₹15,595.20', () => {
+    const mobileInvoice = {
+      id: 'c2849736-0c9a-454f-85f9-f9ae9134faa9',
+      invoice_number: 'INV-1794759991916',
+      date: '2026-11-15',
+      grand_total: 595.00,
+      paid_amount: 595.00,
+      balance_amount: 0.00,
+      status: 'Paid',
+      snapshot: { branch_id: MAIN_BRANCH_ID, branchId: MAIN_BRANCH_ID },
+      invoice_items: [
+        { product_id: 'phone-stand-prod-id', quantity: 5, buy_price: 25.00, selling_price: 119.00, total: 595.00 }
+      ]
+    };
+
+    const mobilePayment = {
+      id: '07f7b94a-98a2-4320-8079-04abb6ab3892',
+      invoice_id: 'c2849736-0c9a-454f-85f9-f9ae9134faa9',
+      invoice_number: 'INV-1794759991916',
+      payment_date: '2026-11-15',
+      amount: 595.00,
+      method: 'UPI',
+      notes: `[branch: ${MAIN_BRANCH_ID}]`,
+    };
+
+    // Simulate both the ghost record UD-INV-2026-0009 and the settled record UD-INV-1794759991916
+    const ghostUdhariRow = {
+      id: '0ade0f93-d111-459f-a98d-09757b4e56e5',
+      udhari_code: 'UD-INV-2026-0009',
+      invoice_id: 'c2849736-0c9a-454f-85f9-f9ae9134faa9',
+      customer_name_snapshot: 'Mobile Test ',
+      original_amount: 595.00,
+      total_received: 0.00,
+      outstanding_amount: 595.00,
+      status: 'UNPAID',
+      notes: `[branch: ${MAIN_BRANCH_ID}] [invoice: c2849736-0c9a-454f-85f9-f9ae9134faa9]`,
+    };
+
+    const settledUdhariRow = {
+      id: '91788e9d-0893-4d9a-b057-10d3706b5af0',
+      udhari_code: 'UD-INV-1794759991916',
+      invoice_id: 'c2849736-0c9a-454f-85f9-f9ae9134faa9',
+      customer_name_snapshot: 'Mobile Test ',
+      original_amount: 595.00,
+      total_received: 595.00,
+      outstanding_amount: 0.00,
+      status: 'PAID',
+      notes: `[invoice: c2849736-0c9a-454f-85f9-f9ae9134faa9]`,
+    };
+
+    const res = FinancialAnalyticsEngine.calculate({
+      workspaceId: WS_ID,
+      branchId: MAIN_BRANCH_ID,
+      startDateStr: '2026-11-15',
+      endDateStr: '2026-11-15',
+      invoices: [...productionInvoices, mobileInvoice],
+      counterSales: [],
+      payments: [...productionPayments, mobilePayment],
+      udhariRecords: [productionUdhari[0], ghostUdhariRow, settledUdhariRow],
+    });
+
+    assert.strictEqual(res.kpis.totalSales, 41871.40, 'Total sales must equal ₹41,871.40');
+    assert.strictEqual(res.kpis.collections, 26871.20, 'Total collections must equal ₹26,871.20');
+    assert.strictEqual(res.kpis.cashCollections, 26276.20, 'Cash collections must equal ₹26,276.20');
+    assert.strictEqual(res.kpis.upiCollections, 595.00, 'UPI collections must equal ₹595.00');
+    assert.strictEqual(res.kpis.grossProfit, 16446.40, 'Gross profit must equal ₹16,446.40');
+    assert.strictEqual(res.kpis.outstandingUdhari, 15000.20, 'Outstanding Udhari must strictly equal ₹15,000.20 (NOT ₹15,595.20 and NOT ₹595.00)');
+  });
 });

@@ -329,6 +329,35 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     };
   }, [isContextReady, loadDashboardData]);
 
+  // Support Capacitor mobile app resume/foreground refresh
+  useEffect(() => {
+    let removeListener: (() => void) | null = null;
+    let isMounted = true;
+
+    const setupAppListener = async () => {
+      try {
+        const { Capacitor } = await import('@capacitor/core');
+        if (Capacitor.isNativePlatform()) {
+          const { App: CapApp } = await import('@capacitor/app');
+          const handle = await CapApp.addListener('appStateChange', (state) => {
+            if (state.isActive && isMounted && isContextReady) {
+              loadDashboardData(true);
+            }
+          });
+          removeListener = () => handle.remove();
+        }
+      } catch {
+        // Not in native Capacitor environment
+      }
+    };
+
+    setupAppListener();
+    return () => {
+      isMounted = false;
+      if (removeListener) removeListener();
+    };
+  }, [isContextReady, loadDashboardData]);
+
   // Debounced store subscription to react to new sales/payments created during session
   useEffect(() => {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;

@@ -252,11 +252,28 @@ export class UdhariService {
           // ignore
         }
 
+        if (!existingUdhari && params.invoiceId && isValidUuid(params.invoiceId)) {
+          try {
+            const { data: byNotes } = await supabase
+              .from('udhari_records')
+              .select('*')
+              .eq('workspace_id', wsId)
+              .ilike('notes', `%[invoice: ${params.invoiceId}]%`)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            existingUdhari = byNotes;
+          } catch {
+            // ignore
+          }
+        }
+
         let udhariId = existingUdhari?.id;
 
         if (existingUdhari) {
           // Update existing Udhari record
           const updatePayload: any = {
+            udhari_code: `UD-${params.invoiceNumber}`,
             original_amount: originalAmount,
             total_received: totalReceived,
             outstanding_amount: outstandingAmount,
@@ -267,6 +284,23 @@ export class UdhariService {
             updatePayload.due_date = effectiveDueDate;
           }
           await supabase.from('udhari_records').update(updatePayload).eq('id', existingUdhari.id);
+
+          // Synchronize any duplicate rows for the same invoice
+          if (isCleared && params.invoiceId && isValidUuid(params.invoiceId)) {
+            try {
+              await supabase
+                .from('udhari_records')
+                .update({
+                  total_received: originalAmount,
+                  outstanding_amount: 0,
+                  status: 'PAID',
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('workspace_id', wsId)
+                .ilike('notes', `%[invoice: ${params.invoiceId}]%`)
+                .neq('id', existingUdhari.id);
+            } catch {}
+          }
         } else if (!isCleared) {
           // Create new Udhari record ONLY if balance > 0 (Rule 8: NEVER CREATE UDHARI FOR FULLY PAID)
           const res = await this.createUdhari({

@@ -279,6 +279,22 @@ export class CustomerPaymentService {
                 .maybeSingle();
               dbUdhariRow = uByCode;
             }
+            if (!dbUdhariRow && (dbInvRow?.id || resolvedInvoiceId)) {
+              const targetInvId = dbInvRow?.id || resolvedInvoiceId;
+              if (isValidUuid(targetInvId)) {
+                const { data: uByNotes } = await supabase
+                  .from('udhari_records')
+                  .select('*')
+                  .eq('workspace_id', wsId)
+                  .ilike('notes', `%[invoice: ${targetInvId}]%`)
+                  .order('created_at', { ascending: false })
+                  .limit(1)
+                  .maybeSingle();
+                if (uByNotes) {
+                  dbUdhariRow = uByNotes;
+                }
+              }
+            }
             // Auto-create Udhari record in DB if missing for this invoice
             if (!dbUdhariRow && dbInvRow) {
               const uCode = `UD-${dbInvRow.invoice_number}`;
@@ -468,16 +484,35 @@ export class CustomerPaymentService {
                   origUdhariAmt,
                   finalCumulativePaid
                 );
+                const udhariUpdatePayload: any = {
+                  original_amount: originalAmount,
+                  total_received: newRec,
+                  outstanding_amount: newOut,
+                  status: newStatus,
+                  updated_at: new Date().toISOString(),
+                };
+                if (targetUdhariCode && dbUdhariRow.udhari_code !== targetUdhariCode) {
+                  udhariUpdatePayload.udhari_code = targetUdhariCode;
+                }
                 await supabase
                   .from('udhari_records')
-                  .update({
-                    original_amount: originalAmount,
-                    total_received: newRec,
-                    outstanding_amount: newOut,
-                    status: newStatus,
-                    updated_at: new Date().toISOString(),
-                  })
+                  .update(udhariUpdatePayload)
                   .eq('id', dbUdhariRow.id);
+
+                // If any duplicate udhari rows exist for this invoice, synchronize them too
+                if (dbInvRow?.id && isValidUuid(dbInvRow.id)) {
+                  await supabase
+                    .from('udhari_records')
+                    .update({
+                      total_received: newRec,
+                      outstanding_amount: newOut,
+                      status: newStatus,
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq('workspace_id', wsId)
+                    .ilike('notes', `%[invoice: ${dbInvRow.id}]%`)
+                    .neq('id', dbUdhariRow.id);
+                }
               } catch (upEx) {
                 console.warn('[customerPaymentService] udhari_payments sync notice:', upEx);
               }
@@ -679,10 +714,17 @@ export class CustomerPaymentService {
       return { success: false, error: storeErr?.message || 'Payment recording failed.' };
     }
 
-    // Step 4: Cache invalidation
+    // Step 4: Comprehensive Cache Invalidation and Reactive Dashboard Broadcast
     try {
       const { salesAnalyticsService } = await import('./salesAnalyticsService');
       salesAnalyticsService.invalidateCache();
+      const { enterpriseAnalyticsService } = await import('./enterpriseAnalyticsService');
+      enterpriseAnalyticsService.invalidateCache();
+      const { financialAnalyticsRepository } = await import('../analytics/financialAnalyticsRepository');
+      financialAnalyticsRepository.invalidateCache();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('vistaar:refresh-dashboard'));
+      }
     } catch {
       // ignore
     }
