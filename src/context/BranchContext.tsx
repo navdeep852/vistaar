@@ -143,6 +143,7 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           safeSaveTenantItem('active_branch_id', assignedBranch.id);
         }
       }
+      productService.invalidateCache();
       setIsBranchReady(true);
     } catch (err) {
       console.warn('Error loading branches:', err);

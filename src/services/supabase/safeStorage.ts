@@ -177,6 +177,17 @@ export function safeGetTenantStorage<T = any>(key: string, fallback: T[] = [], b
     }
   }
 
+  // 5. Global un-prefixed key fallback
+  const globalDirect = readRaw<T>(key);
+  if (globalDirect && Array.isArray(globalDirect) && globalDirect.length > 0) {
+    if (branchId && branchId !== 'ALL') {
+      const filtered = globalDirect.filter((it: any) => itemMatchesBranch(it, branchId));
+      if (filtered.length > 0) return filtered;
+    } else {
+      return globalDirect;
+    }
+  }
+
   return fallback;
 }
 
@@ -249,6 +260,10 @@ export function safeGetTenantItem<T = any>(key: string, fallback: T = null as un
 
   const legacy = readItem(legacyKey);
   if (legacy !== null) return legacy;
+
+  // Global un-prefixed key fallback
+  const globalDirect = readItem<T>(key);
+  if (globalDirect !== null) return globalDirect;
 
   return fallback;
 }
