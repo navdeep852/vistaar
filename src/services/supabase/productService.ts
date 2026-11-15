@@ -9,6 +9,7 @@ import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem } from '
 import { validateIndianPhoneNumber } from '../../lib/phoneUtils';
 import { hasCurrentUserPermission, requirePermission } from '../../lib/permissions';
 import { auditLogService } from './auditLogService';
+import { resolveAuthoritativeStock } from './productStockResolver';
 
 const LOCAL_PRODUCTS_KEY = 'vistaar_local_products_db';
 
@@ -90,71 +91,17 @@ export class ProductService {
       let items = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
       const allBranchInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
       const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
-      const currentBranchObj = specificBranchId
-        ? branches.find((b: any) => b.id === specificBranchId)
-        : null;
       const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
-      const isMain = currentBranchObj?.isMainBranch ?? (savedMainId ? savedMainId === specificBranchId : (branches.length <= 1));
 
       items = items.map((p) => {
-        let branchStock = 0;
-        if (specificBranchId) {
-          const bEntry = allBranchInv.find(
-            (bi: any) => bi.branchId === specificBranchId && bi.productId === p.id
-          );
-          if (bEntry) {
-            branchStock = Math.max(0, Number(bEntry.currentStock) || 0);
-          } else if (isMain || (!currentBranchObj && branches.length === 0)) {
-            // Main branch retains product master stock MINUS any stock allocated to sub-branches
-            const otherBranchEntries = allBranchInv.filter(
-              (bi: any) => bi.branchId !== specificBranchId && bi.productId === p.id
-            );
-            const otherStockSum = otherBranchEntries.reduce(
-              (sum: number, bi: any) => sum + (Number(bi.currentStock) || 0),
-              0
-            );
-            const masterStock = Math.max(0, Number(p.currentStock) || 0);
-            branchStock = Math.max(0, masterStock - otherStockSum);
-
-            // Persist branch_inventory record so other services find it
-            const newBEntry = {
-              id: `bi-${Date.now()}-${p.id}`,
-              branchId: specificBranchId,
-              productId: p.id,
-              currentStock: branchStock,
-              openingStock: branchStock,
-              minStock: Number((p as any).minStock ?? p.minimumStock) || 0,
-              rackLocation: p.location,
-              status: branchStock > 0 ? 'Active' : 'Out of Stock',
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            };
-            allBranchInv.push(newBEntry);
-            safeSaveTenantStorage('vistaar_local_branch_inventory_db', allBranchInv);
-          } else {
-            const hasAnyOtherAllocations = allBranchInv.some(
-              (bi: any) => (bi.productId || bi.product_id) === p.id && (bi.branchId || bi.branch_id) !== specificBranchId
-            );
-            if (hasAnyOtherAllocations) {
-              branchStock = 0;
-            } else {
-              branchStock = Math.max(0, Number(p.currentStock) || 0);
-            }
-          }
-        } else if (isAllBranches) {
-          // Explicit organization-wide aggregate
-          const matching = allBranchInv.filter((bi: any) => bi.productId === p.id);
-          if (matching.length > 0) {
-            branchStock = matching.reduce(
-              (sum: number, bi: any) => sum + (Number(bi.currentStock) || 0),
-              0
-            );
-          } else {
-            branchStock = Math.max(0, Number(p.currentStock) || 0);
-          }
-        } else {
-          branchStock = Math.max(0, Number(p.currentStock) || 0);
-        }
+        const branchStock = resolveAuthoritativeStock({
+          productId: p.id,
+          masterStock: Number(p.currentStock) || 0,
+          targetBranchId: resolvedBranchId,
+          branches,
+          branchInventory: allBranchInv,
+          savedMainBranchId: savedMainId,
+        });
 
         return {
           ...p,
@@ -263,12 +210,6 @@ export class ProductService {
         }
 
         const allLocalBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
-        const localForBranch = allLocalBInv.filter((bi: any) => bi.branchId === specificBranchId);
-
-        // Merge remote and local branch inventory entries
-        const bMap = new Map<string, any>();
-        localForBranch.forEach((row: any) => bMap.set(row.productId || row.product_id, row));
-        remoteBInv.forEach((row: any) => bMap.set(row.product_id || row.productId, row));
 
         let branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
         if ((!branches || branches.length === 0) && isSupabaseConfigured() && isValidUuid(wsId)) {
@@ -283,60 +224,38 @@ export class ProductService {
           }
         }
 
-        const bObj = branches.find((b: any) => b.id === specificBranchId);
         const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
-        const isMain = bObj?.isMainBranch ?? (savedMainId ? savedMainId === specificBranchId : (branches.length <= 1));
+
+        // Merge remote and local branch inventory entries
+        const combinedBInv = [
+          ...remoteBInv.map((r: any) => ({
+            branchId: specificBranchId,
+            productId: r.product_id,
+            currentStock: r.current_stock,
+          })),
+          ...allLocalBInv,
+        ];
 
         products.forEach((p) => {
-          const bRow = bMap.get(p.id);
-          if (bRow) {
-            p.currentStock = Math.max(0, Number(bRow.current_stock ?? bRow.currentStock) || 0);
-            if (bRow.minimum_stock !== null && bRow.minimum_stock !== undefined) {
-              p.minimumStock = Number(bRow.minimum_stock ?? bRow.minStock);
+          const directRemote = remoteBInv.find((r: any) => r.product_id === p.id);
+          if (directRemote) {
+            if (directRemote.minimum_stock !== null && directRemote.minimum_stock !== undefined) {
+              p.minimumStock = Number(directRemote.minimum_stock);
             }
-            if (bRow.rack_location || bRow.rackLocation) p.location = bRow.rack_location || bRow.rackLocation;
-            if (bRow.selling_price !== null && bRow.selling_price !== undefined) {
-              p.sellingPrice = Number(bRow.selling_price ?? bRow.sellingPrice);
-            }
-          } else if (isMain || (!bObj && branches.length === 0)) {
-            // Main branch (or unresolved branch state): calculate master stock minus other branch allocations to prevent aggregate bleed
-            const otherEntries = allLocalBInv.filter(
-              (bi: any) => bi.branchId !== specificBranchId && bi.productId === p.id
-            );
-            const otherStockSum = otherEntries.reduce(
-              (sum: number, bi: any) => sum + (Number(bi.currentStock) || 0),
-              0
-            );
-            const masterStock = Math.max(0, Number(p.currentStock) || 0);
-            p.currentStock = Math.max(0, masterStock - otherStockSum);
-
-            let existEntry = allLocalBInv.find((bi: any) => bi.branchId === specificBranchId && bi.productId === p.id);
-            if (!existEntry) {
-              const newBEntry = {
-                id: `bi-${Date.now()}-${p.id}`,
-                branchId: specificBranchId,
-                productId: p.id,
-                currentStock: p.currentStock,
-                openingStock: p.currentStock,
-                status: p.currentStock > 0 ? 'Active' : 'Out of Stock',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              };
-              allLocalBInv.push(newBEntry);
-              safeSaveTenantStorage('vistaar_local_branch_inventory_db', allLocalBInv);
-            }
-          } else {
-            const hasAnyExplicitAllocation = allLocalBInv.some(
-              (bi: any) => (bi.productId || bi.product_id) === p.id && (bi.branchId || bi.branch_id) !== specificBranchId
-            ) || remoteBInv.some(
-              (bi: any) => (bi.productId || bi.product_id) === p.id
-            );
-            if (hasAnyExplicitAllocation) {
-              p.currentStock = 0;
-            } else {
-              p.currentStock = Math.max(0, Number(p.currentStock) || 0);
+            if (directRemote.rack_location) p.location = directRemote.rack_location;
+            if (directRemote.selling_price !== null && directRemote.selling_price !== undefined) {
+              p.sellingPrice = Number(directRemote.selling_price);
             }
           }
+
+          p.currentStock = resolveAuthoritativeStock({
+            productId: p.id,
+            masterStock: Number(p.currentStock) || 0,
+            targetBranchId: specificBranchId,
+            branches,
+            branchInventory: combinedBInv,
+            savedMainBranchId: savedMainId,
+          });
           p.branchId = specificBranchId;
         });
       } else if (isAllBranches) {
@@ -358,18 +277,19 @@ export class ProductService {
 
         const allLocalBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
         const sourceInv = remoteAllInv.length > 0 ? remoteAllInv : allLocalBInv;
+        const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+        const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
 
-        if (sourceInv.length > 0) {
-          products.forEach((p) => {
-            const matching = sourceInv.filter((bi: any) => (bi.product_id || bi.productId) === p.id);
-            if (matching.length > 0) {
-              p.currentStock = matching.reduce(
-                (sum: number, bi: any) => sum + (Number(bi.current_stock ?? bi.currentStock) || 0),
-                0
-              );
-            }
+        products.forEach((p) => {
+          p.currentStock = resolveAuthoritativeStock({
+            productId: p.id,
+            masterStock: Number(p.currentStock) || 0,
+            targetBranchId: 'ALL',
+            branches,
+            branchInventory: sourceInv,
+            savedMainBranchId: savedMainId,
           });
-        }
+        });
       }
 
       if (isDefaultFetch) {
@@ -407,39 +327,23 @@ export class ProductService {
     }
 
     const enrichWithBranchStock = (prods: Product[]): Product[] => {
-      if (!targetBranchId || targetBranchId === 'ALL') return prods;
       const allLocalBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
       const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
-      const bObj = branches.find((b: any) => b.id === targetBranchId);
       const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
-      const isMain = bObj?.isMainBranch ?? (savedMainId ? savedMainId === targetBranchId : (branches.length <= 1));
 
       return prods.map((p) => {
-        const bEntry = allLocalBInv.find(
-          (bi: any) => bi.branchId === targetBranchId && bi.productId === p.id
-        );
-        let bStock = 0;
-        if (bEntry) {
-          bStock = Math.max(0, Number(bEntry.currentStock) || 0);
-        } else if (isMain || (!bObj && branches.length === 0)) {
-          const otherEntries = allLocalBInv.filter(
-            (bi: any) => bi.branchId !== targetBranchId && bi.productId === p.id
-          );
-          const otherSum = otherEntries.reduce(
-            (sum: number, bi: any) => sum + (Number(bi.currentStock) || 0),
-            0
-          );
-          bStock = Math.max(0, (Number(p.currentStock) || 0) - otherSum);
-        } else {
-          const hasAnyAlloc = allLocalBInv.some(
-            (bi: any) => (bi.productId || bi.product_id) === p.id && (bi.branchId || bi.branch_id) !== targetBranchId
-          );
-          bStock = hasAnyAlloc ? 0 : Math.max(0, Number(p.currentStock) || 0);
-        }
+        const bStock = resolveAuthoritativeStock({
+          productId: p.id,
+          masterStock: Number(p.currentStock) || 0,
+          targetBranchId,
+          branches,
+          branchInventory: allLocalBInv,
+          savedMainBranchId: savedMainId,
+        });
         return {
           ...p,
           currentStock: bStock,
-          branchId: targetBranchId,
+          branchId: targetBranchId || undefined,
         };
       });
     };
@@ -1015,52 +919,55 @@ export class ProductService {
           return authoritativeBranchStock;
         }
 
-        // 3. If 0 and branch is Main Branch, fall back to master product stock
+        // 3. Fall back to authoritative stock resolution
+        let masterStock = 0;
         try {
-          const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
-          const bObj = branches.find((b: any) => b.id === targetBranchId);
-          const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
-          const isMain = bObj?.isMainBranch ?? (savedMainId ? savedMainId === targetBranchId : (branches.length <= 1));
-          if (isMain || (!bObj && branches.length === 0)) {
-            const { data: pRow } = await supabase
-              .from('products')
-              .select('current_stock')
-              .eq('id', productId)
-              .maybeSingle();
-            if (pRow && Number(pRow.current_stock) > 0) {
-              return Math.max(0, Number(pRow.current_stock));
-            }
+          const { data: pRow } = await supabase
+            .from('products')
+            .select('current_stock')
+            .eq('id', productId)
+            .maybeSingle();
+          if (pRow) {
+            masterStock = Math.max(0, Number(pRow.current_stock) || 0);
           }
         } catch {}
+
+        if (masterStock <= 0) {
+          const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+          const p = local.find((prod) => prod.id === productId) || store.getProducts().find((prod) => prod.id === productId);
+          masterStock = Math.max(0, Number(p?.currentStock) || 0);
+        }
+
+        const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+        const allLocalBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
+        const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
+
+        return resolveAuthoritativeStock({
+          productId,
+          masterStock,
+          targetBranchId,
+          branches,
+          branchInventory: allLocalBInv,
+          savedMainBranchId: savedMainId,
+        });
       }
 
       // Local branch_inventory & receipts lookup
       const allLocalBInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
-      const bRow = allLocalBInv.find((bi: any) => bi.branchId === targetBranchId && bi.productId === productId);
-      const localBranchStock = bRow ? Math.max(0, Number(bRow.currentStock ?? bRow.current_stock) || 0) : 0;
-
-      const localReceipts = safeGetTenantStorage<any>('vistaar_local_stock_receipts_db', []).filter(
-        (r: any) => (r.branchId === targetBranchId || r.branch_id === targetBranchId) && (r.productId === productId || r.product_id === productId)
-      );
-      const localReceiptStock = localReceipts.reduce((sum: number, r: any) => sum + Math.max(0, Number(r.quantity_remaining) || 0), 0);
-      const localAuthoritative = Math.max(localBranchStock, localReceiptStock);
-      if (localAuthoritative > 0) {
-        return localAuthoritative;
-      }
-
-      // Check if branch is Main Branch
       const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
-      const bObj = branches.find((b: any) => b.id === targetBranchId);
       const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
-      const isMain = bObj?.isMainBranch ?? (savedMainId ? savedMainId === targetBranchId : (branches.length <= 1));
-      if (isMain || (!bObj && branches.length === 0)) {
-        const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
-        const p = local.find((prod) => prod.id === productId) || store.getProducts().find((prod) => prod.id === productId);
-        return p ? Math.max(0, Number(p.currentStock) || 0) : 0;
-      }
+      const localProds = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
+      const p = localProds.find((prod) => prod.id === productId) || store.getProducts().find((prod) => prod.id === productId);
+      const masterStock = Math.max(0, Number(p?.currentStock) || 0);
 
-      // If non-main branch (TEST, Delhi, Lucknow, etc.) and no inventory record exists, available stock is strictly 0!
-      return 0;
+      return resolveAuthoritativeStock({
+        productId,
+        masterStock,
+        targetBranchId,
+        branches,
+        branchInventory: allLocalBInv,
+        savedMainBranchId: savedMainId,
+      });
     }
 
     if (!isSupabaseConfigured() || !isValidUuid(productId)) {

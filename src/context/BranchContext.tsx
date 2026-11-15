@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { Branch } from '../types';
 import { branchService } from '../services/supabase/branchService';
 import { supabaseAuthService } from '../services/supabaseAuth';
-import { safeGetTenantItem, safeSaveTenantItem, safeSaveTenantStorage } from '../services/supabase/safeStorage';
+import { safeGetTenantItem, safeSaveTenantItem, safeGetTenantStorage, safeSaveTenantStorage } from '../services/supabase/safeStorage';
 import { productService } from '../services/supabase/productService';
 import { salesAnalyticsService } from '../services/supabase/salesAnalyticsService';
 import { auditLogService } from '../services/supabase/auditLogService';
@@ -102,6 +102,19 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const mainBranchObj = fullList.find((b) => b.isMainBranch) || fullList[0] || null;
       if (mainBranchObj) {
         safeSaveTenantItem('main_branch_id', mainBranchObj.id);
+      }
+
+      // Sanitize orphaned / phantom records from local branch inventory
+      if (fullList.length > 0) {
+        const validBranchIds = new Set(fullList.map((b) => b.id));
+        const localInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
+        const sanitizedInv = localInv.filter((bi: any) => {
+          const bId = bi.branchId || bi.branch_id;
+          return bId && validBranchIds.has(bId);
+        });
+        if (sanitizedInv.length !== localInv.length) {
+          safeSaveTenantStorage('vistaar_local_branch_inventory_db', sanitizedInv);
+        }
       }
 
       // Determine initial / restored branch

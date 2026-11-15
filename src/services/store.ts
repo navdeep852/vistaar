@@ -36,6 +36,7 @@ import { BrandingConfig, ThemeConfig, DocumentSnapshot } from '../types/template
 import { INVOICE_TEMPLATES } from '../templates/invoiceTemplates';
 import { QUOTATION_TEMPLATES } from '../templates/quotationTemplates';
 import { safeGetTenantItem, safeSaveTenantItem, safeGetTenantStorage, safeSaveTenantStorage, clearTenantStorage } from './supabase/safeStorage';
+import { resolveAuthoritativeStock } from './supabase/productStockResolver';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { supabaseAuthService } from './supabaseAuth';
 import {
@@ -3024,51 +3025,26 @@ class StoreService {
       } catch {}
     }
 
-    if (effectiveBranchId && effectiveBranchId !== 'ALL') {
-      const allInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
-      const entry = allInv.find((bi: any) => bi.branchId === effectiveBranchId && bi.productId === productId);
-      if (entry) {
-        return Math.max(0, Number(entry.currentStock) || 0);
-      }
-      const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
-      const b = branches.find((branch: any) => branch.id === effectiveBranchId);
-      const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
-      const isMain = b?.isMainBranch ?? (savedMainId ? savedMainId === effectiveBranchId : (branches.length <= 1));
-      if (isMain || (!b && branches.length === 0)) {
-        let prod = (this.state.products || []).find((p) => p.id === productId);
-        if (!prod) {
-          const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
-          prod = local.find((p) => p.id === productId);
-        }
-        const masterStock = prod ? Math.max(0, Number(prod.currentStock) || 0) : 0;
-        const otherBranchAllocations = allInv
-          .filter((bi: any) => (bi.productId || bi.product_id) === productId && (bi.branchId || bi.branch_id) !== effectiveBranchId)
-          .reduce((sum: number, bi: any) => sum + (Number(bi.currentStock ?? bi.current_stock) || 0), 0);
-        return Math.max(0, masterStock - otherBranchAllocations);
-      }
-      return 0;
-    }
-
-    if (effectiveBranchId === 'ALL') {
-      const allInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
-      const matchingBranchInv = allInv.filter((bi: any) => (bi.productId || bi.product_id) === productId);
-      if (matchingBranchInv.length > 0) {
-        return matchingBranchInv.reduce((sum: number, bi: any) => sum + (Number(bi.currentStock ?? bi.current_stock) || 0), 0);
-      }
-    }
-
     let prod = (this.state.products || []).find((p) => p.id === productId);
     if (!prod) {
       const local = safeGetTenantStorage<Product>(LOCAL_PRODUCTS_KEY, []);
       prod = local.find((p) => p.id === productId);
     }
-    const prodStock = prod ? Math.max(0, Number(prod.currentStock) || 0) : 0;
-    const receipts = (this.state.stockReceipts || []).filter((r) => r.productId === productId);
-    if (receipts.length > 0) {
-      const receiptSum = receipts.reduce((acc, r) => acc + Math.max(0, Number(r.quantityRemaining) || 0), 0);
-      return Math.max(prodStock, receiptSum);
-    }
-    return prodStock;
+    const masterStock = prod ? Math.max(0, Number(prod.currentStock) || 0) : 0;
+    if (masterStock <= 0) return 0;
+
+    const allInv = safeGetTenantStorage<any>('vistaar_local_branch_inventory_db', []);
+    const branches = safeGetTenantStorage<any>('vistaar_local_branches_db', []);
+    const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
+
+    return resolveAuthoritativeStock({
+      productId,
+      masterStock,
+      targetBranchId: effectiveBranchId,
+      branches,
+      branchInventory: allInv,
+      savedMainBranchId: savedMainId,
+    });
   }
 
   public syncProductStock(productId: string, newStock: number): void {

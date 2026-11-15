@@ -7,6 +7,7 @@ import { safeGetTenantStorage, safeSaveTenantStorage, safeGetTenantItem, safeSav
 import { auditLogService } from './auditLogService';
 import { store } from '../store';
 import { generateStockTransferNumber } from '../stockTransferDocumentService';
+import { resolveAuthoritativeStock } from './productStockResolver';
 
 const LOCAL_BRANCHES_KEY = 'vistaar_local_branches_db';
 const LOCAL_USER_BRANCH_ACCESS_KEY = 'vistaar_local_user_branch_access_db';
@@ -131,7 +132,8 @@ export class BranchService {
   private getOrCreateDefaultMainBranch(existingList: Branch[], wsId: string): Branch[] {
     if (existingList.length > 0) return existingList;
     const user = supabaseAuthService.getUser();
-    const mainBranchId = generateUuid();
+    const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
+    const mainBranchId = (savedMainId && isValidUuid(savedMainId)) ? savedMainId : generateUuid();
     const defaultBranch: Branch = {
       id: mainBranchId,
       workspaceId: wsId || 'default',
@@ -161,31 +163,6 @@ export class BranchService {
         createdAt: new Date().toISOString(),
       };
       safeSaveTenantStorage(LOCAL_USER_BRANCH_ACCESS_KEY, [access]);
-    }
-
-    // Initialize branch_inventory for Main Branch from existing catalog products
-    try {
-      const prods = safeGetTenantStorage<any>('vistaar_local_products_db', []);
-      if (prods.length > 0) {
-        const invList = prods.map((p) => ({
-          id: generateUuid(),
-          workspaceId: wsId || 'default',
-          branchId: defaultBranch.id,
-          productId: p.id,
-          currentStock: Math.max(0, Number(p.currentStock) || 0),
-          openingStock: Math.max(0, Number(p.currentStock) || 0),
-          minStock: Math.max(0, Number(p.minStock ?? p.minimumStock) || 0),
-          sellingPrice: p.sellingPrice ? Number(p.sellingPrice) : undefined,
-          purchasePrice: p.buyPrice ? Number(p.buyPrice) : undefined,
-          rackLocation: p.location || undefined,
-          status: 'Active',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        }));
-        safeSaveTenantStorage(LOCAL_BRANCH_INVENTORY_KEY, invList, defaultBranch.id);
-      }
-    } catch (e) {
-      console.warn('Error initializing main branch inventory:', e);
     }
 
     return [defaultBranch];
@@ -2070,24 +2047,20 @@ export class BranchService {
     }
 
     const allInv = safeGetTenantStorage<BranchInventory>(LOCAL_BRANCH_INVENTORY_KEY, []);
-    const entry = allInv.find((bi) => bi.branchId === branchId && bi.productId === productId);
-    if (entry) {
-      return Math.max(0, Number(entry.currentStock) || 0);
-    }
-
     const branches = safeGetTenantStorage<Branch>(LOCAL_BRANCHES_KEY, []);
-    const b = branches.find((branch) => branch.id === branchId);
-    if (b?.isMainBranch) {
-      const otherBranchStock = allInv
-        .filter((bi) => bi.branchId !== branchId && bi.productId === productId)
-        .reduce((sum, bi) => sum + (Number(bi.currentStock) || 0), 0);
-      const prods = safeGetTenantStorage<any>(LOCAL_PRODUCTS_KEY, []);
-      const p = prods.find((prod: any) => prod.id === productId);
-      const masterStock = Math.max(0, Number(p?.currentStock) || 0);
-      return Math.max(0, masterStock - otherBranchStock);
-    }
+    const savedMainId = safeGetTenantItem<string | null>('main_branch_id', null);
+    const prods = safeGetTenantStorage<any>(LOCAL_PRODUCTS_KEY, []);
+    const p = prods.find((prod: any) => prod.id === productId);
+    const masterStock = Math.max(0, Number(p?.currentStock) || 0);
 
-    return 0;
+    return resolveAuthoritativeStock({
+      productId,
+      masterStock,
+      targetBranchId: branchId,
+      branches,
+      branchInventory: allInv,
+      savedMainBranchId: savedMainId,
+    });
   }
 
   /**
