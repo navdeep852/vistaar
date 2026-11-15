@@ -76,19 +76,12 @@ export function resolveAuthoritativeStock(input: StockResolutionInput): number {
     return master;
   }
 
-  // Identify authoritative Main Branch ID
+  // 3. Determine if target branch is Main Branch
   const authoritativeMainId =
     branches.find((b) => b.isMainBranch || b.branchCode === 'MAIN')?.id ||
     savedMainBranchId ||
     branches[0]?.id;
 
-  // 3. Check for an explicit record for THIS specific branch
-  const directRecord = validProductAllocations.find((bi) => (bi.branchId || bi.branch_id) === targetBranchId);
-  if (directRecord) {
-    return Math.max(0, Number(directRecord.currentStock ?? directRecord.current_stock) || 0);
-  }
-
-  // 4. Determine if target branch is Main Branch
   const targetBranchObj = branches.find((b) => b.id === targetBranchId);
   const isMain = Boolean(
     targetBranchObj?.isMainBranch ||
@@ -110,12 +103,25 @@ export function resolveAuthoritativeStock(input: StockResolutionInput): number {
       0
     );
 
+  const authoritativeStock = Math.max(0, master - secondarySum);
+
+  // 4. Check for an explicit record for THIS specific branch
+  const directRecord = validProductAllocations.find((bi) => (bi.branchId || bi.branch_id) === targetBranchId);
+  const directStock = directRecord ? Math.max(0, Number(directRecord.currentStock ?? directRecord.current_stock) || 0) : 0;
+
   if (isMain) {
-    // Main Branch: Master stock MINUS allocations to other valid secondary branches
-    return Math.max(0, master - secondarySum);
+    // Main Branch: Master stock MINUS allocations to other valid secondary branches.
+    // If an explicit positive allocation exists, take the maximum so legitimate stock is never suppressed.
+    // A stale or zeroed local cache entry must NEVER override valid non-zero master stock.
+    return directRecord ? Math.max(directStock, authoritativeStock) : authoritativeStock;
   }
 
-  // 5. Secondary Branch with NO explicit allocation record:
-  // Available stock is master minus what other secondary branches have taken
-  return Math.max(0, master - secondarySum);
+  // 5. Secondary Branch:
+  // If an explicit allocation exists for this secondary branch, use it.
+  if (directRecord) {
+    return directStock;
+  }
+
+  // In unified catalog mode (no physical partitioning), secondary branch displays available central stock
+  return authoritativeStock;
 }

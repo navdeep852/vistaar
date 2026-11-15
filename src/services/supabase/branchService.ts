@@ -1076,10 +1076,20 @@ export class BranchService {
 
     if (isSupabaseConfigured() && isValidUuid(wsId)) {
       try {
-        const { data: sbProds, error: pErr } = await supabase
+        const SELECT_PROD_FIELDS = 'id, name, sku, part_number, current_stock, minimum_stock, location, buy_price, selling_price';
+        const SELECT_PROD_FIELDS_FALLBACK = 'id, name, sku, part_number, current_stock, minimum_stock, buy_price, selling_price';
+        let { data: sbProds, error: pErr } = await supabase
           .from('products')
-          .select('id, name, sku, part_number, current_stock, minimum_stock, location, buy_price, selling_price')
+          .select(SELECT_PROD_FIELDS)
           .eq('workspace_id', wsId);
+        if (pErr && (pErr.code === '42703' || pErr.message?.includes('location'))) {
+          const fallbackRes = await supabase
+            .from('products')
+            .select(SELECT_PROD_FIELDS_FALLBACK)
+            .eq('workspace_id', wsId);
+          sbProds = fallbackRes.data;
+          pErr = fallbackRes.error;
+        }
         if (!pErr && sbProds && sbProds.length > 0) {
           sbProds.forEach((p: any) => {
             if (p?.id) {

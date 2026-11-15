@@ -302,6 +302,7 @@ export class ProductService {
         };
         try {
           store.setProducts(products);
+          safeSaveTenantStorage(LOCAL_PRODUCTS_KEY, products);
         } catch (syncErr) {
           console.warn('[PRODUCT_STORE_SYNC] Warning syncing store products:', syncErr);
         }
