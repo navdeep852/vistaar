@@ -54,6 +54,11 @@ export class ProductService {
     branchId?: string;
   }): Promise<{ data: Product[]; count: number; error?: string }> {
     let wsId = options?.workspaceId && isValidUuid(options.workspaceId) ? options.workspaceId : this.getWorkspaceId();
+    if (!isValidUuid(wsId) && isSupabaseConfigured()) {
+      try {
+        wsId = await this.getOrFetchWorkspaceId();
+      } catch {}
+    }
     
     // Resolve authoritative target branch
     let resolvedBranchId: string | undefined = options?.branchId !== undefined ? options.branchId : undefined;
@@ -127,8 +132,14 @@ export class ProductService {
             allBranchInv.push(newBEntry);
             safeSaveTenantStorage('vistaar_local_branch_inventory_db', allBranchInv);
           } else {
-            // Secondary branch has strictly 0 stock if no inventory record exists
-            branchStock = 0;
+            const hasAnyOtherAllocations = allBranchInv.some(
+              (bi: any) => (bi.productId || bi.product_id) === p.id && (bi.branchId || bi.branch_id) !== specificBranchId
+            );
+            if (hasAnyOtherAllocations) {
+              branchStock = 0;
+            } else {
+              branchStock = Math.max(0, Number(p.currentStock) || 0);
+            }
           }
         } else if (isAllBranches) {
           // Explicit organization-wide aggregate
@@ -315,8 +326,16 @@ export class ProductService {
               safeSaveTenantStorage('vistaar_local_branch_inventory_db', allLocalBInv);
             }
           } else {
-            // Sub-branch strictly has 0 stock if no record exists
-            p.currentStock = 0;
+            const hasAnyExplicitAllocation = allLocalBInv.some(
+              (bi: any) => (bi.productId || bi.product_id) === p.id && (bi.branchId || bi.branch_id) !== specificBranchId
+            ) || remoteBInv.some(
+              (bi: any) => (bi.productId || bi.product_id) === p.id
+            );
+            if (hasAnyExplicitAllocation) {
+              p.currentStock = 0;
+            } else {
+              p.currentStock = Math.max(0, Number(p.currentStock) || 0);
+            }
           }
           p.branchId = specificBranchId;
         });
@@ -412,7 +431,10 @@ export class ProductService {
           );
           bStock = Math.max(0, (Number(p.currentStock) || 0) - otherSum);
         } else {
-          bStock = 0;
+          const hasAnyAlloc = allLocalBInv.some(
+            (bi: any) => (bi.productId || bi.product_id) === p.id && (bi.branchId || bi.branch_id) !== targetBranchId
+          );
+          bStock = hasAnyAlloc ? 0 : Math.max(0, Number(p.currentStock) || 0);
         }
         return {
           ...p,

@@ -279,17 +279,6 @@ export class CustomerPaymentService {
                 .maybeSingle();
               dbUdhariRow = uByCode;
             }
-            if (!dbUdhariRow && (resolvedInvoiceId || dbInvRow?.id)) {
-              const targetInvId = resolvedInvoiceId || dbInvRow?.id;
-              const { data: uByInvId } = await supabase
-                .from('udhari_records')
-                .select('*')
-                .eq('workspace_id', wsId)
-                .eq('invoice_id', targetInvId)
-                .maybeSingle();
-              dbUdhariRow = uByInvId;
-            }
-
             // Auto-create Udhari record in DB if missing for this invoice
             if (!dbUdhariRow && dbInvRow) {
               const uCode = `UD-${dbInvRow.invoice_number}`;
@@ -297,8 +286,7 @@ export class CustomerPaymentService {
                 .from('udhari_records')
                 .insert([{
                   workspace_id: wsId,
-                  customer_id: resolvedCustomerId || dbInvRow.customer_id || null,
-                  invoice_id: dbInvRow.id,
+                  customer_id: (resolvedCustomerId && isValidUuid(resolvedCustomerId)) ? resolvedCustomerId : ((dbInvRow.customer_id && isValidUuid(dbInvRow.customer_id)) ? dbInvRow.customer_id : null),
                   udhari_code: uCode,
                   customer_name_snapshot: customerName,
                   phone_snapshot: customerPhone || '9999999999',
@@ -306,6 +294,7 @@ export class CustomerPaymentService {
                   total_received: Number(dbInvRow.paid_amount) || 0,
                   outstanding_amount: Number(dbInvRow.balance_amount) || Number(dbInvRow.grand_total) || 0,
                   due_date: dbInvRow.due_date || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
+                  notes: `[invoice: ${dbInvRow.id}]`,
                   status: (Number(dbInvRow.paid_amount) > 0 ? 'PARTIALLY PAID' : 'UNPAID'),
                 }])
                 .select('*')
@@ -387,13 +376,13 @@ export class CustomerPaymentService {
               reference_no: payload.reference || null,
               notes: payload.notes || null,
             };
-            if (payload.counterSaleId && isValidUuid(payload.counterSaleId)) {
-              dbPayPayload.counter_sale_id = payload.counterSaleId;
+            if (payload.branchId) {
+              dbPayPayload.notes = dbPayPayload.notes ? `${dbPayPayload.notes} [branch: ${payload.branchId}]` : `[branch: ${payload.branchId}]`;
             }
-            if (payload.branchId && isValidUuid(payload.branchId)) {
-              dbPayPayload.branch_id = payload.branchId;
+            if (payload.counterSaleId) {
+              dbPayPayload.notes = dbPayPayload.notes ? `${dbPayPayload.notes} [counter_sale: ${payload.counterSaleId}]` : `[counter_sale: ${payload.counterSaleId}]`;
             }
-            if (dbPaymentId) {
+            if (dbPaymentId && isValidUuid(dbPaymentId)) {
               dbPayPayload.id = dbPaymentId;
             }
 

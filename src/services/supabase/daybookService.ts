@@ -77,15 +77,11 @@ export class DaybookService {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
         // 1. Query public.daybook_transactions first (Authoritative unified financial journal)
         try {
-          const buildDtQuery = (includeBranch: boolean) => {
+          const buildDtQuery = () => {
             let q = supabase
               .from('daybook_transactions')
               .select('*', { count: 'exact' })
               .eq('workspace_id', wsId);
-
-            if (includeBranch && options?.branchId && options.branchId !== 'ALL' && isValidUuid(options.branchId)) {
-              q = q.eq('branch_id', options.branchId);
-            }
 
             const { start, end } = this.getDateBounds(options?.dateRange, options?.startDate, options?.endDate);
             if (start) q = q.gte('transaction_date', start);
@@ -93,10 +89,6 @@ export class DaybookService {
 
             if (options?.transactionType && options.transactionType !== 'ALL') {
               q = q.eq('transaction_type', options.transactionType);
-            }
-
-            if (options?.paymentStatus && options.paymentStatus !== 'ALL') {
-              q = q.eq('payment_status', options.paymentStatus);
             }
 
             if (options?.paymentMode && options.paymentMode !== 'ALL') {
@@ -111,13 +103,7 @@ export class DaybookService {
             return q.order('transaction_date', { ascending: false }).order('created_at', { ascending: false });
           };
 
-          let { data: dtData, error: dtErr } = await buildDtQuery(true);
-          // If branch_id column does not exist in schema cache (42703), retry without branch_id
-          if (dtErr && (dtErr.code === '42703' || dtErr.message?.includes('branch_id'))) {
-            const retryRes = await buildDtQuery(false);
-            dtData = retryRes.data;
-            dtErr = retryRes.error;
-          }
+          let { data: dtData, error: dtErr } = await buildDtQuery();
 
           if (!dtErr && dtData) {
             rawTransactions = dtData.map((row: any) => fromDbDaybookTransaction(row));
@@ -1241,26 +1227,29 @@ export class DaybookService {
           .eq('reference_id', params.referenceId)
           .maybeSingle();
 
+        const metaTags: string[] = [];
+        if (params.branchId) metaTags.push(`[branch: ${params.branchId}]`);
+        if (params.totalAmount !== undefined && params.totalAmount !== null) metaTags.push(`[total: ${params.totalAmount}]`);
+        if (params.remainingAmount !== undefined && params.remainingAmount !== null) metaTags.push(`[remaining: ${params.remainingAmount}]`);
+        if (params.paymentStatus) metaTags.push(`[status: ${params.paymentStatus}]`);
+        const combinedNotes = params.notes ? `${params.notes} ${metaTags.join(' ')}`.trim() : (metaTags.join(' ') || null);
+
         const dtPayload: any = {
           workspace_id: wsId,
-          branch_id: params.branchId && isValidUuid(params.branchId) ? params.branchId : null,
           transaction_code: entryNumber,
           transaction_date: entryDate,
           transaction_type: params.transactionType,
           direction: params.direction || 'IN',
           amount: Math.abs(Number(params.amount) || 0),
-          total_amount: params.totalAmount !== undefined ? params.totalAmount : null,
-          remaining_amount: params.remainingAmount !== undefined ? params.remainingAmount : null,
-          payment_status: params.paymentStatus || (params.transactionType === 'SALE' ? (params.remainingAmount && params.remainingAmount > 0 ? (params.amount > 0 ? 'PARTIALLY PAID' : 'UNPAID') : 'PAID') : null),
           payment_mode: params.paymentMode || 'Cash',
           party_type: params.partyType || 'customer',
-          party_id: isValidUuid(params.partyId) ? params.partyId : null,
+          party_id: (params.partyId && isValidUuid(params.partyId)) ? params.partyId : null,
           party_name: params.partyName || null,
           reference_type: params.referenceType,
           reference_id: params.referenceId,
           reference_number: params.referenceNumber || null,
           description: params.description,
-          notes: params.notes,
+          notes: combinedNotes,
           status: params.paymentStatus === 'CANCELLED' ? 'VOID' : 'COMPLETED',
           updated_at: new Date().toISOString(),
         };
@@ -1272,14 +1261,9 @@ export class DaybookService {
             .update(dtPayload)
             .eq('id', existing.id);
 
-          if (updErr && (updErr.code === '42703' || updErr.message?.includes('column'))) {
-            delete dtPayload.total_amount;
-            delete dtPayload.remaining_amount;
-            delete dtPayload.payment_status;
-            delete dtPayload.branch_id;
-            await supabase.from('daybook_transactions').update(dtPayload).eq('id', existing.id);
+          if (!updErr) {
+            savedDbId = existing.id;
           }
-          savedDbId = existing.id;
         } else {
           // Insert new transaction entry
           let { data: insData, error: insErr } = await supabase
@@ -1288,16 +1272,7 @@ export class DaybookService {
             .select('id')
             .single();
 
-          if (insErr && (insErr.code === '42703' || insErr.message?.includes('column'))) {
-            delete dtPayload.total_amount;
-            delete dtPayload.remaining_amount;
-            delete dtPayload.payment_status;
-            delete dtPayload.branch_id;
-            const retry = await supabase.from('daybook_transactions').insert([dtPayload]).select('id').single();
-            if (!retry.error && retry.data) {
-              savedDbId = retry.data.id;
-            }
-          } else if (!insErr && insData) {
+          if (!insErr && insData) {
             savedDbId = insData.id;
           }
         }

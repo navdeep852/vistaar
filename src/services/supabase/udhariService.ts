@@ -36,32 +36,16 @@ export class UdhariService {
 
     try {
       if (isSupabaseConfigured() && isValidUuid(wsId)) {
-        let query = supabase
+        const { data, error } = await supabase
           .from('udhari_records')
           .select('*, udhari_payments(*)')
-          .eq('workspace_id', wsId);
-
-        if (effectiveBId && effectiveBId !== 'ALL' && isValidUuid(effectiveBId)) {
-          query = query.or(`branch_id.eq.${effectiveBId},branch_id.is.null,branch_id.eq.${wsId}`);
-        }
-
-        const { data, error } = await query.order('created_at', { ascending: false });
+          .eq('workspace_id', wsId)
+          .order('created_at', { ascending: false });
 
         if (!error && data) {
           remoteRecords = data;
         } else if (error) {
-          if (error.code === '42703' || error.message?.includes('branch_id')) {
-            const retryRes = await supabase
-              .from('udhari_records')
-              .select('*, udhari_payments(*)')
-              .eq('workspace_id', wsId)
-              .order('created_at', { ascending: false });
-            if (!retryRes.error && retryRes.data) {
-              remoteRecords = retryRes.data;
-            }
-          } else {
-            fetchError = handleSupabaseError(error, 'getUdhariRecords');
-          }
+          fetchError = handleSupabaseError(error, 'getUdhariRecords');
         }
       }
     } catch (e: any) {
@@ -77,25 +61,32 @@ export class UdhariService {
       return true;
     });
 
-    const mappedRemote: any[] = filteredRemote.map((r: any) => ({
-      id: r.udhari_code || r.id,
-      dbId: r.id,
-      branchId: r.branch_id,
-      customerId: r.customer_id,
-      invoiceId: r.invoice_id,
-      counterSaleId: r.counter_sale_id,
-      customerNameSnapshot: r.customer_name_snapshot || 'Customer',
-      phoneSnapshot: r.phone_snapshot || '',
-      originalAmount: Number(r.original_amount) || 0,
-      totalReceived: Number(r.total_received) || 0,
-      outstandingAmount: Number(r.outstanding_amount) || 0,
-      dueDate: r.due_date,
-      status: r.status,
-      notes: r.notes,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-      payments: r.udhari_payments,
-    }));
+    const mappedRemote: any[] = filteredRemote.map((r: any) => {
+      let invId = r.invoice_id;
+      if (!invId && r.notes) {
+        const match = r.notes.match(/\[invoice:\s*([^\]]+)\]/i);
+        if (match && match[1]) invId = match[1].trim();
+      }
+      return {
+        id: r.udhari_code || r.id,
+        dbId: r.id,
+        branchId: r.branch_id,
+        customerId: r.customer_id,
+        invoiceId: invId,
+        counterSaleId: r.counter_sale_id,
+        customerNameSnapshot: r.customer_name_snapshot || 'Customer',
+        phoneSnapshot: r.phone_snapshot || '',
+        originalAmount: Number(r.original_amount) || 0,
+        totalReceived: Number(r.total_received) || 0,
+        outstandingAmount: Number(r.outstanding_amount) || 0,
+        dueDate: r.due_date,
+        status: r.status,
+        notes: r.notes,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        payments: r.udhari_payments,
+      };
+    });
 
     // If remote records exist or query succeeded, use authoritative database records directly.
     // Local storage is used strictly as an offline fallback when database connectivity is unavailable.
@@ -149,21 +140,26 @@ export class UdhariService {
 
     const code = udhari.id || `UD-${Date.now()}`;
     const branchTag = udhari.branchId ? `[branch: ${udhari.branchId}]` : '';
-    const udhariNotes = udhari.notes ? (udhari.notes.includes('[branch:') ? udhari.notes : `${udhari.notes} ${branchTag}`.trim()) : (branchTag || null);
+    const invTag = udhari.invoiceId ? `[invoice: ${udhari.invoiceId}]` : '';
+    let udhariNotes = udhari.notes || '';
+    if (branchTag && !udhariNotes.includes('[branch:')) {
+      udhariNotes = `${udhariNotes} ${branchTag}`.trim();
+    }
+    if (invTag && !udhariNotes.includes('[invoice:')) {
+      udhariNotes = `${udhariNotes} ${invTag}`.trim();
+    }
 
     const payload: any = {
       workspace_id: wsId,
-      branch_id: udhari.branchId && isValidUuid(udhari.branchId) ? udhari.branchId : null,
-      customer_id: udhari.customerId || null,
-      invoice_id: udhari.invoiceId || null,
+      customer_id: (udhari.customerId && isValidUuid(udhari.customerId)) ? udhari.customerId : null,
       udhari_code: code,
       customer_name_snapshot: udhari.customerNameSnapshot || 'Customer',
       phone_snapshot: udhari.phoneSnapshot,
-      original_amount: udhari.originalAmount || 0,
-      total_received: udhari.totalReceived || 0,
-      outstanding_amount: udhari.outstandingAmount !== undefined ? udhari.outstandingAmount : (udhari.originalAmount || 0),
+      original_amount: Number(udhari.originalAmount) || 0,
+      total_received: Number(udhari.totalReceived) || 0,
+      outstanding_amount: udhari.outstandingAmount !== undefined ? Number(udhari.outstandingAmount) : (Number(udhari.originalAmount) || 0),
       due_date: udhari.dueDate || new Date().toISOString().split('T')[0],
-      notes: udhariNotes,
+      notes: udhariNotes || null,
       status: udhari.status || 'UNPAID',
     };
 
@@ -176,15 +172,9 @@ export class UdhariService {
           .select('id')
           .single();
 
-        if (error && (error.code === '42703' || error.message?.includes('invoice_id') || error.message?.includes('branch_id'))) {
-          delete payload.invoice_id;
-          delete payload.branch_id;
-          const retry = await supabase.from('udhari_records').insert([payload]).select('id').single();
-          data = retry.data;
-          error = retry.error;
-        }
-
-        if (!error && data) {
+        if (error) {
+          console.error('[createUdhari] Remote insert error:', error);
+        } else if (data) {
           createdDbId = data.id;
         }
       } catch (e: any) {
@@ -248,7 +238,7 @@ export class UdhariService {
 
     try {
       if (isValidUuid(wsId) && isValidUuid(params.invoiceId)) {
-        // 1. Check if an Udhari record exists for this invoice (graceful check)
+        // 1. Check if an Udhari record exists for this invoice
         let existingUdhari: any = null;
         try {
           const { data: byCode } = await supabase
@@ -260,20 +250,6 @@ export class UdhariService {
           existingUdhari = byCode;
         } catch (cErr) {
           // ignore
-        }
-
-        if (!existingUdhari) {
-          try {
-            const { data: byInvId } = await supabase
-              .from('udhari_records')
-              .select('*')
-              .eq('workspace_id', wsId)
-              .eq('invoice_id', params.invoiceId)
-              .maybeSingle();
-            existingUdhari = byInvId;
-          } catch (invColErr) {
-            // invoice_id column might not exist yet
-          }
         }
 
         let udhariId = existingUdhari?.id;

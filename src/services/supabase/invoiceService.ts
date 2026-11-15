@@ -1118,23 +1118,17 @@ export class InvoiceService {
 
               try {
                 const smRow: any = {
+                  id: crypto.randomUUID(),
                   workspace_id: wsId,
                   product_id: pId,
-                  movement_type: 'Sale',
+                  type: 'SALE',
                   quantity: -req.quantity,
-                  source_id: authoritativeInvoiceId,
-                  source_type: 'INVOICE',
-                  reference_number: inv.invoiceNumber,
+                  movement_date: inv.date || new Date().toISOString().split('T')[0],
+                  reference_id: inv.invoiceNumber,
+                  reference_type: 'INVOICE_SALE',
                   notes: `Invoice Finalization #${inv.invoiceNumber}${canonicalBranchId ? ` [branch: ${canonicalBranchId}]` : ''}`,
                 };
-                if (canonicalBranchId && isValidUuid(canonicalBranchId)) {
-                  smRow.branch_id = canonicalBranchId;
-                }
-                const { error: smErr } = await supabase.from('stock_movements').insert([smRow]);
-                if (smErr && (smErr.code === '42703' || smErr.code === 'PGRST204')) {
-                  delete smRow.branch_id;
-                  await supabase.from('stock_movements').insert([smRow]);
-                }
+                await supabase.from('stock_movements').insert([smRow]);
               } catch {}
             }
           }
@@ -1201,13 +1195,14 @@ export class InvoiceService {
             const upfrontNotes = payload.paymentNotes || (payload.source === 'QUOTATION' ? `Payment recorded at quotation conversion (${payload.quotationNumber || inv.invoiceNumber})` : `Payment recorded at invoice finalization`);
             const payMethod = payload.paymentMode || 'Cash';
             const payRef = payload.paymentReference || null;
+            const yearStr = (payload.paymentDate ? payload.paymentDate.split('-')[0] : new Date().getFullYear().toString());
+            const randPaymentCode = `PAY-${yearStr}-${Math.floor(10000 + Math.random() * 90000)}`;
+            const payDbId = crypto.randomUUID();
 
             // 1. Persist to local store and local tenant storage
-            const count = (store.getPayments()?.length || 0) + 1;
-            const year = new Date().getFullYear();
             const localPayRecord: Payment = {
-              id: `pay-init-${authoritativeInvoiceId}`,
-              paymentNumber: `PAY-${year}-${String(count).padStart(4, '0')}`,
+              id: payDbId,
+              paymentNumber: randPaymentCode,
               customerId: payload.customerId || '',
               customerName: payload.customerName || 'Customer',
               invoiceId: authoritativeInvoiceId,
@@ -1224,47 +1219,23 @@ export class InvoiceService {
 
             // 2. Persist to remote Supabase payments table
             if (isSupabaseConfigured() && isValidUuid(wsId) && isValidUuid(authoritativeInvoiceId)) {
-              const fullPayRow: Record<string, any> = {
+              const paymentNotes = `${upfrontNotes}${payload.branchId ? ` [branch: ${payload.branchId}]` : ''}`;
+              const corePayRow: Record<string, any> = {
+                id: payDbId,
                 workspace_id: wsId,
-                payment_number: localPayRecord.paymentNumber,
+                payment_number: randPaymentCode,
                 invoice_id: authoritativeInvoiceId,
                 invoice_number: inv.invoiceNumber,
-                customer_id: isValidUuid(payload.customerId) ? payload.customerId : null,
+                customer_id: (payload.customerId && isValidUuid(payload.customerId)) ? payload.customerId : null,
                 customer_name: payload.customerName || 'Customer',
                 amount: effectivePaid,
                 payment_date: payload.paymentDate || inv.date,
                 method: payMethod,
-                payment_method: payMethod,
-                reference_no: payRef,
-                reference_number: payRef,
-                notes: upfrontNotes,
+                reference_no: payRef || null,
+                notes: paymentNotes,
               };
-              if (payload.branchId && isValidUuid(payload.branchId)) {
-                fullPayRow.branch_id = payload.branchId;
-              }
 
-              let { error: payErr } = await supabase.from('payments').insert([fullPayRow]);
-
-              // Resilience against unmigrated schema: if branch_id, payment_method, or reference_number fail with PGRST204, strip to core columns and retry
-              if (payErr && (payErr.code === 'PGRST204' || payErr.code === '42703')) {
-                console.warn('[finalizeAuthoritativeInvoice] Payments column mismatch in schema cache (PGRST204); retrying with core columns');
-                const corePayRow = {
-                  workspace_id: wsId,
-                  payment_number: localPayRecord.paymentNumber,
-                  invoice_id: authoritativeInvoiceId,
-                  invoice_number: inv.invoiceNumber,
-                  customer_id: isValidUuid(payload.customerId) ? payload.customerId : null,
-                  customer_name: payload.customerName || 'Customer',
-                  amount: effectivePaid,
-                  payment_date: payload.paymentDate || inv.date,
-                  method: payMethod,
-                  reference_no: payRef,
-                  notes: upfrontNotes,
-                };
-                const retryPayRes = await supabase.from('payments').insert([corePayRow]);
-                payErr = retryPayRes.error;
-              }
-
+              let { error: payErr } = await supabase.from('payments').insert([corePayRow]);
               if (payErr) {
                 console.error('[finalizeAuthoritativeInvoice] Critical: Remote payment insert failed:', payErr);
               }

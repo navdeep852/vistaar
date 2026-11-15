@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { Branch } from '../types';
 import { branchService } from '../services/supabase/branchService';
 import { supabaseAuthService } from '../services/supabaseAuth';
-import { safeGetTenantItem, safeSaveTenantItem } from '../services/supabase/safeStorage';
+import { safeGetTenantItem, safeSaveTenantItem, safeSaveTenantStorage } from '../services/supabase/safeStorage';
 import { productService } from '../services/supabase/productService';
 import { salesAnalyticsService } from '../services/supabase/salesAnalyticsService';
 import { auditLogService } from '../services/supabase/auditLogService';
@@ -95,6 +95,8 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       setAllWorkspaceBranches(fullList);
       setBranches(authorizedList);
+      safeSaveTenantStorage('vistaar_local_branches_db', fullList);
+      safeSaveTenantStorage('vistaar_company_branches_db', fullList);
 
       // Persist authoritative Main Branch ID
       const mainBranchObj = fullList.find((b) => b.isMainBranch) || fullList[0] || null;
