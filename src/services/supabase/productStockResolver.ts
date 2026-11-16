@@ -70,7 +70,7 @@ export function resolveAuthoritativeStock(input: StockResolutionInput): number {
         (acc, bi) => acc + (Number(bi.currentStock ?? bi.current_stock) || 0),
         0
       );
-      if (sum > 0) return Math.max(0, sum);
+      if (sum > 0) return Math.min(sum, master); // Capped by authoritative master to prevent stale inflation
     }
     // If no explicit branch allocations exist across the workspace, master stock is the consolidated stock
     return master;
@@ -103,25 +103,26 @@ export function resolveAuthoritativeStock(input: StockResolutionInput): number {
       0
     );
 
-  const authoritativeStock = Math.max(0, master - secondarySum);
+  const authoritativeMainStock = Math.max(0, master - secondarySum);
 
-  // 4. Check for an explicit record for THIS specific branch
-  const directRecord = validProductAllocations.find((bi) => (bi.branchId || bi.branch_id) === targetBranchId);
-  const directStock = directRecord ? Math.max(0, Number(directRecord.currentStock ?? directRecord.current_stock) || 0) : 0;
-
+  // 4. Branch Specific Resolution
   if (isMain) {
-    // Main Branch: Master stock MINUS allocations to other valid secondary branches.
-    // If an explicit positive allocation exists, take the maximum so legitimate stock is never suppressed.
-    // A stale or zeroed local cache entry must NEVER override valid non-zero master stock.
-    return directRecord ? Math.max(directStock, authoritativeStock) : authoritativeStock;
+    // Main Branch holds the central warehouse stock (master stock minus allocations to valid secondary branches).
+    // Physical Stock Invariant:
+    // - A generated fallback record of 0 must NEVER suppress valid master stock.
+    // - A stale local cache record with a higher number must NEVER inflate stock beyond (master - secondarySum).
+    // Therefore, the authoritative Main Branch stock is strictly defined by (master - secondarySum).
+    return authoritativeMainStock;
   }
 
   // 5. Secondary Branch:
-  // If an explicit allocation exists for this secondary branch, use it.
+  // If an explicit allocation exists for this secondary branch, use it (capped by master stock to prevent stale inflation).
+  const directRecord = validProductAllocations.find((bi) => (bi.branchId || bi.branch_id) === targetBranchId);
   if (directRecord) {
-    return directStock;
+    const directStock = Math.max(0, Number(directRecord.currentStock ?? directRecord.current_stock) || 0);
+    return Math.min(directStock, master);
   }
 
   // In unified catalog mode (no physical partitioning), secondary branch displays available central stock
-  return authoritativeStock;
+  return authoritativeMainStock;
 }
