@@ -164,85 +164,8 @@ const safeStorageRemove = (key: string): void => {
  * Converts raw network errors, Supabase exceptions, or DNS failures
  * into clear, user-friendly diagnostic error messages.
  */
-export function normalizeAuthError(error: any): string {
-  if (!error) return 'An unexpected authentication error occurred.';
-  const msg = typeof error === 'string' ? error : error.message || error.error_description || String(error);
-  const status = Number(error?.status || error?.statusCode || 0);
-  const code = String(error?.code || error?.error || '');
-
-  // 1. Rate Limiting (429)
-  if (status === 429 || code === 'over_email_send_rate_limit' || msg.includes('rate limit') || msg.includes('too many requests')) {
-    return 'Too many verification attempts. Please wait before trying again.';
-  }
-
-  // 2. OTP Verification Failure / Invalid or Expired Token
-  if (
-    msg.includes('Token has expired') ||
-    msg.includes('otp_expired') ||
-    msg.includes('invalid_otp') ||
-    msg.includes('Invalid token') ||
-    msg.includes('Token is invalid')
-  ) {
-    return 'The verification code is incorrect or expired.';
-  }
-
-  // 3. SMTP / Email Provider Error
-  if (
-    msg.includes('Error sending confirmation mail') ||
-    msg.includes('SMTP') ||
-    msg.includes('email_provider_error') ||
-    msg.includes('Failed to send email')
-  ) {
-    return "We couldn't deliver the verification email. Please check your Supabase SMTP settings or try again.";
-  }
-
-  // 4. Server / Infrastructure Outage (500, 502, 503, 525)
-  if (
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 525 ||
-    msg.includes('Service Unavailable') ||
-    msg.includes('Internal Server Error')
-  ) {
-    return 'VISTAAR authentication is temporarily unavailable. Please try again shortly.';
-  }
-
-  // 5. Network / DNS / Transport Failure
-  if (
-    msg.includes('Failed to fetch') ||
-    msg.includes('TypeError') ||
-    msg.includes('ENOTFOUND') ||
-    msg.includes('NetworkError') ||
-    msg.includes('fetch failed') ||
-    msg.includes('Failed to connect') ||
-    msg.includes('Network Error') ||
-    msg.includes('AuthRetryableFetchError')
-  ) {
-    return 'Unable to reach Supabase Auth server. Check your internet connection and Supabase project availability.';
-  }
-
-  // 6. Invalid Credentials
-  if (
-    msg.includes('Invalid login credentials') ||
-    msg.includes('invalid_credentials') ||
-    msg.includes('Invalid credentials')
-  ) {
-    return 'Invalid email or password.';
-  }
-
-  // 7. Account Already Exists
-  if (msg.includes('User already registered') || msg.includes('already registered') || msg.includes('email_exists')) {
-    return 'An account with this email address already exists. Please sign in instead.';
-  }
-
-  // 8. Password Policy
-  if (msg.includes('Password should be at least')) {
-    return 'Password does not meet minimum length requirements.';
-  }
-
-  return msg;
-}
+import { normalizeAuthError } from '../lib/authErrorNormalizer';
+export { normalizeAuthError };
 
 export type AuthResolutionState = 'loading' | 'unauthenticated' | 'ready' | 'error';
 
@@ -1649,21 +1572,37 @@ export class SupabaseAuthService {
 
     try {
       console.log(`[OTP_REQUEST_STARTED] Target Email: ${cleanEmail.replace(/^(.)(.*)(@.*)$/, '$1***$3')}`);
-      const { data: existingProfile } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('email', cleanEmail)
-        .maybeSingle();
 
-      if (existingProfile) {
-        console.warn('[OTP_REQUEST_ERROR] Account already exists for this email.');
-        return {
-          success: false,
-          error: 'An account already exists with this email address. Please sign in instead.',
-          accountExists: true,
-        };
+      // 1. Authoritative pre-registration check via server-side RPC or profiles lookup
+      try {
+        const { data: isRegistered, error: rpcErr } = await supabase.rpc('check_email_registered', { p_email: cleanEmail });
+        if (!rpcErr && isRegistered) {
+          console.warn('[OTP_REQUEST_ERROR] Account already exists for this email.');
+          return {
+            success: false,
+            error: 'An account already exists with this email address. Please sign in instead.',
+            accountExists: true,
+          };
+        }
+      } catch {
+        // Fallback: Check local profiles table if accessible
+        const { data: existingProfile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', cleanEmail)
+          .maybeSingle();
+
+        if (existingProfile) {
+          console.warn('[OTP_REQUEST_ERROR] Account already exists for this email.');
+          return {
+            success: false,
+            error: 'An account already exists with this email address. Please sign in instead.',
+            accountExists: true,
+          };
+        }
       }
 
+      // 2. Request Email OTP via Supabase Auth
       const { error } = await supabase.auth.signInWithOtp({
         email: cleanEmail,
         options: {
@@ -1798,6 +1737,7 @@ export class SupabaseAuthService {
     }
 
     try {
+      // 1. Update password & user metadata in Supabase Auth
       const { data: userRes, error: passErr } = await supabase.auth.updateUser({
         password,
         data: {
@@ -1808,6 +1748,8 @@ export class SupabaseAuthService {
       });
 
       if (passErr) {
+        // If password update fails because session was not established, try signUpCompany
+        console.warn('[COMPLETE_REGISTRATION_AUTH_UPDATE_FAILED] Falling back to signUpCompany:', passErr.message);
         return this.signUpCompany({
           companyName,
           ownerName,
@@ -1823,71 +1765,87 @@ export class SupabaseAuthService {
         return { success: false, error: 'Authentication session expired. Please verify your email again.' };
       }
 
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('workspace_id')
-        .eq('id', authUser.id)
-        .single();
+      // 2. Provision Company Workspace Atomically via Server-Side RPC
+      let workspaceId: string | null = null;
+      try {
+        const { data: provResult, error: provErr } = await supabase.rpc('provision_company_workspace', {
+          p_company_name: companyName,
+          p_owner_name: ownerName,
+          p_phone: pRes.normalized,
+        });
 
-      if (!profileData?.workspace_id) {
-        return {
-          success: false,
-          error: 'Could not resolve your workspace. Please try logging in again in a moment.'
-        };
-      }
-
-      const workspaceId = profileData.workspace_id;
-
-      // Update existing workspace details instead of creating a second workspace row
-      const { error: wsErr } = await supabase
-        .from('workspaces')
-        .update({
-          company_name: companyName,
-          owner_name: ownerName,
-          owner_phone: pRes.normalized,
-        })
-        .eq('id', workspaceId);
-
-      if (wsErr) {
-        console.warn('Workspace update warning:', wsErr);
-      }
-
-      // Update owner profile fields
-      await supabase
-        .from('profiles')
-        .update({
-          name: ownerName,
-          phone: pRes.normalized,
-        })
-        .eq('id', authUser.id);
-
-      await supabase.from('business_settings').upsert(
-        [
-          {
-            workspace_id: workspaceId,
-            legal_name: companyName,
-            owner_name: ownerName,
-            phone: pRes.normalized,
-            email: cleanEmail,
-            address: 'Main Office',
-            city: 'City',
-            state: 'State',
-            pincode: '000000',
-            country: 'India',
-          },
-        ],
-        { onConflict: 'workspace_id' }
-      );
-
-      await this.syncProfileFromSupabaseUser(authUser.id, cleanEmail);
-      if (!this.currentProfile || !this.currentProfile.companyId || this.currentProfile.companyId === authUser.id) {
-        const authWsId = await this.getAuthoritativeWorkspaceId();
-        if (authWsId && authWsId !== authUser.id) {
-          if (this.currentProfile) {
-            this.currentProfile.companyId = authWsId;
-            this.saveSessionToStorage(this.currentProfile);
-          }
+        if (provErr) {
+          console.warn('[COMPLETE_REGISTRATION] provision_company_workspace RPC error, falling back to direct update:', provErr.message);
+          throw provErr;
         }
+
+        if (provResult && (provResult as any).workspace_id) {
+          workspaceId = (provResult as any).workspace_id;
+          console.log('[COMPLETE_REGISTRATION_SUCCESS] Workspace provisioned atomically:', workspaceId);
+        }
+      } catch (rpcErr) {
+        // Fallback for environments where migration 077 is pending
+        console.warn('[COMPLETE_REGISTRATION] Executing direct fallback provisioning...');
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('workspace_id')
+          .eq('id', authUser.id)
+          .single();
+
+        if (profileData?.workspace_id) {
+          workspaceId = profileData.workspace_id;
+
+          // Update existing workspace details instead of creating a second workspace row
+          await supabase
+            .from('workspaces')
+            .update({
+              company_name: companyName,
+              owner_name: ownerName,
+              owner_phone: pRes.normalized,
+            })
+            .eq('id', workspaceId);
+
+          // Update owner profile fields
+          await supabase
+            .from('profiles')
+            .update({
+              name: ownerName,
+              phone: pRes.normalized,
+            })
+            .eq('id', authUser.id);
+
+          await supabase.from('business_settings').upsert(
+            [
+              {
+                workspace_id: workspaceId,
+                legal_name: companyName,
+                owner_name: ownerName,
+                phone: pRes.normalized,
+                email: cleanEmail,
+                address: 'Main Office',
+                city: 'City',
+                state: 'State',
+                pincode: '000000',
+                country: 'India',
+              },
+            ],
+            { onConflict: 'workspace_id' }
+          );
+        }
+      }
+
+      if (!workspaceId) {
+        const authWsId = await this.getAuthoritativeWorkspaceId();
+        if (authWsId) workspaceId = authWsId;
+      }
+
+      // 3. Synchronize local profile and tenant state
+      await this.syncProfileFromSupabaseUser(authUser.id, cleanEmail);
+      if (this.currentProfile && workspaceId) {
+        this.currentProfile.companyId = workspaceId;
+        this.currentProfile.businessName = companyName;
+        this.currentProfile.name = ownerName;
+        this.saveSessionToStorage(this.currentProfile);
       }
 
       store.reloadTenantState();

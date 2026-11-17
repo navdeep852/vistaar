@@ -511,9 +511,27 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
 
         <div className="bg-white dark:bg-slate-900/90 backdrop-blur-xl py-8 px-6 shadow-2xl border border-slate-200 dark:border-slate-800 rounded-3xl sm:px-10 transition-colors duration-200">
           {error && (
-            <div className="mb-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center gap-3 text-rose-700 dark:text-rose-300 text-xs font-semibold">
-              <AlertCircle className="w-5 h-5 shrink-0 text-rose-500 dark:text-rose-400" />
-              <span>{error}</span>
+            <div className="mb-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-3 text-rose-700 dark:text-rose-300 text-xs font-semibold animate-fade-in">
+              <AlertCircle className="w-5 h-5 shrink-0 text-rose-500 dark:text-rose-400 mt-0.5" />
+              <div className="flex-1 space-y-1.5">
+                <p className="leading-relaxed">{error}</p>
+                {error.includes('already exists') && (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthMode('signin');
+                        setIdentifier(signupEmail);
+                        setError(null);
+                      }}
+                      className="inline-flex items-center gap-1 font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                    >
+                      <span>Sign In with this email</span>
+                      <span>→</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

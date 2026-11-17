@@ -13,7 +13,7 @@
     "build:all": "npm run build && npm run sync:mobile && npm run build:mobile",
     "build:cross-platform": "powershell -ExecutionPolicy Bypass -File ./scripts/sync_and_build_cross_platform.ps1",
     "verify:cross-platform": "node scripts/verify_cross_platform_synchronization.cjs",
-    "test": "node --experimental-strip-types --test tests/financialAnalytics.test.ts tests/authoritativeStockResolver.test.ts tests/crossPlatformSync.test.ts tests/forensicParityAudit.test.ts tests/productStockParity.test.ts tests/legacyProductStockParity.test.ts tests/masterTemplate.test.ts tests/brandingParity.test.ts",
+    "test": "node --experimental-strip-types --test tests/financialAnalytics.test.ts tests/authoritativeStockResolver.test.ts tests/crossPlatformSync.test.ts tests/forensicParityAudit.test.ts tests/productStockParity.test.ts tests/legacyProductStockParity.test.ts tests/masterTemplate.test.ts tests/brandingParity.test.ts tests/productionAuthRepair.test.ts",
     "test:financial": "node --experimental-strip-types --test tests/financialAnalytics.test.ts",
     "lint": "oxlint",
     "preview": "vite preview",
