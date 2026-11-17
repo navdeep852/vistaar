@@ -6,7 +6,10 @@ import {
   extractStateInfo,
   determineGstRouting,
   numberToWordsIndian,
+  chunkMasterTemplateItems,
+  COPY_BADGE_CONFIG,
 } from '../src/templates/invoices/masterTemplateHelpers.ts';
+import type { ProcessedItem } from '../src/templates/invoices/masterTemplateHelpers.ts';
 
 describe('VISTAAR — Master Template Registration & Discovery', () => {
   const registryContent = fs.readFileSync(
@@ -251,3 +254,156 @@ describe('VISTAAR — Number to Words Engine (Indian Format)', () => {
     assert.strictEqual(numberToWordsIndian(null), 'Zero Rupees Only');
   });
 });
+
+describe('VISTAAR — Master Template A4 Landscape Multi-Page Pagination', () => {
+  const createMockItems = (count: number): ProcessedItem[] =>
+    Array.from({ length: count }, (_, i) => ({
+      sNo: i + 1,
+      description: `Test Product Item #${i + 1}`,
+      hsn: '84713010',
+      uom: 'PCS',
+      qty: 1,
+      rate: 1000,
+      gross: 1000,
+      discount: 0,
+      taxable: 1000,
+      cgstRate: 9,
+      cgstAmount: 90,
+      sgstRate: 9,
+      sgstAmount: 90,
+      igstRate: 0,
+      igstAmount: 0,
+      total: 1180,
+    }));
+
+  it('1. Single page invoice (1 to 6 items): chunks strictly into 1 page with padding rows', () => {
+    const items1 = createMockItems(1);
+    const chunks1 = chunkMasterTemplateItems(items1);
+    assert.strictEqual(chunks1.length, 1);
+    assert.strictEqual(chunks1[0].pageNumber, 1);
+    assert.strictEqual(chunks1[0].totalPages, 1);
+    assert.strictEqual(chunks1[0].isFirstPage, true);
+    assert.strictEqual(chunks1[0].isLastPage, true);
+    assert.strictEqual(chunks1[0].items.length, 1);
+    assert.strictEqual(chunks1[0].paddingRowsCount, 5);
+
+    const items6 = createMockItems(6);
+    const chunks6 = chunkMasterTemplateItems(items6);
+    assert.strictEqual(chunks6.length, 1);
+    assert.strictEqual(chunks6[0].items.length, 6);
+    assert.strictEqual(chunks6[0].paddingRowsCount, 0);
+  });
+
+  it('2. Multi-page invoice (7 to 14 items): splits cleanly across 2 pages without empty pages', () => {
+    const items7 = createMockItems(7);
+    const chunks7 = chunkMasterTemplateItems(items7);
+    assert.strictEqual(chunks7.length, 2);
+    assert.strictEqual(chunks7[0].isFirstPage, true);
+    assert.strictEqual(chunks7[0].isLastPage, false);
+    assert.strictEqual(chunks7[1].isFirstPage, false);
+    assert.strictEqual(chunks7[1].isLastPage, true);
+    assert.strictEqual(chunks7[0].items.length + chunks7[1].items.length, 7);
+
+    const items14 = createMockItems(14);
+    const chunks14 = chunkMasterTemplateItems(items14);
+    assert.strictEqual(chunks14.length, 2);
+    assert.strictEqual(chunks14[0].items.length, 8);
+    assert.strictEqual(chunks14[1].items.length, 6);
+    assert.strictEqual(chunks14[1].isLastPage, true);
+  });
+
+  it('3. Large multi-page invoice (20 and 30 items): preserves all items without loss', () => {
+    const items20 = createMockItems(20);
+    const chunks20 = chunkMasterTemplateItems(items20);
+    const sum20 = chunks20.reduce((acc, c) => acc + c.items.length, 0);
+    assert.strictEqual(sum20, 20);
+    assert.strictEqual(chunks20[chunks20.length - 1].isLastPage, true);
+    assert.strictEqual(chunks20[0].isFirstPage, true);
+
+    const items30 = createMockItems(30);
+    const chunks30 = chunkMasterTemplateItems(items30);
+    const sum30 = chunks30.reduce((acc, c) => acc + c.items.length, 0);
+    assert.strictEqual(sum30, 30);
+    assert.strictEqual(chunks30[chunks30.length - 1].isLastPage, true);
+  });
+});
+
+describe('VISTAAR — Copy Identification Badges and Dropdown Mapping', () => {
+  it('1. Original copy maps to ORIGINAL COPY (For Recipient)', () => {
+    assert.deepStrictEqual(COPY_BADGE_CONFIG['Original'], {
+      title: 'ORIGINAL COPY',
+      subtitle: '(For Recipient)',
+    });
+  });
+
+  it('2. Duplicate copy maps to DUPLICATE COPY (For Transporter)', () => {
+    assert.deepStrictEqual(COPY_BADGE_CONFIG['Duplicate'], {
+      title: 'DUPLICATE COPY',
+      subtitle: '(For Transporter)',
+    });
+  });
+
+  it('3. Triplicate copy maps to TRIPLICATE COPY (For Supplier)', () => {
+    assert.deepStrictEqual(COPY_BADGE_CONFIG['Triplicate'], {
+      title: 'TRIPLICATE COPY',
+      subtitle: '(For Supplier)',
+    });
+  });
+
+  it('4. Extra OC copy maps to EXTRA OC COPY (Office Copy)', () => {
+    assert.deepStrictEqual(COPY_BADGE_CONFIG['Extra OC'], {
+      title: 'EXTRA OC COPY',
+      subtitle: '(Office Copy)',
+    });
+  });
+});
+
+describe('VISTAAR — 16-Column Proportions and Layout Invariants', () => {
+  it('1. MasterTemplate source strictly implements 16-column colgroup summing to 100.0%', () => {
+    const layoutContent = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/templates/invoices/layouts/MasterTemplate.tsx'),
+      'utf-8'
+    );
+
+    // Extract widths from colgroup
+    const colgroupMatch = layoutContent.match(/<colgroup>([\s\S]*?)<\/colgroup>/);
+    assert.ok(colgroupMatch, 'Must define <colgroup>');
+    const widthMatches = colgroupMatch[1].match(/width:\s*['"]([0-9.]+)%['"]/g) || [];
+    assert.strictEqual(widthMatches.length, 16, 'Must define exactly 16 column width percentages');
+
+    const percentages = widthMatches.map((m) => {
+      const match = m.match(/([0-9.]+)%/);
+      return match ? parseFloat(match[1]) : 0;
+    });
+
+    const sum = Math.round(percentages.reduce((a, b) => a + b, 0) * 10) / 10;
+    assert.strictEqual(sum, 100.0, 'Colgroup column widths must sum exactly to 100.0%');
+  });
+
+  it('2. Discrete .master-template-page class is used for page separation', () => {
+    const layoutContent = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/templates/invoices/layouts/MasterTemplate.tsx'),
+      'utf-8'
+    );
+    assert.ok(
+      layoutContent.includes('master-template-page'),
+      'MasterTemplate must render elements with className "master-template-page"'
+    );
+  });
+
+  it('3. pdfService detects inv-master-template and handles discrete pages', () => {
+    const pdfServiceContent = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/services/document/pdfService.ts'),
+      'utf-8'
+    );
+    assert.ok(
+      pdfServiceContent.includes("props.templateId === 'inv-master-template'"),
+      'pdfService must detect inv-master-template'
+    );
+    assert.ok(
+      pdfServiceContent.includes('.master-template-page'),
+      'pdfService must query for .master-template-page elements'
+    );
+  });
+});
+

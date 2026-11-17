@@ -222,3 +222,150 @@ export function numberToWordsIndian(num: number | undefined | null): string {
 
   return `${words} Only`;
 }
+
+export type CopyType = 'Original' | 'Duplicate' | 'Triplicate' | 'Extra OC';
+
+export interface CopyBadgeDetails {
+  title: string;
+  subtitle: string;
+}
+
+export const COPY_BADGE_CONFIG: Record<CopyType, CopyBadgeDetails> = {
+  Original: {
+    title: 'ORIGINAL COPY',
+    subtitle: '(For Recipient)',
+  },
+  Duplicate: {
+    title: 'DUPLICATE COPY',
+    subtitle: '(For Transporter)',
+  },
+  Triplicate: {
+    title: 'TRIPLICATE COPY',
+    subtitle: '(For Supplier)',
+  },
+  'Extra OC': {
+    title: 'EXTRA OC COPY',
+    subtitle: '(Office Copy)',
+  },
+};
+
+export interface ProcessedItem {
+  sNo: number;
+  description: string;
+  hsn: string;
+  uom: string;
+  qty: number;
+  rate: number;
+  gross: number;
+  discount: number;
+  taxable: number;
+  cgstRate: number;
+  cgstAmount: number;
+  sgstRate: number;
+  sgstAmount: number;
+  igstRate: number;
+  igstAmount: number;
+  total: number;
+}
+
+export interface MasterTemplatePageChunk {
+  pageNumber: number;
+  totalPages: number;
+  isFirstPage: boolean;
+  isLastPage: boolean;
+  items: ProcessedItem[];
+  paddingRowsCount: number;
+}
+
+export function chunkMasterTemplateItems(items: ProcessedItem[]): MasterTemplatePageChunk[] {
+  if (items.length <= 6) {
+    return [
+      {
+        pageNumber: 1,
+        totalPages: 1,
+        isFirstPage: true,
+        isLastPage: true,
+        items,
+        paddingRowsCount: Math.max(0, 6 - items.length),
+      },
+    ];
+  }
+
+  const rawChunks: {
+    pageNumber: number;
+    isFirstPage: boolean;
+    isLastPage: boolean;
+    items: ProcessedItem[];
+    paddingRowsCount: number;
+  }[] = [];
+
+  let remaining = [...items];
+  let pageNumber = 1;
+
+  // Page 1 capacity: up to 8 items, but guarantee at least 1 item carries over
+  const page1Count = Math.min(8, items.length - 1);
+  const page1Items = remaining.slice(0, page1Count);
+  remaining = remaining.slice(page1Count);
+
+  rawChunks.push({
+    pageNumber: 1,
+    isFirstPage: true,
+    isLastPage: false,
+    items: page1Items,
+    paddingRowsCount: 0,
+  });
+
+  const INTERMEDIATE_CAPACITY = 14;
+  const FINAL_PAGE_MAX = 6;
+
+  while (remaining.length > 0) {
+    pageNumber++;
+
+    if (remaining.length <= FINAL_PAGE_MAX) {
+      rawChunks.push({
+        pageNumber,
+        isFirstPage: false,
+        isLastPage: true,
+        items: remaining,
+        paddingRowsCount: Math.max(0, 4 - remaining.length),
+      });
+      break;
+    }
+
+    if (remaining.length <= INTERMEDIATE_CAPACITY) {
+      const takeForThisPage = remaining.length - Math.min(FINAL_PAGE_MAX, Math.ceil(remaining.length / 2));
+      const pageItems = remaining.slice(0, takeForThisPage);
+      remaining = remaining.slice(takeForThisPage);
+
+      rawChunks.push({
+        pageNumber,
+        isFirstPage: false,
+        isLastPage: false,
+        items: pageItems,
+        paddingRowsCount: 0,
+      });
+    } else {
+      const pageItems = remaining.slice(0, INTERMEDIATE_CAPACITY);
+      remaining = remaining.slice(INTERMEDIATE_CAPACITY);
+
+      rawChunks.push({
+        pageNumber,
+        isFirstPage: false,
+        isLastPage: false,
+        items: pageItems,
+        paddingRowsCount: 0,
+      });
+    }
+  }
+
+  if (rawChunks.length > 0) {
+    rawChunks[rawChunks.length - 1].isLastPage = true;
+  }
+
+  const totalPages = rawChunks.length;
+  return rawChunks.map((chunk) => ({
+    ...chunk,
+    totalPages,
+  }));
+}
+

@@ -322,7 +322,9 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
 
       businessAlignment: 'left',
       titleAlignment: 'right',
-      orientation: settings.defaultOrientation || 'portrait',
+      orientation: ((initialDraftData?.templateId || initialTemplateId || store.getLastUsedTemplate(documentType)) === 'inv-master-template')
+        ? 'landscape'
+        : (settings.defaultOrientation || 'portrait'),
     }
   );
 
@@ -1111,7 +1113,10 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
       textColor: customization.textColor,
       fontFamily: customization.bodyFont,
     },
-    customization,
+    customization: {
+      ...customization,
+      orientation: templateId === 'inv-master-template' ? 'landscape' : (customization.orientation || 'portrait'),
+    },
   });
 
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -2448,6 +2453,9 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
         currentTemplateId={templateId}
         onSelectTemplate={(tId) => {
           setTemplateId(tId);
+          if (tId === 'inv-master-template') {
+            setCustomization((prev) => ({ ...prev, orientation: 'landscape' }));
+          }
           setGalleryOpen(false);
           showToast('Switched document template layout!', 'info');
         }}

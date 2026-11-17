@@ -54,17 +54,21 @@ export const InvoiceTemplateEngineRenderer: React.FC<InvoiceTemplateEngineRender
           customization={customization}
           isPrintMode={isPrintMode}
         />
-        <InvoicePaymentHistory
-          invoice={invoice}
-          currency={invoice.currency}
-        />
-        <EnginePaymentQrSlot
-          upiQrCodeUrl={upiQrCodeUrl}
-          upiId={upiId}
-          showQrCode={showQrCode}
-          showUpiId={showUpiId}
-          className="px-6"
-        />
+        {templateId !== 'inv-master-template' && (
+          <>
+            <InvoicePaymentHistory
+              invoice={invoice}
+              currency={invoice.currency}
+            />
+            <EnginePaymentQrSlot
+              upiQrCodeUrl={upiQrCodeUrl}
+              upiId={upiId}
+              showQrCode={showQrCode}
+              showUpiId={showUpiId}
+              className="px-6"
+            />
+          </>
+        )}
       </div>
     </PaymentQrProvider>
   );

@@ -12,7 +12,8 @@ import { DocumentRenderer, DocumentRendererProps } from '../components/DocumentR
  * 5. Cleans up mount target and style rules after printing.
  */
 export function printDocument(props: DocumentRendererProps) {
-  const orientation = props.customization?.orientation || 'portrait';
+  const isMasterTemplate = props.templateId === 'inv-master-template';
+  const orientation = isMasterTemplate ? 'landscape' : (props.customization?.orientation || 'portrait');
 
   // 1. Remove any existing print mount root & style tag
   const existingRoot = document.getElementById('printable-document-root');

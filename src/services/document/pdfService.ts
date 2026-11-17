@@ -48,7 +48,8 @@ export async function generateDocumentPdf(props: DocumentRendererProps): Promise
     throw new Error('Invalid document data: missing document number.');
   }
 
-  const orientation = props.customization?.orientation || 'portrait';
+  const isMasterTemplate = props.templateId === 'inv-master-template';
+  const orientation = isMasterTemplate ? 'landscape' : (props.customization?.orientation || 'portrait');
   const isLandscape = orientation === 'landscape';
 
   // Standard A4 dimensions in millimeters and standard 96-DPI CSS pixels
@@ -119,31 +120,7 @@ export async function generateDocumentPdf(props: DocumentRendererProps): Promise
     // Additional short tick to ensure layout engine finishes reflow
     await new Promise((resolve) => setTimeout(resolve, 150));
 
-    // 5. Capture container using html2canvas-pro at scale: 2 for crisp 300DPI-equivalent printing
-    const canvas = await html2canvas(container, {
-      scale: 2,
-      useCORS: true,
-      allowTaint: true,
-      logging: false,
-      backgroundColor: '#ffffff',
-      windowWidth: targetWidthPx,
-      onclone: (clonedDoc) => {
-        const el = clonedDoc.getElementById('pdf-render-offscreen-root');
-        if (el) {
-          el.style.position = 'static';
-          el.style.left = '0';
-          el.style.top = '0';
-          el.style.opacity = '1';
-          el.style.visibility = 'visible';
-        }
-      },
-    });
-
-    if (!canvas || canvas.width === 0 || canvas.height === 0) {
-      throw new Error(`HTML2Canvas produced an empty canvas (${canvas?.width || 0}x${canvas?.height || 0}).`);
-    }
-
-    // 6. Initialize jsPDF
+    // 5. Initialize jsPDF
     const doc = new jsPDF({
       orientation,
       unit: 'mm',
@@ -151,46 +128,98 @@ export async function generateDocumentPdf(props: DocumentRendererProps): Promise
       compress: true,
     });
 
-    const scaledWidth = canvas.width;
-    const scaledHeight = canvas.height;
-    // Calculate page height in scaled canvas pixels
-    const pxPerPage = (pageHeightMm / pageWidthMm) * scaledWidth;
-    const totalPages = Math.max(1, Math.ceil(scaledHeight / pxPerPage));
+    // Check if discrete pages exist (.master-template-page)
+    const discretePages = Array.from(container.querySelectorAll<HTMLElement>('.master-template-page'));
 
-    for (let page = 0; page < totalPages; page++) {
-      if (page > 0) {
-        doc.addPage('a4', orientation);
+    if (discretePages.length > 0) {
+      // Discrete Page Capture for Master Template (Zero row cuts, pure A4 landscape per page)
+      for (let i = 0; i < discretePages.length; i++) {
+        if (i > 0) {
+          doc.addPage('a4', orientation);
+        }
+        const pageEl = discretePages[i];
+        const pageCanvas = await html2canvas(pageEl, {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          logging: false,
+          backgroundColor: '#ffffff',
+          windowWidth: targetWidthPx,
+        });
+
+        if (!pageCanvas || pageCanvas.width === 0 || pageCanvas.height === 0) {
+          throw new Error(`HTML2Canvas produced an empty canvas on page ${i + 1}.`);
+        }
+
+        const pageDataUrl = pageCanvas.toDataURL('image/jpeg', 0.96);
+        doc.addImage(pageDataUrl, 'JPEG', 0, 0, pageWidthMm, pageHeightMm, undefined, 'FAST');
+      }
+    } else {
+      // Standard Continuous Fallback for 32 legacy templates
+      const canvas = await html2canvas(container, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        windowWidth: targetWidthPx,
+        onclone: (clonedDoc) => {
+          const el = clonedDoc.getElementById('pdf-render-offscreen-root');
+          if (el) {
+            el.style.position = 'static';
+            el.style.left = '0';
+            el.style.top = '0';
+            el.style.opacity = '1';
+            el.style.visibility = 'visible';
+          }
+        },
+      });
+
+      if (!canvas || canvas.width === 0 || canvas.height === 0) {
+        throw new Error(`HTML2Canvas produced an empty canvas (${canvas?.width || 0}x${canvas?.height || 0}).`);
       }
 
-      // Slice the canvas for the current page
-      const sourceY = page * pxPerPage;
-      const sourceHeight = Math.min(pxPerPage, scaledHeight - sourceY);
+      const scaledWidth = canvas.width;
+      const scaledHeight = canvas.height;
+      // Calculate page height in scaled canvas pixels
+      const pxPerPage = (pageHeightMm / pageWidthMm) * scaledWidth;
+      const totalPages = Math.max(1, Math.ceil(scaledHeight / pxPerPage));
 
-      const pageCanvas = document.createElement('canvas');
-      pageCanvas.width = scaledWidth;
-      pageCanvas.height = pxPerPage; // Maintain exact page aspect ratio
-      const ctx = pageCanvas.getContext('2d');
+      for (let page = 0; page < totalPages; page++) {
+        if (page > 0) {
+          doc.addPage('a4', orientation);
+        }
 
-      if (ctx) {
-        // Fill pure white background
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+        // Slice the canvas for the current page
+        const sourceY = page * pxPerPage;
+        const sourceHeight = Math.min(pxPerPage, scaledHeight - sourceY);
 
-        // Draw page slice
-        ctx.drawImage(
-          canvas,
-          0,
-          sourceY,
-          scaledWidth,
-          sourceHeight,
-          0,
-          0,
-          scaledWidth,
-          sourceHeight
-        );
+        const pageCanvas = document.createElement('canvas');
+        pageCanvas.width = scaledWidth;
+        pageCanvas.height = pxPerPage; // Maintain exact page aspect ratio
+        const ctx = pageCanvas.getContext('2d');
 
-        const pageDataUrl = pageCanvas.toDataURL('image/jpeg', 0.95);
-        doc.addImage(pageDataUrl, 'JPEG', 0, 0, pageWidthMm, pageHeightMm, undefined, 'FAST');
+        if (ctx) {
+          // Fill pure white background
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+
+          // Draw page slice
+          ctx.drawImage(
+            canvas,
+            0,
+            sourceY,
+            scaledWidth,
+            sourceHeight,
+            0,
+            0,
+            scaledWidth,
+            sourceHeight
+          );
+
+          const pageDataUrl = pageCanvas.toDataURL('image/jpeg', 0.95);
+          doc.addImage(pageDataUrl, 'JPEG', 0, 0, pageWidthMm, pageHeightMm, undefined, 'FAST');
+        }
       }
     }
 
