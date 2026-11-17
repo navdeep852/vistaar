@@ -68,6 +68,7 @@ const TAB_LABELS: Record<string, string> = {
 
 
 import { supabaseAuthService } from '../services/supabaseAuth';
+import { BrandLogo } from './BrandLogo';
 const logoDarkText = '/Vistaar_Logo_With_Name.png';
 const logoLightText = '/Vistaar_Logo_With_Name_Light.png';
 const logoIcon = '/Vistaar_Icon_logo.png';
@@ -168,17 +169,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
               <Menu className="w-5 h-5 sm:w-6 sm:h-6" />
             </button>
 
-            <div className="flex items-center gap-2 min-w-0">
-              <img src={logoIcon} alt="VISTAAR" className="h-7 w-7 sm:h-8 sm:w-8 object-contain shrink-0" />
-              <div className="flex flex-col justify-center min-w-0">
-                <span className="text-sm sm:text-base font-black tracking-widest text-slate-900 dark:text-white uppercase leading-none font-sans">
-                  VISTAAR
-                </span>
-                <span className="text-[8px] font-bold text-blue-600 dark:text-blue-400 tracking-wider uppercase leading-tight mt-0.5 hidden xs:block">
-                  Run Better. Grow Wider.
-                </span>
-              </div>
-            </div>
+            <BrandLogo variant="header" />
           </div>
         ) : (
           <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1 mr-2">
@@ -190,6 +181,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
+            <BrandLogo variant="icon" size="xs" className="shrink-0" />
             <div className="min-w-0 flex-1">
               <h1 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate leading-tight">
                 {TAB_LABELS[activeTab] || activeTab}
@@ -265,8 +257,18 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           drawerOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="p-4 pt-[max(env(safe-area-inset-top),1rem)] flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80 shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="pt-[max(env(safe-area-inset-top),0.75rem)] border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80 shrink-0">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-200/60 dark:border-slate-800/60">
+            <BrandLogo variant="compact" />
+            <button
+              onClick={() => setDrawerOpen(false)}
+              className="touch-target p-1.5 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              aria-label="Close menu"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="p-3 px-4 flex items-center gap-3 min-w-0">
             <UserAvatar name={user?.name} avatarUrl={user?.avatarUrl} size="md" />
             <div className="min-w-0">
               <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">{user?.name || 'Workspace User'}</p>
@@ -277,13 +279,6 @@ export const MobileNav: React.FC<MobileNavProps> = ({
               </p>
             </div>
           </div>
-          <button
-            onClick={() => setDrawerOpen(false)}
-            className="touch-target p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-            aria-label="Close menu"
-          >
-            <X className="w-5 h-5" />
-          </button>
         </div>
 
         <nav className="flex-1 overflow-y-auto p-3 space-y-1">

@@ -13,6 +13,7 @@ import {
   KeyRound,
 } from 'lucide-react';
 import { useScreenLock, SCREEN_LOCK_ENABLED } from '../context/ScreenLockContext';
+import { BrandLogo } from './BrandLogo';
 
 const logoFullNameLight = '/Vistaar_Logo_With_Name_Light.png';
 const logoFullNameDark = '/Vistaar_Logo_With_Name.png';
@@ -211,17 +212,8 @@ export const ScreenLockOverlay: React.FC = () => {
       <div className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200/80 dark:border-slate-800 p-6 sm:p-8 my-auto overflow-hidden">
         {/* Header with Logo */}
         <div className="text-center mb-6">
-          <div className="mb-4">
-            <img
-              src={logoFullNameDark}
-              alt="VISTAAR"
-              className="h-12 sm:h-14 mx-auto object-contain drop-shadow-md dark:hidden"
-            />
-            <img
-              src={logoFullNameLight}
-              alt="VISTAAR"
-              className="h-12 sm:h-14 mx-auto object-contain drop-shadow-md hidden dark:block"
-            />
+          <div className="mb-4 flex justify-center">
+            <BrandLogo variant="compact" />
           </div>
 
           <div

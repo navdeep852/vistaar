@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useTheme } from '../context/ThemeContext';
+import { BrandLogo } from './BrandLogo';
 const logoDarkText = '/Vistaar_Logo_With_Name.png';
 const logoLightText = '/Vistaar_Logo_With_Name_Light.png';
 
@@ -196,7 +197,7 @@ export const DedicatedWorkspace: React.FC<DedicatedWorkspaceProps> = ({
             {/* Drawer Header */}
             <div className="p-4 pt-[max(env(safe-area-inset-top),1rem)] border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950/80 shrink-0">
               <div className="flex items-center gap-2">
-                <img src={logoFullName} alt="VISTAAR" className="h-8 w-auto object-contain" />
+                <BrandLogo variant="compact" />
               </div>
               <button
                 type="button"

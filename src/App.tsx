@@ -3,6 +3,7 @@ import { Loader2, AlertOctagon, RefreshCw, LogOut } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { MobileNav } from './components/MobileNav';
 import { Header } from './components/Header';
+import { BrandLogo } from './components/BrandLogo';
 import { ToastContainer, showToast } from './components/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { supabaseAuthService, AuthResolutionState } from './services/supabaseAuth';
@@ -86,16 +87,10 @@ const resolveTabFromPath = (path: string): string => {
 
 const LoadingFallback: React.FC = () => (
   <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6 text-center select-none animate-fade-in font-sans">
-    <div className="relative flex items-center justify-center mb-6">
-      <img
-        src="/Vistaar_Icon_logo.png"
-        alt="VISTAAR"
-        className="w-16 h-16 object-contain drop-shadow-md animate-pulse"
-      />
-    </div>
+    <BrandLogo variant="splash" size="xl" className="mb-6" />
     <div className="flex items-center gap-2 mb-2">
       <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
-      <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 tracking-tight">
+      <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300 tracking-tight">
         Loading VISTAAR...
       </h2>
     </div>
@@ -285,16 +280,10 @@ function MainAppContent() {
   if (authStatus === 'loading') {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6 text-center select-none animate-fade-in font-sans">
-        <div className="relative flex items-center justify-center mb-6">
-          <img
-            src="/Vistaar_Icon_logo.png"
-            alt="VISTAAR"
-            className="w-16 h-16 object-contain drop-shadow-md animate-pulse"
-          />
-        </div>
+        <BrandLogo variant="splash" size="splash" className="mb-6" priority />
         <div className="flex items-center gap-2 mb-2">
           <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
-          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 tracking-tight">
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 tracking-tight">
             Initializing VISTAAR
           </h2>
         </div>

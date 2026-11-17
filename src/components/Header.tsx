@@ -21,6 +21,7 @@ import { navigateTo } from '../lib/publicRouter';
 import { supabaseAuthService } from '../services/supabaseAuth';
 import { notificationService } from '../services/supabase';
 import { AppNotification } from '../types';
+import { BrandLogo } from './BrandLogo';
 const logoIcon = '/Vistaar_Icon_logo.png';
 import { ThemeToggle } from './ThemeToggle';
 import { UserAvatar } from './UserAvatar';
@@ -187,10 +188,7 @@ export const Header: React.FC<HeaderProps> = ({
             title="Expand Sidebar (Ctrl+B)"
             aria-label="Expand Sidebar"
           >
-            <img src={logoIcon} alt="VISTAAR" className="h-6 w-6 object-contain" />
-            <span className="font-extrabold text-sm tracking-wider text-slate-900 dark:text-slate-100 font-sans">
-              VISTAAR
-            </span>
+            <BrandLogo variant="compact" />
           </button>
         )}
 
