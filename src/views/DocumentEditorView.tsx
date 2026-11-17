@@ -1222,8 +1222,8 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
       {/* Main Workspace Editor Container (Substantially expanded desktop workspace) */}
       <div className="w-full max-w-[95vw] xl:max-w-[94vw] 2xl:max-w-[92vw] mx-auto space-y-4 sm:space-y-6">
         {/* MOBILE 3-STEP FLOW NAVIGATION (below md) */}
-        <div className="block md:hidden bg-white dark:bg-slate-900 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs transition-colors">
-          <div className="flex items-center justify-between gap-1">
+        <div className="block md:hidden bg-white dark:bg-slate-900 p-1 sm:p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs transition-colors w-full overflow-hidden box-border">
+          <div className="flex items-center gap-1 w-full min-w-0">
             {[
               { id: 'customer', stepNum: '1', label: 'Customer', icon: User },
               { id: 'items', stepNum: '2', label: 'Items', icon: Package },
@@ -1236,7 +1236,7 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
                   key={step.id}
                   type="button"
                   onClick={() => setEditorSection(step.id as any)}
-                  className={`flex-1 py-2 px-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  className={`flex-1 min-w-0 py-2 px-1 sm:px-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 sm:gap-1.5 cursor-pointer ${
                     isActive
                       ? 'bg-blue-600 text-white shadow-xs'
                       : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -1248,20 +1248,20 @@ export const DocumentEditorView: React.FC<DocumentEditorViewProps> = ({
                     {step.stepNum}
                   </span>
                   <Icon className="w-3.5 h-3.5 shrink-0 hidden sm:inline" />
-                  <span className="truncate">{step.label}</span>
+                  <span className="truncate text-[11px] sm:text-xs">{step.label}</span>
                 </button>
               );
             })}
 
             {/* Quick access dropdown to other secondary sections */}
-            <div className="relative">
+            <div className="relative shrink-0">
               <select
                 aria-label="More Section Options"
                 value={['branding', 'appearance', 'layout', 'terms'].includes(editorSection) ? editorSection : ''}
                 onChange={(e) => {
                   if (e.target.value) setEditorSection(e.target.value as any);
                 }}
-                className={`py-2 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                className={`py-2 px-1.5 sm:px-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer border max-w-[76px] sm:max-w-none truncate ${
                   ['branding', 'appearance', 'layout', 'terms'].includes(editorSection)
                     ? 'bg-blue-600 text-white border-blue-600'
                     : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'

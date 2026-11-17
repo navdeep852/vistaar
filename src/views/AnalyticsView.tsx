@@ -248,16 +248,19 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateTab, ini
 
       {/* Compact Custom Range Date Selector */}
       {rangePreset === 'custom' && (
-        <div className="bg-white dark:bg-slate-900 p-3 sm:px-5 sm:py-3 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs animate-fade-in flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="bg-white dark:bg-slate-900 p-3.5 sm:px-5 sm:py-3 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs animate-fade-in flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs w-full box-border">
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Custom Scope:</span>
-            <span className="font-semibold text-slate-800 dark:text-slate-200">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider shrink-0">Custom Scope:</span>
+            <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
               {formatIndianDate(dateRange.startDateStr)} – {formatIndianDate(dateRange.endDateStr)}
             </span>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5">
-              <span className="text-slate-400 font-medium">From:</span>
+
+          {/* Date Fields: Vertical stacked on mobile, Horizontal on desktop */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
+            {/* Start Date Field (First) */}
+            <div className="flex items-center justify-between sm:justify-start gap-2 w-full sm:w-auto">
+              <span className="text-slate-400 font-medium text-xs shrink-0 w-12 sm:w-auto">From:</span>
               <input
                 type="date"
                 value={customStartDate}
@@ -267,11 +270,13 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateTab, ini
                   setCustomStartDate(val);
                   if (customEndDate && val > customEndDate) setCustomEndDate(val);
                 }}
-                className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium focus:ring-1 focus:ring-blue-500 outline-none text-xs"
+                className="flex-1 sm:flex-none w-full sm:w-auto px-2.5 py-1.5 sm:py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium focus:ring-1 focus:ring-blue-500 outline-none text-xs min-w-0"
               />
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-slate-400 font-medium">To:</span>
+
+            {/* End Date Field (Underneath on mobile) */}
+            <div className="flex items-center justify-between sm:justify-start gap-2 w-full sm:w-auto">
+              <span className="text-slate-400 font-medium text-xs shrink-0 w-12 sm:w-auto">To:</span>
               <input
                 type="date"
                 value={customEndDate}
@@ -281,7 +286,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateTab, ini
                   setCustomEndDate(val);
                   if (customStartDate && val < customStartDate) setCustomStartDate(val);
                 }}
-                className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium focus:ring-1 focus:ring-blue-500 outline-none text-xs"
+                className="flex-1 sm:flex-none w-full sm:w-auto px-2.5 py-1.5 sm:py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium focus:ring-1 focus:ring-blue-500 outline-none text-xs min-w-0"
               />
             </div>
           </div>

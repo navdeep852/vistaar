@@ -40,6 +40,7 @@ import { RestaurantCatering } from './layouts/RestaurantCatering';
 import { IndianBusinessClassic } from './layouts/IndianBusinessClassic';
 import { EInvoiceProfessional } from './layouts/EInvoiceProfessional';
 import { BlackWhiteBusiness } from './layouts/BlackWhiteBusiness';
+import { MasterTemplate } from './layouts/MasterTemplate';
 
 export const INVOICE_TEMPLATES: InvoiceTemplateDefinition[] = [
   // CATEGORY: CORPORATE (01-05)
@@ -310,6 +311,15 @@ export const INVOICE_TEMPLATES: InvoiceTemplateDefinition[] = [
     description: 'Minimal monochrome business invoice with strong typography and clean document hierarchy.',
     component: BlackWhiteBusiness,
     defaultTheme: defaultInvoiceThemes['monochrome'],
+  },
+  // TEMPLATE 33 — Master Template (Authoritative Indian GST Schedule reproducing GST-Invoice-Format.xlsx)
+  {
+    id: 'inv-master-template',
+    name: 'Master Template',
+    category: 'corporate',
+    description: 'Authoritative Indian GST Tax Invoice format reproducing the standard statutory invoice with dual consignee and full tax schedule.',
+    component: MasterTemplate,
+    defaultTheme: defaultInvoiceThemes['emerald-pro'] || defaultInvoiceThemes['corporate-navy'],
   },
 ];
 

@@ -646,7 +646,8 @@ export const UdhariView: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in pb-16">
       {/* 1. TOP HERO & METRIC CARDS HEADER */}
-      <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 p-6 rounded-3xl text-white shadow-2xl flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
+      {/* Desktop Hero Header (hidden on mobile, unchanged for desktop) */}
+      <div className="hidden lg:flex bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 p-6 rounded-3xl text-white shadow-2xl justify-between items-center gap-6">
         <div>
           <div className="flex items-center gap-2 text-amber-400 font-bold text-xs uppercase tracking-widest">
             <Scale className="w-4 h-4" />
@@ -673,6 +674,25 @@ export const UdhariView: React.FC = () => {
           <Plus className="w-5 h-5 stroke-[3]" />
           <span>+ Add Udhari</span>
         </button>
+      </div>
+
+      {/* Mobile Top Compact Banner (visible only on mobile) */}
+      <div className="block lg:hidden bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 px-4 py-3 rounded-2xl text-white shadow-md border border-slate-800">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0 border border-amber-500/30">
+              <Scale className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-sm font-black tracking-tight text-white truncate">
+                Indian Business Credit Book
+              </h1>
+              <p className="text-[10px] text-slate-300 truncate">
+                {currentBranch ? `Branch: ${currentBranch.branchName}` : 'All Authorized Branches'}
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* 2. SUMMARY CARDS (SECTION 19 & 20) */}
@@ -759,6 +779,18 @@ export const UdhariView: React.FC = () => {
             </span>
           </div>
         </div>
+      </div>
+
+      {/* Mobile Add Udhari Row (Underneath all 4 KPI cards, right-aligned) */}
+      <div className="flex lg:hidden justify-end pt-0.5">
+        <button
+          type="button"
+          onClick={handleOpenAddModal}
+          className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs shadow-md shadow-amber-500/25 transition-all active:scale-95 cursor-pointer"
+        >
+          <Plus className="w-4 h-4 stroke-[3]" />
+          <span>+ Add Udhari</span>
+        </button>
       </div>
 
       {/* 3. TABS, SEARCH & FILTER CONTROL BAR */}

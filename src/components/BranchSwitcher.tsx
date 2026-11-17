@@ -68,6 +68,17 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
   // CRITICAL RULE (Section 8 & 9): Normal employees are permanently locked to their assigned operating branch.
   // The branch selector shows ONLY their assigned branch as a locked/non-switchable badge.
   if (!isOwner) {
+    if (variant === 'mobile') {
+      return (
+        <div
+          className={`p-2 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 flex items-center justify-center shrink-0 select-none ${className}`}
+          title={`Assigned Operating Location: ${currentBranch?.branchName || 'Assigned Branch'} (Locked)`}
+          aria-label="Assigned Operating Location (Locked)"
+        >
+          <CurrentIcon className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+        </div>
+      );
+    }
     return (
       <div
         className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 text-xs font-semibold select-none ${className}`}
@@ -95,21 +106,18 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
     switchBranch('ALL');
   };
 
-  // Mobile compact layout for owner
+  // Mobile compact layout for owner: Icon button only, branch name text removed to prevent header overlap
   if (variant === 'mobile') {
     return (
       <div className={`relative ${className}`} ref={dropdownRef}>
         <button
           type="button"
           onClick={() => requestSwitchBranch()}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/80 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-xs font-semibold cursor-pointer max-w-[140px] truncate"
-          title="Switch Location"
+          className="touch-target p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors flex items-center justify-center shrink-0 cursor-pointer"
+          title={isAllBranchesSelected ? 'Operating Location: All Branches' : `Operating Location: ${currentBranch?.branchName || 'Branch'}`}
+          aria-label="Switch Branch / Location"
         >
-          <CurrentIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
-          <span className="truncate">
-            {isAllBranchesSelected ? 'All Branches' : currentBranch?.branchName || 'Branch'}
-          </span>
-          <ChevronDown className="w-3 h-3 text-slate-400 shrink-0 ml-0.5" />
+          <CurrentIcon className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
         </button>
 
         <SwitchBranchModal isOpen={isSwitchModalOpen} onClose={closeSwitchModal} />

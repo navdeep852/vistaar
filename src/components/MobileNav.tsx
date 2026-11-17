@@ -159,7 +159,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
       {/* Mobile Top Header */}
       <header className="lg:hidden min-h-[3.75rem] h-[calc(3.75rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] bg-white dark:bg-slate-900 text-slate-900 dark:text-white flex items-center justify-between px-[max(env(safe-area-inset-left),0.875rem)] pr-[max(env(safe-area-inset-right),0.875rem)] fixed top-0 left-0 right-0 z-40 border-b border-slate-200 dark:border-slate-800 no-print transition-colors duration-200 box-border">
         {activeTab === 'dashboard' ? (
-          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1 mr-2">
             <button
               onClick={() => setDrawerOpen(true)}
               className="touch-target p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
@@ -199,7 +199,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           </div>
         )}
 
-        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <BranchSwitcher variant="mobile" onManageBranches={() => handleTabClick('settings')} />
           <button
             onClick={() => setMobileSearchOpen(true)}
